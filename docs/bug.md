@@ -7,7 +7,7 @@
 
 **Trạng thái:** `MỞ` · `ĐANG SỬA` · `ĐÃ SỬA` · `WORKAROUND` · `CẦN XÁC MINH` · `CẦN QUYẾT ĐỊNH` · `KHÔNG SỬA` · `KHÔNG PHẢI LỖI`
 
-**Cấp ID tiếp theo:** `BUG-008`
+**Cấp ID tiếp theo:** `BUG-009`
 
 ## Bảng tổng hợp
 
@@ -20,6 +20,7 @@
 | [BUG-005](#bug-005) | 🟡 | Tiến độ quét báo trùng bản ghi cuối | P1 | ĐÃ SỬA |
 | [BUG-006](#bug-006) | 🟠 | Fold tách âm tiết Hangul thành Jamo, không ghép lại | P2 | ĐÃ SỬA |
 | [BUG-007](#bug-007) | 🔴 | `BinaryHeap::with_capacity(limit+1)` cấp phát không giới hạn | P2 | ĐÃ SỬA |
+| [BUG-008](#bug-008) | 🔴 | Lượt quét thất bại ghi đè chỉ mục tốt bằng chỉ mục rỗng | P4 | ĐÃ SỬA |
 
 ---
 
@@ -223,3 +224,63 @@ chặt.
 **Ghi chú.** Bug này chỉ lộ ra vì test cố tình dùng `limit` cực lớn để kiểm tra ranh giới chunk —
 tức là **một test viết cho mục đích khác** lại bắt được lỗi. Nếu chỉ test bằng `limit` mặc định
 5.000 thì nó sẽ nằm im tới tận khi có người dùng thật gặp phải.
+
+---
+
+## BUG-008 🔴 — Lượt quét thất bại ghi đè chỉ mục tốt bằng chỉ mục rỗng
+
+**Giai đoạn:** P4 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Cách phát hiện.** Không phải do chạy hỏng mà do **đặt câu hỏi**: đang tìm cách kiểm chứng luồng
+quét mà không cần UAC, tôi tự hỏi *"chạy `--index` không có quyền Admin thì chuyện gì xảy ra?"*
+Lần theo luồng code thì thấy đường đi rất tệ.
+
+**Cơ chế.**
+
+```rust
+for v in ntfs_volumes {
+    let handle = match volume::open_volume(v) {
+        Ok(h) => h,
+        Err(e) => { tracing::error!("{e}"); continue; }   // bỏ qua ổ này
+    };
+    …
+}
+let ix = builder.finish();          // RỖNG nếu mọi ổ đều thất bại
+persist::save(&ix, stamps)?;        // GHI ĐÈ cache tốt bằng cái rỗng
+```
+
+Bỏ qua một ổ hỏng để các ổ còn lại vẫn quét được là **đúng**. Nhưng nếu **tất cả** đều hỏng thì
+chương trình vẫn chạy tới cuối với một index rỗng, rồi lưu nó đè lên cache đang dùng tốt.
+
+**Khi nào xảy ra thật.**
+
+- Chạy `mediafinder.exe --index` mà quên elevate.
+- Một ổ bị khoá hoặc rút ra giữa chừng.
+- USN Journal bị tắt trên mọi ổ.
+
+**Hậu quả.** Người dùng mất toàn bộ chỉ mục và phải quét lại — mất thêm ~20 giây **và một lần UAC
+nữa** — chỉ để lấy lại đúng thứ họ vừa có. Tệ hơn nữa là nó **im lặng**: cache mới vẫn ghi thành
+công, app vẫn khởi động bình thường, chỉ là không tìm thấy gì cả.
+
+**Cách sửa.** Đếm số ổ quét thành công. Nếu bằng 0 (hoặc index rỗng) thì **không lưu gì hết**,
+báo lỗi và giữ nguyên cache cũ. Nếu chỉ một phần ổ thành công thì vẫn lưu nhưng nói rõ
+*"chỉ quét được 1/2 ổ"* — mất một nửa chỉ mục trong im lặng cũng tệ.
+
+**Kiểm chứng.** Sao lưu cache, chạy `--index` không elevate, đo lại:
+
+```
+Cache trước: 8.331.574 bytes
+  → ổ C: bị từ chối truy cập — cần chạy với quyền Administrator
+  → ổ D: bị từ chối truy cập — cần chạy với quyền Administrator
+  → TỔNG: 0 tệp media
+  → Không quét được ổ đĩa nào (2 ổ NTFS đều thất bại). Chỉ mục cũ được giữ nguyên.
+Cache sau  : 8.331.574 bytes  ← NGUYÊN VẸN
+```
+
+**Chống tái phát.** `tests/cache_safety.rs` chạy đúng kịch bản đó và so kích thước cache trước/sau.
+Test thứ hai kiểm tra lượt quét thất bại vẫn đặt `finished`, nếu không thanh tiến độ sẽ quay mãi.
+
+**Bài học.** Đây là loại lỗi mà **không lượt chạy bình thường nào phơi ra được** — đường hạnh phúc
+luôn có đủ quyền. Nó chỉ lộ khi hỏi *"nếu bước này thất bại thì sao?"* ở từng chỗ có `continue`
+hoặc bỏ qua lỗi. Mỗi lần bỏ qua một lỗi là một lần ngầm khẳng định *"phần còn lại vẫn có nghĩa"* —
+và ở đây lời khẳng định đó sai.

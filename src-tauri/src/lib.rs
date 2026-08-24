@@ -53,6 +53,9 @@ pub fn run_gui() {
             ipc::commands::index_status,
             ipc::commands::open_file,
             ipc::commands::reveal_in_explorer,
+            ipc::commands::request_scan,
+            ipc::commands::scan_progress,
+            ipc::commands::reload_index,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");
@@ -71,6 +74,20 @@ pub fn run_indexer() {
     tracing::info!(dry_run, "indexer starting");
 
     let mut builder = IndexBuilder::new();
+
+    // Progress goes to a file the GUI polls. `--dry-run` is a developer path
+    // with no GUI watching, so it writes nothing.
+    let mut progress = if dry_run {
+        None
+    } else {
+        match ipc::elevate::ProgressWriter::new() {
+            Ok(w) => Some(w),
+            Err(e) => {
+                tracing::warn!("không mở được tệp tiến độ: {e}");
+                None
+            }
+        }
+    };
 
     let volumes = volume::list_volumes();
     if volumes.is_empty() {
@@ -91,12 +108,30 @@ pub fn run_indexer() {
     let ntfs_volumes: Vec<_> = volumes.iter().filter(|v| v.is_ntfs()).collect();
     if ntfs_volumes.is_empty() {
         tracing::error!("không có ổ NTFS nào để quét");
+        if let Some(p) = progress.as_mut() {
+            let st = p.state_mut();
+            st.phase = "error".into();
+            st.error = Some("Không tìm thấy ổ NTFS nào để quét.".into());
+            st.finished = true;
+            p.flush();
+        }
         return;
+    }
+
+    if let Some(p) = progress.as_mut() {
+        let st = p.state_mut();
+        st.phase = "volumes".into();
+        st.volumes_total = ntfs_volumes.len();
+        st.message = format!("Chuẩn bị quét {} ổ đĩa…", ntfs_volumes.len());
+        p.flush();
     }
 
     let opts = tree::ResolveOptions::default();
     let mut grand_total = 0usize;
     let mut stamps: Vec<index::persist::VolumeStamp> = Vec::new();
+    // Counted so a scan that reached no volume at all can refuse to save.
+    let mut volumes_ok = 0usize;
+    let volumes_total = ntfs_volumes.len();
 
     for v in ntfs_volumes {
         let started = std::time::Instant::now();
@@ -124,17 +159,44 @@ pub fn run_indexer() {
             }
         };
 
+        if let Some(p) = progress.as_mut() {
+            let st = p.state_mut();
+            st.phase = "scanning".into();
+            st.volume = v.letter.to_string();
+            st.records = 0;
+            st.message = format!("Đang đọc bảng tệp của ổ {}:…", v.letter);
+            p.flush();
+        }
+
         let scan_started = std::time::Instant::now();
+        let mut reporter = progress.take();
         let (records, scan_stats) = match usn_enum::enumerate(&handle, |n| {
             tracing::info!("  … đã đọc {n} bản ghi");
+            if let Some(p) = reporter.as_mut() {
+                let st = p.state_mut();
+                st.records = n;
+                st.message = format!("Ổ {}: đã đọc {} bản ghi", v.letter, n);
+                p.tick();
+            }
         }) {
-            Ok(r) => r,
+            Ok(r) => {
+                progress = reporter;
+                r
+            }
             Err(e) => {
                 tracing::error!("{e}");
+                progress = reporter;
                 continue;
             }
         };
         let scan_time = scan_started.elapsed();
+
+        if let Some(p) = progress.as_mut() {
+            let st = p.state_mut();
+            st.phase = "resolving".into();
+            st.message = format!("Ổ {}: đang dựng lại đường dẫn…", v.letter);
+            p.flush();
+        }
 
         let resolve_started = std::time::Instant::now();
         let set = tree::resolve(records, v.letter, &opts);
@@ -197,6 +259,20 @@ pub fn run_indexer() {
             build_started.elapsed().as_secs_f64()
         );
 
+        if let Some(p) = progress.as_mut() {
+            let st = p.state_mut();
+            st.volumes_done += 1;
+            st.media_files += set.files.len() as u64;
+            st.phase = "indexing".into();
+            st.message = format!(
+                "Xong ổ {}: {} tệp media",
+                v.letter,
+                set.files.len()
+            );
+            p.flush();
+        }
+
+        volumes_ok += 1;
         stamps.push(index::persist::VolumeStamp {
             letter: v.letter,
             serial: v.serial,
@@ -220,9 +296,76 @@ pub fn run_indexer() {
         return;
     }
 
-    match index::persist::save(&ix, stamps) {
+    // Never replace a working cache with nothing.
+    //
+    // Every volume that fails to open is skipped and the scan carries on, so
+    // if *all* of them fail — no elevation, a locked disk, USN disabled —
+    // execution still arrives here holding an empty index. Saving it would
+    // silently destroy a perfectly good cache and force the user through
+    // another scan, with another UAC prompt, to get back what they had.
+    //
+    // A scan that reached nothing has nothing to say; leave the old cache
+    // exactly where it is.
+    if volumes_ok == 0 || ix.is_empty() {
+        let why = format!(
+            "Không quét được ổ đĩa nào ({volumes_total} ổ NTFS đều thất bại). Chỉ mục cũ được giữ nguyên."
+        );
+        tracing::error!("{why}");
+        if let Some(p) = progress.as_mut() {
+            let st = p.state_mut();
+            st.phase = "error".into();
+            st.error = Some(why);
+            st.message = "Không quét được ổ đĩa nào".into();
+            st.finished = true;
+            p.flush();
+        }
+        return;
+    }
+
+    if volumes_ok < volumes_total {
+        tracing::warn!("chỉ quét được {volumes_ok}/{volumes_total} ổ đĩa");
+    }
+
+    if let Some(p) = progress.as_mut() {
+        let st = p.state_mut();
+        st.phase = "saving".into();
+        st.message = "Đang lưu chỉ mục…".into();
+        p.flush();
+    }
+
+    let outcome = index::persist::save(&ix, stamps);
+    match &outcome {
         Ok(path) => tracing::info!("đã ghi cache: {}", path.display()),
         Err(e) => tracing::error!("không ghi được cache: {e}"),
+    }
+
+    // `finished` is set only now, after the cache is safely on disk. The GUI
+    // reloads the moment it sees that flag, so flipping it any earlier would
+    // race the file it is about to read.
+    if let Some(p) = progress.as_mut() {
+        let st = p.state_mut();
+        match outcome {
+            Ok(_) => {
+                st.phase = "done".into();
+                st.message = if volumes_ok < volumes_total {
+                    format!(
+                        "Đã lập chỉ mục {} tệp media (chỉ quét được {}/{} ổ)",
+                        ix.len(),
+                        volumes_ok,
+                        volumes_total
+                    )
+                } else {
+                    format!("Đã lập chỉ mục {} tệp media", ix.len())
+                };
+            }
+            Err(e) => {
+                st.phase = "error".into();
+                st.error = Some(e.to_string());
+                st.message = "Không lưu được chỉ mục".into();
+            }
+        }
+        st.finished = true;
+        p.flush();
     }
 }
 

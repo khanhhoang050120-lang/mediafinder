@@ -6,11 +6,15 @@
     formatWhen,
     indexStatus,
     openFile,
+    reloadIndex,
+    requestScan,
     revealInExplorer,
+    scanProgress,
     searchFiles,
     type IndexMeta,
     type MediaKind,
     type RelaxedInfo,
+    type ScanProgress,
     type SearchHit,
   } from "./lib/search";
 
@@ -30,11 +34,79 @@
   let error = $state<string | null>(null);
   let relaxed = $state<RelaxedInfo | null>(null);
   let menu = $state<{ x: number; y: number; hit: SearchHit } | null>(null);
+  let scan = $state<ScanProgress | null>(null);
+  let scanning = $state(false);
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   let inputEl: HTMLInputElement | undefined = $state();
   let listEl: HTMLDivElement | undefined = $state();
 
   indexStatus().then((m) => (meta = m));
+  // A scan may already be running from a previous window session.
+  scanProgress().then((s) => {
+    if (s.scanning) startPolling();
+  });
+
+  async function startScan() {
+    error = null;
+    try {
+      await requestScan();
+      scanning = true;
+      scan = null;
+      startPolling();
+    } catch (e) {
+      // Declining UAC lands here. The backend already phrases it as an
+      // answer rather than a failure, so show it verbatim.
+      error = String(e);
+    }
+  }
+
+  function startPolling() {
+    scanning = true;
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      let status;
+      try {
+        status = await scanProgress();
+      } catch {
+        return; // transient; the next tick will pick it up
+      }
+      scan = status.progress;
+
+      // `finished` is set by the indexer only after the cache is written, so
+      // reloading here can never read a half-written file.
+      if (status.progress?.finished) {
+        stopPolling();
+        if (status.progress.error) {
+          error = status.progress.error;
+        } else {
+          try {
+            meta = await reloadIndex();
+            if (query.trim()) runSearch();
+          } catch (e) {
+            error = String(e);
+          }
+        }
+        return;
+      }
+
+      // The child died without reporting anything — a crash, or Windows
+      // refusing to start it. Without this the bar would spin forever.
+      if (!status.scanning) {
+        stopPolling();
+        if (!status.progress?.finished) {
+          error = "Tiến trình quét kết thúc bất thường. Dữ liệu cũ vẫn nguyên.";
+        }
+      }
+    }, 250);
+  }
+
+  function stopPolling() {
+    clearInterval(pollTimer);
+    pollTimer = undefined;
+    scanning = false;
+    scan = null;
+  }
 
   function toggleKind(k: MediaKind) {
     activeKinds = activeKinds.includes(k)
@@ -193,6 +265,9 @@
           onclick={() => toggleKind(k.key)}
         >{k.label}</button>
       {/each}
+      <button class="chip rescan" onclick={startScan} disabled={scanning}>
+        {scanning ? "Đang quét…" : "Quét lại"}
+      </button>
     </div>
   </div>
 
@@ -200,6 +275,21 @@
     <div class="error" role="alert">
       <span>{error}</span>
       <button class="dismiss" onclick={() => (error = null)}>Đóng</button>
+    </div>
+  {/if}
+
+  {#if scanning}
+    <div class="scan">
+      <div class="scan-head">
+        <span>{scan?.message ?? "Đang khởi động tiến trình quét…"}</span>
+        {#if scan && scan.volumesTotal > 0}
+          <span class="scan-count">ổ {scan.volumesDone + 1}/{scan.volumesTotal}</span>
+        {/if}
+      </div>
+      <!-- Indeterminate on purpose: the total record count of a volume is not
+           known until the scan reaches the end of it, so any percentage would
+           be invented. -->
+      <div class="scan-bar"><div class="scan-fill"></div></div>
     </div>
   {/if}
 
@@ -313,6 +403,43 @@
     color: #fff;
     background: var(--accent);
     border-color: var(--accent);
+  }
+
+  .chip.rescan { margin-left: 4px; }
+  .chip.rescan:disabled { opacity: 0.55; }
+
+  .scan {
+    padding: 9px 14px 11px;
+    font-size: 12.5px;
+    color: #cfe0ff;
+    background: #1e2836;
+    border: 1px solid #2f4260;
+    border-radius: 8px;
+  }
+  .scan-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .scan-count { color: var(--text-dim); }
+
+  .scan-bar {
+    height: 4px;
+    overflow: hidden;
+    background: #16202c;
+    border-radius: 2px;
+  }
+  .scan-fill {
+    width: 35%;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: slide 1.3s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(340%); }
   }
 
   .error {

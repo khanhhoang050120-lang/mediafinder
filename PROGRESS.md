@@ -252,13 +252,18 @@ sự kiện `input` của Svelte nên kiểm chứng được cả luồng mà k
 nút "Quét lại" đẩy UAC đúng một lần.
 
 - [ ] `index/persist.rs` — bincode save/load vào `%LOCALAPPDATA%\MediaFinder\`
-- [ ] `index/persist.rs` — lưu `last_usn` + serial volume; kiểm tra phiên bản schema
-- [ ] `ipc/elevate.rs` — `ShellExecuteW(verb="runas", "--index")`
-- [ ] `ipc/elevate.rs` — bắt `ERROR_CANCELLED (1223)` khi user từ chối UAC
-- [ ] `run_indexer()` — ghi `progress.json`, throttle 20 Hz / mỗi 20k file
-- [ ] GUI poll `progress.json` mỗi 100ms → thanh tiến độ
-- [ ] Reload cache + `ArcSwap::store` sau khi indexer xong
+- [x] `index/persist.rs` — lưu `last_usn` + serial volume; kiểm tra phiên bản schema (làm ở P3)
+- [x] `ipc/elevate.rs` — `ShellExecuteExW(verb="runas", "--index")` + handle tiến trình con
+- [x] `ipc/elevate.rs` — bắt `ERROR_CANCELLED (1223)`, diễn đạt là **câu trả lời** chứ không phải lỗi
+- [x] `run_indexer()` — ghi `progress.json`, throttle 10 Hz, ghi nguyên tử qua .tmp + rename
+- [x] GUI poll mỗi 250ms → thanh tiến độ + nút "Quét lại"
+- [x] Reload cache + `ArcSwap::store` sau khi indexer xong
+- [x] Cờ `scanning` trong `AppState` — chặn hai lượt quét chồng nhau, nút tự khoá
+- [x] Luồng theo dõi tiến trình con — quét sập vẫn gỡ được cờ, nút không kẹt vĩnh viễn
+- [x] Thứ tự an toàn: **ghi cache xong mới đặt `finished`** — GUI không thể đọc file dở
 - [ ] Xác minh lần mở thứ 2 không có UAC
+- [ ] Xác minh bấm "Quét lại" → UAC → thanh tiến độ chạy → index tự cập nhật
+- [ ] Xác minh bấm **No** trên UAC → báo rõ, dữ liệu cũ nguyên vẹn
 
 ---
 

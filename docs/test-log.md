@@ -156,3 +156,34 @@ khớp 5/9 toàn thứ không liên quan. Đúng về thuật toán, vô dụng 
 
 Nếu chỉ kiểm bằng unit test — "tệp cần tìm có trong kết quả không?" — thì đã pass và tôi đã dừng
 lại ở đó. Phải **nhìn vào toàn bộ danh sách trên màn hình thật** mới thấy vấn đề.
+
+### 2026-08-24 — Lượt test sau P4
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **100/100 pass** |
+| 2 | Chất lượng code Rust | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Type-check frontend | `npm run check` | ✅ 0 lỗi, 0 warning |
+| 4 | Nút "Quét lại" có trên giao diện | UIA tìm control Button | ✅ tìm thấy, bấm được |
+| 5 | **Từ chối UAC** | bấm No trên hộp thoại | ✅ báo *"Chưa quét gì cả — dữ liệu cũ vẫn nguyên"* |
+| 6 | Từ chối UAC không mất dữ liệu | đọc status bar sau đó | ✅ vẫn `117.124 tệp · quét lúc 13:34:30` |
+| 7 | Từ chối UAC không kẹt nút | đọc trạng thái nút | ✅ "Quét lại" trở lại bình thường |
+| 8 | `progress.json` ghi đúng định dạng | đọc file, parse JSON | ✅ hợp lệ, camelCase, đủ trường |
+| 9 | Lượt quét thất bại vẫn đặt `finished` | chạy `--index` không elevate | ✅ `finished: true` — GUI không poll vô tận |
+| 10 | **Quét thất bại có phá cache không** | sao lưu → chạy → đo lại | ❌ **tìm ra `BUG-008`** — đã sửa |
+| 11 | Guard bảo vệ cache | chạy lại sau khi sửa | ✅ cache **8.331.574 → 8.331.574 byte**, nguyên vẹn |
+| 12 | Test chống tái phát | `tests/cache_safety.rs --ignored` | ✅ 2/2 pass |
+| 13 | **Chấp nhận UAC → quét thật** | cần người dùng bấm Yes | ⏳ **chưa kiểm chứng được** |
+
+**Kết luận lượt test P4:** 11/13 pass, 1 mục tìm ra lỗi nặng và đã sửa, 1 mục còn chờ.
+
+**`BUG-008` không tìm ra bằng cách chạy hỏng, mà bằng cách đặt câu hỏi.** Đang tìm cách kiểm chứng
+luồng quét mà không cần UAC, tôi tự hỏi *"chạy `--index` không có quyền Admin thì sao?"* — và lần
+theo code thì thấy mọi ổ đều `continue`, index rỗng đi thẳng tới `persist::save()` và **ghi đè
+cache đang dùng tốt**.
+
+Loại lỗi này không lượt chạy bình thường nào phơi ra được, vì đường hạnh phúc luôn có đủ quyền.
+Nó chỉ lộ khi hỏi *"nếu bước này thất bại thì sao?"* ở từng chỗ có `continue` hoặc bỏ qua lỗi.
+
+**Mục 5 lại là may mắn.** UAC bị từ chối ngoài ý muốn, nhưng nhờ đó **đường xử lý khó nhất được
+kiểm chứng trước** — và nó đúng hoàn toàn.

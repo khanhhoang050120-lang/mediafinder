@@ -10,9 +10,10 @@
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::index::model::MediaKind;
+use crate::ipc::elevate;
 use crate::index::search::{search as run_search, SearchOptions};
 use crate::state::{AppState, IndexMeta};
 
@@ -133,6 +134,70 @@ pub async fn search(
 #[tauri::command]
 pub fn index_status(state: State<'_, AppState>) -> IndexMeta {
     state.meta()
+}
+
+/// Start a rescan in an elevated child process.
+///
+/// Returns as soon as the child is running. The scan itself takes tens of
+/// seconds, so blocking here would freeze the window for the whole of it;
+/// instead a watcher thread waits for the child and the UI polls
+/// [`scan_progress`].
+#[tauri::command]
+pub fn request_scan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.is_scanning() {
+        return Err("Đang có một lượt quét chạy rồi.".into());
+    }
+
+    // Clear stale progress first, so a poll arriving before the child writes
+    // anything cannot show the previous scan's numbers.
+    let _ = elevate::clear_progress();
+
+    let child = elevate::spawn_elevated_indexer().map_err(|e| e.to_string())?;
+    state.set_scanning(true);
+
+    std::thread::spawn(move || {
+        child.wait();
+        // Whatever happened — success, crash, or the child refusing to run —
+        // the scan is over. Without clearing this the button would stay
+        // disabled forever after a crash.
+        app.state::<AppState>().set_scanning(false);
+    });
+
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanStatus {
+    pub scanning: bool,
+    pub progress: Option<elevate::ScanProgress>,
+}
+
+#[tauri::command]
+pub fn scan_progress(state: State<'_, AppState>) -> ScanStatus {
+    ScanStatus {
+        scanning: state.is_scanning(),
+        progress: elevate::read_progress(),
+    }
+}
+
+/// Load the cache the indexer just wrote and swap it in.
+///
+/// Called by the UI once progress reports `finished`. Safe by construction:
+/// the indexer writes the cache *before* setting that flag, so by the time the
+/// UI asks, the file is complete.
+#[tauri::command]
+pub fn reload_index(state: State<'_, AppState>) -> Result<IndexMeta, String> {
+    match crate::index::persist::load() {
+        Ok(cache) => {
+            state.replace(cache.index, cache.built_at_unix);
+            Ok(state.meta())
+        }
+        Err(e) => {
+            state.set_problem(e.to_string());
+            Err(e.to_string())
+        }
+    }
 }
 
 /// Open a file with whatever Windows uses for that type.

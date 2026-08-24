@@ -90,6 +90,43 @@ export function indexStatus(): Promise<IndexMeta> {
   return invoke<IndexMeta>("index_status");
 }
 
+export interface ScanProgress {
+  phase: "volumes" | "scanning" | "resolving" | "indexing" | "saving" | "done" | "error";
+  volume: string;
+  records: number;
+  mediaFiles: number;
+  volumesDone: number;
+  volumesTotal: number;
+  message: string;
+  /** Set only after the cache is safely on disk — see the indexer. */
+  finished: boolean;
+  error: string | null;
+}
+
+export interface ScanStatus {
+  scanning: boolean;
+  progress: ScanProgress | null;
+}
+
+/**
+ * Start a rescan in an elevated child process.
+ *
+ * Rejects with a plain sentence if the user declines the UAC prompt; that is
+ * an answer, not a failure, and the message says so.
+ */
+export function requestScan(): Promise<void> {
+  return invoke("request_scan");
+}
+
+export function scanProgress(): Promise<ScanStatus> {
+  return invoke<ScanStatus>("scan_progress");
+}
+
+/** Load the cache the indexer just wrote. */
+export function reloadIndex(): Promise<IndexMeta> {
+  return invoke<IndexMeta>("reload_index");
+}
+
 export function formatCount(n: number): string {
   return n.toLocaleString("vi-VN");
 }

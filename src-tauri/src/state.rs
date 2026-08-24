@@ -15,7 +15,7 @@
 //! atomically. Searches already in flight keep reading the old snapshot and
 //! finish normally — the memory lives exactly as long as its last reader.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -44,6 +44,11 @@ pub struct AppState {
     /// matches has been superseded and stops as soon as it notices.
     generation: AtomicU64,
     meta: RwLock<IndexMeta>,
+    /// True while an elevated indexer child is running.
+    ///
+    /// Guards against a second UAC prompt while the first scan is still going,
+    /// and lets the UI disable the button rather than silently ignoring clicks.
+    scanning: AtomicBool,
 }
 
 impl Default for AppState {
@@ -58,6 +63,7 @@ impl AppState {
             index: ArcSwap::from_pointee(Index::default()),
             generation: AtomicU64::new(0),
             meta: RwLock::new(IndexMeta::default()),
+            scanning: AtomicBool::new(false),
         }
     }
 
@@ -102,6 +108,14 @@ impl AppState {
 
     pub fn generation(&self) -> &AtomicU64 {
         &self.generation
+    }
+
+    pub fn is_scanning(&self) -> bool {
+        self.scanning.load(Ordering::Relaxed)
+    }
+
+    pub fn set_scanning(&self, on: bool) {
+        self.scanning.store(on, Ordering::Relaxed);
     }
 }
 
