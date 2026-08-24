@@ -137,6 +137,26 @@ fn inventory() {
         let root: String = p.split('\\').take(2).collect::<Vec<_>>().join("\\");
         *roots.entry(root).or_default() += 1;
     }
+    // Tệp thử của lượt kiểm chứng cập nhật nhanh, nếu còn.
+    let mut hits = 0;
+    for i in 0..ix.len() {
+        // Soi cả đường dẫn, không chỉ tên tệp: một tệp trong thư mục thử mang
+        // tên hoàn toàn bình thường, và lọc theo tên đã bỏ sót đúng nó.
+        let path = ix.full_path(i);
+        if path.contains("mf-test") || path.contains("mediafinder-test") {
+            println!("  TỆP THỬ: {}  ({} byte, frn={})", path, ix.size(i), ix.frn(i));
+            hits += 1;
+        }
+    }
+    println!("  → {hits} tệp thử trong index");
+
+    println!("thư mục trên ổ C: đang có trong index:");
+    for i in 0..ix.dir_count() {
+        if ix.volume_of_dir(i) == b'C' {
+            println!("    {}", ix.dir_path(i));
+        }
+    }
+
     println!("thư mục gốc cấp 1 ({} nhánh):", roots.len());
     for (r, n) in roots.iter().take(30) {
         println!("    {r}  ({n} thư mục con)");

@@ -397,3 +397,43 @@ Vì vậy hai ô trong `PROGRESS.md` giữ dấu `[~]` — đã viết, chưa ki
 **Mục 18 nhỏ nhưng đáng giữ.** Ba mã lỗi được dịch thành "cần quét lại". Nếu `ERROR_ACCESS_DENIED`
 lọt vào nhóm đó thì một tiến trình thiếu quyền sẽ được bảo đi quét lại — mà quét lại cũng cần đúng
 quyền ấy. Người dùng rơi vào vòng lặp không có lối ra, và không có thông báo nào nói vì sao.
+
+
+---
+
+### 2026-08-24 — Lượt test P9 bước 4 (cập nhật nhanh, chạy thật trên máy người dùng)
+
+Toàn bộ chạy trên ổ NTFS thật với quyền Administrator, qua chính USN journal của máy.
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **170/170 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Đọc journal có cần quyền Admin không | thử 4 mức quyền, tiến trình không elevate | ✅ có — `ERROR_INVALID_FUNCTION` trên handle quyền thấp ([CHECK-004](./check.md#check-004)) |
+| 4 | Đọc journal trên ổ thật | tự kiểm tra cuối lần quét | ✅ **570 thay đổi trong 1 ms**, FRN/tên đều đúng |
+| 5 | Ổ không có thay đổi | như trên, ổ D: | ✅ 0 thay đổi, con trỏ giữ nguyên, không treo |
+| 6 | FRN vào được cache thật | đọc cache | ✅ **46.700/46.700** mục đều có FRN |
+| 7 | Số tệp tụt 60% sau khi đổi schema | đếm độc lập cả hai ổ | ✅ **không hồi quy** — bộ quét lệch 1 tệp trên D: ([CHECK-005](./check.md#check-005)) |
+| 8 | Tệp mới trong thư mục đã có | tạo `.mp4` rồi chạy `--index` | ✅ vào index, đúng dung lượng 4096 byte |
+| 9 | Tệp mới trong thư mục **vừa tạo** | thư mục mới + tệp trong đó | ✅ dựng được cả chuỗi thư mục |
+| 10 | Đổi tên tệp | đổi trước khi index biết tới | ✅ vào index dưới tên mới |
+| 11 | Tệp không phải media | tạo `.txt` | ✅ không vào index |
+| 12 | Xoá tệp | xoá cả hai rồi chạy lại | ✅ **-2 tệp**, biến khỏi index |
+| 13 | Xoá thư mục | xoá thư mục thử | ✅ **-1 thư mục**, 3.196 → 3.195 |
+| 14 | **Tốc độ cập nhật nhanh** | đo | ✅ **0,43–0,45 s** so với **13,2 s** quét đầy đủ |
+| 15 | Ổ mạng có được báo không | liệt kê ổ đĩa | ✅ cả ba NAS đều được nêu tên máy chủ ([BUG-018](./bug.md#bug-018)) |
+| 16 | Tệp trong thư mục cũ chưa từng có media | đọc `unresolved` trong log | ⚠️ **giới hạn đã biết** ([RISK-003](./risk.md#risk-003)) |
+
+**Kết luận:** 15/16 pass, 1 giới hạn đã biết và đã ghi lại.
+
+**Mục 7 đáng ghi nhất, và nó suýt đi sai đường.** Lần đếm độc lập đầu tiên trên ổ C: ra 1.635 so
+với 583 của bộ quét — gấp gần ba lần, đủ để kết luận là có hồi quy nặng. Sai nằm ở **công cụ kiểm
+chứng**: `GetDirectories` đi xuyên junction, nên nó chui vào `ProgramData` qua
+`C:\Users\All Users` và đếm đúng những tệp mà bộ quét loại đúng. Bỏ qua reparse point thì
+con số về 521, và phần chênh còn lại đúng bằng 62 thư mục mà phép đếm không có quyền đọc.
+
+Bài học không chỉ nằm ở con số: **công cụ dùng để kiểm chứng cũng cần được kiểm chứng.** Nếu tin
+ngay lần đếm đầu, tôi đã đi sửa một bộ quét vốn không hỏng.
+
+**Mục 14.** Nút "Quét lại" trong giao diện gọi cùng một `--index`, nên nó cũng đi đường cập nhật
+nhanh — từ 13 giây xuống dưới nửa giây, vẫn chỉ một lần UAC.

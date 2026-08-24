@@ -78,3 +78,46 @@ không có tác dụng gì.
 
 **→ Đã thực hiện (2026-08-24).** Người dùng đồng ý. Repo đã khởi tạo, `.gitattributes` chuẩn hoá
 kết thúc dòng, và mỗi giai đoạn hoàn thành được commit thành một mốc riêng.
+
+
+---
+
+## RISK-003 ⚪ — Tệp media mới trong thư mục chưa từng có media sẽ bị cập nhật nhanh bỏ sót
+
+**Giai đoạn:** P9 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+
+**Chưa xảy ra với người dùng**, nhưng đã thấy dấu vết trong log của chính lượt kiểm chứng:
+
+```
+áp thay đổi: +2 tệp, -0 tệp, ..., 5 bỏ qua (ngoài phạm vi index)
+```
+
+**Vấn đề.** Bảng `dirs` trong `Index` chỉ chứa những thư mục **có chứa tệp media đã được index** —
+thư mục nào không có media thì không bao giờ được thêm vào, vì nó chỉ được tạo ra khi resolve chuỗi
+cha của một tệp.
+
+`rebuild_with` tra thư mục cha theo `(ổ, FRN)` trong bảng đó. Nên có một khoảng trống:
+
+| Tình huống | Kết quả |
+|---|---|
+| Tệp mới trong thư mục **đã có** trong index | ✅ thêm đúng |
+| Tệp mới trong thư mục **vừa được tạo** (thư mục đó nằm trong cùng lô journal) | ✅ dựng được cả chuỗi — đã kiểm chứng với `mf-test-newdir` |
+| Tệp mới trong thư mục **có sẵn từ trước nhưng chưa từng chứa media** | ❌ **bỏ sót**, đếm vào `unresolved` |
+
+Trường hợp thứ ba là thật và dễ gặp: một thư mục dự án tạo từ tuần trước, hôm nay mới bỏ video
+đầu tiên vào. Journal báo tệp mới, nhưng FRN của thư mục cha không có trong bảng và cũng không nằm
+trong lô journal — vì thư mục đó được tạo từ lâu rồi.
+
+Tệp sẽ chỉ xuất hiện sau một lần **quét đầy đủ**.
+
+**Vì sao chưa sửa ngay.** Cách sửa đúng đã rõ và không khó: khi gặp FRN cha không tra được, mở nó
+bằng `OpenFileById` rồi lấy đường dẫn bằng `GetFinalPathNameByHandle`, sau đó thêm thư mục vào
+bảng. Tiến trình indexer vốn đã có quyền Administrator và đã có sẵn handle volume, nên không cần
+thêm quyền gì. Chi phí chỉ phát sinh với FRN chưa biết, tức là hiếm.
+
+Chưa làm vì nó cần thêm một đường Win32 nữa, và phần cập nhật nhanh vừa mới được kiểm chứng xong —
+thêm mã ngay lúc này sẽ trộn lẫn thứ đã kiểm chứng với thứ chưa.
+
+**Cách nhận biết nếu nó đang xảy ra.** Con số `unresolved` trong log. Hiện tại nó cũng đếm cả những
+thay đổi dưới thư mục **cố ý bị loại** (`Windows`, `AppData`…), vốn hoàn toàn bình thường — nên nếu
+làm tiếp thì nên tách hai loại này ra, chứ một con số gộp thì không nói lên điều gì.

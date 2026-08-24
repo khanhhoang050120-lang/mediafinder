@@ -34,7 +34,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P6** | Enrichment metadata + lọc | ✅ **XONG** — 118 test, lọc 1080p chạy 9,1 ms |
 | **P7** | Tìm file trùng | ✅ **XONG** — 124 test, tìm ra 520,7 GB trùng lặp |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ✅ **XONG** — 126 test, kiểm chứng trên bản release |
-| **P9** | Windows Service theo dõi USN realtime | 🟡 **giai đoạn 1** — FRN + `rebuild_with` xong, còn bộ đọc journal |
+| **P9** | Cập nhật gia tăng qua USN journal | ✅ **giai đoạn 1 XONG** — 0,45s thay cho 13,2s, kiểm chứng trên máy thật |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -603,6 +603,23 @@ Những thứ cần nhìn tận mắt, vì test bằng dữ liệu tự dựng k
 
 Cho tới khi chạy được, hai ô trên giữ dấu `[~]` — theo đúng quy ước ở đầu tài liệu này: đã viết,
 chưa kiểm chứng. Đánh `[x]` bây giờ sẽ là nói dối chính mình ở phiên sau.
+
+### Kiểm chứng cuối, trên máy thật
+
+Tạo, đổi tên, tạo thư mục mới, rồi xoá — tất cả đi qua USN journal thật:
+
+| Bước | Index | Thời gian |
+|---|---|---|
+| Trước | 46.700 mục / 3.195 thư mục | — |
+| Tạo `.mp4` + đổi tên + tệp trong thư mục mới | **46.702 / 3.196** | **0,45 s** |
+| Xoá cả hai và xoá thư mục | **46.700 / 3.195** | **0,43 s** |
+| So với quét đầy đủ | | **13,2 s** |
+
+Nhanh hơn khoảng **30 lần**, và nút "Quét lại" trong giao diện cũng đi đúng đường này vì nó gọi
+cùng một `--index`. Tệp `.txt` tạo kèm không vào index, đúng như phải thế.
+
+Giới hạn đã biết: tệp media **đầu tiên** đặt vào một thư mục cũ chưa từng chứa media sẽ bị bỏ sót
+cho tới lần quét đầy đủ kế tiếp — [RISK-003](docs/risk.md#risk-003).
 
 ### Giao tiếp giữa service và GUI — chọn đường ít quyền nhất trước
 
