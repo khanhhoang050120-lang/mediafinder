@@ -7,7 +7,7 @@
 
 **Trạng thái:** `MỞ` · `ĐANG SỬA` · `ĐÃ SỬA` · `WORKAROUND` · `CẦN XÁC MINH` · `CẦN QUYẾT ĐỊNH` · `KHÔNG SỬA` · `KHÔNG PHẢI LỖI`
 
-**Cấp ID tiếp theo:** `CONF-003`
+**Cấp ID tiếp theo:** `CONF-004`
 
 ## Bảng tổng hợp
 
@@ -15,6 +15,7 @@
 |----|-----|---------|----|-----------|
 | [CONF-001](#conf-001) | 🟠 | Xung đột phiên bản crate `windows` | P0 | ĐÃ SỬA |
 | [CONF-002](#conf-002) | 🟡 | `tsconfig.node.json`: `composite` xung đột `noEmit` | P0 | ĐÃ SỬA |
+| [CONF-003](#conf-003) | 🟡 | Terminal mở trước khi cài Rust không thấy `cargo` | P2 | ĐÃ SỬA |
 
 ---
 
@@ -58,3 +59,43 @@ lại cấm sinh bất cứ thứ gì. Hai tuỳ chọn loại trừ nhau.
 `outDir: "./node_modules/.tmp/tsconfig-node"`. Thoả mãn `composite` mà không sinh rác vào dự án.
 
 **Kết quả.** `npm run check` → 0 lỗi, 0 warning.
+
+---
+
+## CONF-003 🟡 — Terminal mở trước khi cài Rust không thấy `cargo`
+
+**Giai đoạn:** P2 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Người dùng chạy `npm run tauri dev` từ PowerShell của mình:
+
+```
+failed to run 'cargo metadata' command to get workspace directory:
+failed to run command cargo metadata --no-deps --format-version 1: program not found
+```
+
+**Không phải lỗi dự án.** Kiểm chứng cho thấy mọi thứ đều đúng:
+
+| Kiểm tra | Kết quả |
+|---|---|
+| `.cargo\bin` có trong PATH vĩnh viễn (User) không? | **CÓ** — `C:\Users\Padoma1\.cargo\bin` |
+| `cargo.exe` có tồn tại và chạy được không? | **CÓ** — `cargo 1.98.0` |
+
+**Nguyên nhân.** Rust được cài **giữa phiên làm việc**. Trên Windows, một tiến trình nhận bản sao
+biến môi trường tại thời điểm khởi động và **không bao giờ thấy thay đổi sau đó**. Cửa sổ
+PowerShell kia mở từ trước khi cài nên vẫn giữ PATH cũ.
+
+**Bẫy dễ mắc.** Với terminal tích hợp trong VS Code, **mở tab mới là không đủ**. Tab mới kế thừa
+môi trường từ chính tiến trình VS Code, mà VS Code lại kế thừa từ Explorer lúc nó khởi động.
+Phải **đóng hẳn VS Code rồi mở lại**.
+
+**Cách sửa.**
+
+- Đúng và vĩnh viễn: khởi động lại VS Code (hoặc terminal).
+- Tạm cho một cửa sổ: `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"`
+
+**Vì sao ghi lại.** Sẽ tái diễn bất cứ khi nào mở lại một terminal cũ, và thông báo lỗi
+(`program not found`) trông y hệt như Rust chưa được cài — dễ dẫn tới cài lại một cách vô ích.
+
+**Ghi chú.** Phiên làm việc của Claude không dính lỗi này vì mọi lệnh đều thêm `.cargo/bin` vào
+`PATH` ngay đầu lệnh. Đó cũng là lý do lỗi chỉ lộ ra khi người dùng tự chạy — một nhắc nhở rằng
+"chạy được ở đây" không có nghĩa là "chạy được ở đó".

@@ -15,6 +15,20 @@ npm run tauri dev
 Lần chạy đầu cần quét ổ đĩa → sẽ có một prompt UAC (chỉ cho tiến trình con `--index`).
 Các lần sau load từ cache, **không có UAC**.
 
+### Nếu gặp `cargo ... program not found`
+
+PATH của terminal đã cũ, không phải Rust chưa cài. Trên Windows, một tiến trình giữ bản sao biến
+môi trường từ lúc nó khởi động và không bao giờ thấy thay đổi sau đó.
+
+**Khởi động lại VS Code** — mở tab terminal mới là *không đủ*, vì tab mới kế thừa môi trường từ
+chính tiến trình VS Code. Hoặc tạm thời cho một cửa sổ:
+
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+```
+
+Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
+
 ## Tài liệu
 
 | File | Nội dung |

@@ -33,13 +33,13 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 | File | Số mục | Còn mở | Nội dung |
 |---|---|---|---|
 | [bug.md](./bug.md) | 7 | 1 | Lỗi làm phần mềm chạy sai |
-| [config.md](./config.md) | 2 | 0 | Xung đột cấu hình / phiên bản |
+| [config.md](./config.md) | 3 | 0 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 2 | 1 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 1 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 1 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 1 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **16** | **2** | |
+| **Cộng** | **17** | **2** | |
 
 ### Hai mục còn mở
 
