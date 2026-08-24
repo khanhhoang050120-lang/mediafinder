@@ -317,3 +317,42 @@ sau khi cửa sổ hiện ra, nên tất cả đều xanh trong khi tính năng 
 phải có*, và cả hai đều gọi COM. Bản debug chạy đúng không bảo đảm bản release cũng vậy, nên cả
 hai được kiểm chứng lại bằng cách **hỏi hệ điều hành** — Explorer đang chọn tệp nào, và tiến trình
 nào vừa xuất hiện — chứ không tin vào việc lệnh trả về `Ok`.
+
+---
+
+### 2026-08-24 — Lượt test P9 bước 1 (FRN + `rebuild_with`)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **151/151 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | FRN đi hết chặng | test tổng hợp `tree.rs` → `Index` | ✅ tệp và thư mục đều giữ đúng FRN |
+| 4 | Hai bảng `dirs`/`dir_frns` không lệch nhau | thư mục bị loại giữa chừng | ✅ cùng độ dài, ghép đúng cặp |
+| 5 | FRN trùng nhau giữa hai ổ | `C:` và `D:` cùng FRN 100 | ✅ chỉ mục đúng ổ bị ảnh hưởng |
+| 6 | Cache cũ bị từ chối đúng cách | chạy app với cache phiên bản 2 | ✅ *"cache thuộc phiên bản 2, phần mềm cần 3 — bấm Quét lại"* |
+| 7 | `metadata.bin` sống sót qua đổi schema | đọc log khởi động | ✅ 117.128 mục vẫn nạp được |
+| 8 | Xoá tệp | `rebuild_with` | ✅ biến mất, các tệp khác nguyên vẹn |
+| 9 | Đổi tên tệp | như trên | ✅ tìm được tên mới, không còn tên cũ, số mục không đổi |
+| 10 | Di chuyển tệp | như trên | ✅ giữ nguyên dung lượng và thời gian đã đo |
+| 11 | Tệp mới trong thư mục mới lồng nhau | như trên | ✅ dựng cả chuỗi thư mục |
+| 12 | Thứ tự thay đổi đến lộn xộn | con trước cha | ✅ vẫn resolve đúng |
+| 13 | Đổi tên thư mục | như trên | ✅ toàn bộ thư mục con và tệp đi theo |
+| 14 | `D:\Phim` vs `D:\Phim2` | như trên | ✅ thư mục cùng tiền tố **không** bị kéo theo |
+| 15 | Xoá thư mục | như trên | ✅ mọi tệp và thư mục con bên dưới biến mất |
+| 16 | Tệp ở gốc ổ đĩa | FRN gốc có sequence number | ✅ khớp về cùng một thư mục, không thành mồ côi |
+| 17 | Thay đổi dưới thư mục chưa từng index | `C:\Windows` | ✅ bỏ qua, đếm vào `unresolved`, không panic |
+| 18 | Tạo rồi xoá trong cùng một lô | như trên | ✅ không xuất hiện lần nào |
+| 19 | Đổi tên ba lần trong cùng một lô | như trên | ✅ chỉ còn tên cuối |
+| 20 | Index mới có tìm kiếm được không | `search("tieng viet")` | ✅ khớp `Tiếng Việt.mp4` vừa thêm |
+| 21 | **Chi phí dựng lại thật** | `cargo bench -- rebuild_with` | ❌ **tìm ra lỗi** — 100 thay đổi nhanh hơn 0 thay đổi 7 lần ([BUG-017](./bug.md#bug-017)) |
+| 22 | Chi phí sau khi sửa | như trên | ✅ 160 ms / 170 ms / 170 ms cho 0 / 100 / 10.000 thay đổi |
+
+**Kết luận:** 21/22 pass, 1 mục tìm ra lỗi — và mục đó là lỗi **nặng nhất** trong cả bước này.
+
+**Mục 21 đáng ghi nhất.** Hai mươi test ở trên đều pass, kể cả những test cố tình nhắm vào định
+danh (mục 5 kiểm tra FRN trùng giữa hai ổ). Không test nào bắt được việc `frn = 0` khớp mọi mục,
+vì mọi test đều dựng dữ liệu với FRN mà tôi **tự đặt là hợp lệ**. Bench thì không assert gì cả —
+nó chỉ in ra một con số, và con số đó vô lý.
+
+**Việc còn lại của giai đoạn 1:** bộ đọc `FSCTL_READ_USN_JOURNAL` để dịch bản ghi thô thành
+`Change`, cùng với phát hiện journal bị tạo lại và journal cuộn vòng.

@@ -16,6 +16,15 @@ use mediafinder::index::search::{search, SearchOptions};
 /// substring finder do far better than they can on real data, so this varies
 /// name length, word structure, and script — and salts in Vietnamese names,
 /// because folded multi-byte text is the slowest thing the scan has to chew.
+/// Reference numbers for the synthetic index.
+///
+/// Real ones, not zeros: `rebuild_with` matches changes against them, and an
+/// index where every entry shares one number would let a single deletion wipe
+/// the lot — which is exactly what an earlier version of this bench did, and
+/// what made the whole benchmark meaningless.
+const DIR_FRN_BASE: u64 = 1_000;
+const FILE_FRN_BASE: u64 = 1_000_000;
+
 fn synthetic_index(entries: usize) -> Index {
     const STEMS: &[&str] = &[
         "holiday",
@@ -43,7 +52,12 @@ fn synthetic_index(entries: usize) -> Index {
     // 122k files across 5.4k directories.
     let dir_count = (entries / 22).max(1);
     let dirs: Vec<u32> = (0..dir_count)
-        .map(|d| b.add_dir(&format!(r"D:\Media\collection {}\subfolder {}", d / 40, d % 40), 0))
+        .map(|d| {
+            b.add_dir(
+                &format!(r"D:\Media\collection {}\subfolder {}", d / 40, d % 40),
+                DIR_FRN_BASE + d as u64,
+            )
+        })
         .collect();
 
     b.reserve(dir_count, entries);
@@ -56,7 +70,7 @@ fn synthetic_index(entries: usize) -> Index {
             2 => format!("{stem}_{i}_1080p_x265.{ext}"),
             _ => format!("{i:06} - {stem} (edited).{ext}"),
         };
-        b.add_file(&name, kind, dirs[i % dir_count], 0);
+        b.add_file(&name, kind, dirs[i % dir_count], FILE_FRN_BASE + i as u64);
     }
     b.finish()
 }
@@ -123,5 +137,44 @@ fn build(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, queries, single_vs_parallel, build);
+/// Applying journal changes, which is the whole premise of P9.
+///
+/// The design chose "rebuild the entire index" over an overlay on the strength
+/// of the `build` numbers. That is a proxy — this measures the real function,
+/// including reading the old index back out and rebuilding the directory
+/// table, on a batch the size of a busy minute on a working machine.
+fn apply_changes(c: &mut Criterion) {
+    use mediafinder::index::update::{rebuild_with, Change};
+
+    let index = synthetic_index(500_000);
+
+    let mut group = c.benchmark_group("rebuild_with");
+    group.sample_size(10);
+
+    for n in [0usize, 100, 10_000] {
+        // A realistic mix: mostly new files, some deletions, a few renames.
+        let changes: Vec<Change> = (0..n)
+            .map(|i| match i % 5 {
+                0 => Change::Gone {
+                    volume: b'D',
+                    frn: FILE_FRN_BASE + i as u64,
+                },
+                _ => Change::Present {
+                    volume: b'D',
+                    frn: 90_000_000 + i as u64,
+                    parent_frn: DIR_FRN_BASE,
+                    name: format!("new file {i}.mp4"),
+                    is_dir: false,
+                },
+            })
+            .collect();
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &changes, |b, ch| {
+            b.iter(|| rebuild_with(black_box(&index), black_box(ch)));
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, queries, single_vs_parallel, build, apply_changes);
 criterion_main!(benches);

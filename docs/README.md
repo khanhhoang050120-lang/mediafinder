@@ -32,14 +32,14 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 
 | File | Số mục | Còn mở | Nội dung |
 |---|---|---|---|
-| [bug.md](./bug.md) | 16 | 0 | Lỗi làm phần mềm chạy sai |
+| [bug.md](./bug.md) | 17 | 0 | Lỗi làm phần mềm chạy sai |
 | [config.md](./config.md) | 5 | 1 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 2 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 2 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 2 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **31** | **1** | |
+| **Cộng** | **32** | **1** | |
 
 ### Mục còn mở
 

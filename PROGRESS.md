@@ -34,7 +34,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P6** | Enrichment metadata + lọc | ✅ **XONG** — 118 test, lọc 1080p chạy 9,1 ms |
 | **P7** | Tìm file trùng | ✅ **XONG** — 124 test, tìm ra 520,7 GB trùng lặp |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ✅ **XONG** — 126 test, kiểm chứng trên bản release |
-| **P9** | Windows Service theo dõi USN realtime | 🔵 **kế hoạch** — chưa bắt đầu, chờ quyết định |
+| **P9** | Windows Service theo dõi USN realtime | 🟡 **giai đoạn 1** — FRN + `rebuild_with` xong, còn bộ đọc journal |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -501,9 +501,9 @@ xong.
 
 **Giai đoạn 1 — Rust thuần, không cài service, test được bằng dữ liệu tổng hợp:**
 
-- [ ] `frn` cho tệp và `dir_frn` cho thư mục, xuyên suốt `tree.rs` → `IndexBuilder` → `Index` → cache
-- [ ] Nâng `SCHEMA_VERSION` — cache cũ phải báo "phiên bản cũ", không phải "hỏng"
-- [ ] `rebuild_with(&Index, &[Change]) -> Index` — tạo, xoá, đổi tên tệp, đổi tên thư mục
+- [x] `frn` cho tệp và `dir_frn` cho thư mục, xuyên suốt `tree.rs` → `IndexBuilder` → `Index` → cache
+- [x] Nâng `SCHEMA_VERSION` — cache cũ báo "phiên bản 2, phần mềm cần 3", đã kiểm chứng
+- [x] `rebuild_with(&Index, &[Change]) -> Index` — tạo, xoá, đổi tên, di chuyển tệp và thư mục
 - [ ] Đọc `FSCTL_READ_USN_JOURNAL`, dịch bản ghi thô thành `Change`
 - [ ] Phát hiện journal bị xoá rồi tạo lại, và journal cuộn vòng
 - [ ] Gộp thay đổi rồi dựng lại một lần, thay vì dựng lại theo từng thay đổi
@@ -521,6 +521,27 @@ xong.
 - [ ] Cài / gỡ service, elevate **đúng một lần** lúc cài
 - [ ] Gỡ ứng dụng thì **phải** gỡ luôn service
 - [ ] Service là **tuỳ chọn** — không cài thì ứng dụng vẫn chạy đúng như hôm nay
+
+### Đo được: dựng lại rẻ, và số lượng thay đổi gần như không tính phí
+
+`cargo bench --bench search -- rebuild_with`, trên index tổng hợp 500.000 mục:
+
+| Số thay đổi áp vào | Thời gian |
+|---|---|
+| 0 | 160 ms |
+| 100 | 170 ms |
+| 10.000 | **170 ms** |
+
+Mười nghìn thay đổi tốn đúng bằng một trăm. Chi phí nằm hết ở việc dựng lại, không ở số thay đổi —
+nghĩa là **gộp thay đổi lại rồi áp một lần là gần như miễn phí**, và không có lý do gì để áp từng
+cái một.
+
+Thư viện thật là 117.128 mục, tức khoảng **40 ms** một lần áp.
+
+Bench này cũng là thứ tìm ra [BUG-017](docs/bug.md#bug-017): `rebuild_with/0` mất 165 ms còn
+`rebuild_with/100` chỉ 21,9 ms — áp một trăm thay đổi mà nhanh hơn bảy lần so với áp không thay đổi
+nào. Nguyên nhân là số `0` đang được coi là một định danh hợp lệ, nên một thay đổi xoá sạch cả
+index. 149 test không bắt được; một con số vô lý thì bắt được ngay.
 
 ### Giao tiếp giữa service và GUI — chọn đường ít quyền nhất trước
 

@@ -640,3 +640,53 @@ nhắm vào ai.
 **Ghi chú trung thực.** Lần chạy hỏng đó đã thực sự gửi `Down` và `Ctrl+Enter` vào VS Code trước
 khi tôi phát hiện. Hai phím này không sửa nội dung tệp, nhưng có thể đã đổi vị trí con trỏ hoặc mở
 thêm một khung soạn thảo.
+
+---
+
+## BUG-017 🔴 — Số 0 được coi là một định danh hợp lệ, một thay đổi xoá sạch cả index
+
+**Giai đoạn:** P9 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Bench đo `rebuild_with` trên index tổng hợp 500.000 mục cho ra:
+
+| Số thay đổi áp vào | Thời gian |
+|---|---|
+| 0 | **165 ms** |
+| 100 | **21,9 ms** |
+
+Áp một trăm thay đổi **nhanh hơn bảy lần** so với áp không thay đổi nào. Một kết quả không thể
+đúng được.
+
+**Nguyên nhân.** Khi thêm tham số `frn` vào `IndexBuilder`, mọi lời gọi trong bench được sửa hàng
+loạt để truyền `0`. Nên cả 500.000 mục trong index tổng hợp đều mang `frn = 0`.
+
+`rebuild_with` khoá theo `(volume, frn)`. Thay đổi đầu tiên trong bench là
+`Gone { volume: b'D', frn: 0 }` — và nó khớp **toàn bộ 500.000 mục cùng lúc**. Index bị xoá sạch,
+nên phần dựng lại gần như không còn gì để làm. Đó chính là 21,9 ms.
+
+**Vì sao nguy hiểm hơn vẻ ngoài của nó.** Đây không phải lỗi của bench. Bench chỉ là thứ **duy
+nhất** tình cờ chạm vào nó. Trong `rebuild_with`, `0` là một khoá tra cứu bình thường như mọi số
+khác, và `Index::frn()` trả về `0` cho bất kỳ mục nào không có FRN. Một index dựng từ mã cũ, hoặc
+một bản ghi journal dị dạng, sẽ khiến **một** thay đổi xoá **mọi** mục như vậy — im lặng, không lỗi,
+không cảnh báo.
+
+**Cách sửa.** Đặt tên cho hằng số đó và chặn nó ở cả ba nơi: lúc gộp thay đổi, lúc dựng bảng tra
+vị trí cũ, và lúc đối chiếu từng mục.
+
+```rust
+/// Not a reference number NTFS ever hands out, so it is safe as "no identity".
+const NO_FRN: u64 = 0;
+```
+
+NTFS không bao giờ cấp `0`: record 0 là chính `$MFT` và luôn có sequence number ở 16 bit cao, còn
+gốc ổ đĩa là record 5. Nên `0` an toàn để dùng làm giá trị "không có định danh".
+
+**Chống tái phát.** Hai test: `zero_is_not_an_identity_and_matches_nothing` (index có mục `frn = 0`
+lẫn mục có FRN thật — thay đổi mang `frn = 0` không được đụng vào mục nào, còn FRN thật vẫn phải
+hoạt động) và `a_change_carrying_no_reference_number_is_dropped`. Bench cũng được sửa để mỗi mục
+tổng hợp mang một FRN riêng.
+
+**Bài học.** Bench bắt được thứ 149 test không bắt được, và bắt được **không phải bằng một assertion
+nào cả** — chỉ bằng một con số vô lý. Test kiểm tra thứ tôi nghĩ ra để kiểm tra; số đo thì phơi ra
+thứ tôi không nghĩ tới. Cùng họ với [BUG-010](#bug-010) (thumbnail 1,27 MB — test pass, chỉ số byte
+in ra là sai) và [BUG-013](#bug-013) (hàng đợi sắp xếp ngược — mọi chỉ báo đều xanh).

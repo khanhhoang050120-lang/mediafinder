@@ -4,3 +4,4 @@ pub mod fold;
 pub mod model;
 pub mod persist;
 pub mod search;
+pub mod update;

@@ -31,6 +31,29 @@ pub const MAX_EXT_LEN: usize = 5;
 /// Written as a `match` on byte-string literals rather than a lookup table so
 /// rustc compiles it into a length-then-content decision tree; this runs once
 /// per MFT record, several million times per scan.
+/// Classify a filename that is already a `String`.
+///
+/// The scan path has its own version working straight off UTF-16
+/// (`usn_enum::classify_utf16`), because it runs millions of times and must
+/// not decode a name it is about to reject. This one is for the few names that
+/// arrive as text — journal updates and tests — and shares the same table, so
+/// the two can never disagree about what counts as media.
+pub fn classify_name(name: &str) -> Option<MediaKind> {
+    let dot = name.rfind('.')?;
+    let ext = &name.as_bytes()[dot + 1..];
+    if ext.is_empty() || ext.len() > MAX_EXT_LEN {
+        return None;
+    }
+    let mut buf = [0u8; MAX_EXT_LEN];
+    for (slot, &c) in buf.iter_mut().zip(ext) {
+        if c > 0x7F {
+            return None;
+        }
+        *slot = c.to_ascii_lowercase();
+    }
+    kind_from_ext(&buf[..ext.len()])
+}
+
 pub fn kind_from_ext(ext: &[u8]) -> Option<MediaKind> {
     use MediaKind::*;
     Some(match ext {
