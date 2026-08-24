@@ -34,6 +34,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P6** | Enrichment metadata + lọc | ✅ **XONG** — 118 test, lọc 1080p chạy 9,1 ms |
 | **P7** | Tìm file trùng | ✅ **XONG** — 124 test, tìm ra 520,7 GB trùng lặp |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ✅ **XONG** — 126 test, kiểm chứng trên bản release |
+| **P9** | Windows Service theo dõi USN realtime | 🔵 **kế hoạch** — chưa bắt đầu, chờ quyết định |
+| **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
 
@@ -407,7 +409,7 @@ Hai lỗi lộ ra ở lượt test này, cả hai đều đã sửa:
 [BUG-014](docs/bug.md#bug-014) (mời gọi phím tắt mà app không sở hữu) và
 [BUG-015](docs/bug.md#bug-015) (gọi được cửa sổ nhưng không đặt con trỏ vào ô tìm kiếm).
 
-### Cập nhật realtime qua USN Journal — KHÔNG LÀM, có lý do
+### Cập nhật realtime qua USN Journal — KHÔNG LÀM Ở P8, chuyển sang P9
 
 `FSCTL_READ_USN_JOURNAL` cần mở handle `\\.\C:`, tức là **cần quyền Administrator**. Đo được ở
 P1: chạy không elevate thì mọi volume đều trả `AccessDenied`.
@@ -423,8 +425,138 @@ Các cách vượt qua, và vì sao không chọn:
 | Windows Service chạy nền có quyền | Đúng đắn nhất (Everything làm vậy), nhưng là một dự án con riêng: cài đặt, gỡ bỏ, IPC, quyền |
 | Scheduled Task chạy `--index` định kỳ | Khả thi, nhưng vẫn là quét định kỳ chứ không phải realtime |
 
-**Đã chọn:** giữ nút "Quét lại" — quét đầy đủ mất ~38 giây và người dùng chủ động. `next_usn` của
-từng volume vẫn được lưu trong cache, nên nếu sau này thêm service thì hạ tầng đã sẵn sàng.
+**Đã chọn cho P8:** giữ nút "Quét lại" — quét đầy đủ mất ~38 giây và người dùng chủ động.
+
+Hạ tầng cho service đã có sẵn từ P4: mỗi volume được lưu một `VolumeStamp` trong cache gồm
+`letter`, `serial`, **`journal_id`**, **`next_usn`**, `file_count`. `journal_id` mới là trường
+quan trọng nhất — nó là thứ duy nhất phát hiện được journal đã bị xoá rồi tạo lại, trường hợp mà
+`next_usn` cũ trở thành vô nghĩa. Kế hoạch chi tiết ở P9 bên dưới.
+
+---
+
+## P9 — Windows Service theo dõi USN realtime 🔵
+
+**Chưa bắt đầu.** Mục này là kế hoạch, không phải mô tả thứ đã có. Mọi ô đều `[ ]`.
+
+**Mục tiêu.** Bỏ nút "Quét lại". Tạo tệp media mới xong thì nó có mặt trong kết quả tìm kiếm ngay,
+không cần người dùng làm gì.
+
+### Vướng mắc thật sự không nằm ở việc đọc journal
+
+Đọc `FSCTL_READ_USN_JOURNAL` là phần dễ — nó gần giống `FSCTL_ENUM_USN_DATA` đã viết ở P1. Phần khó
+là **áp thay đổi vào index đang chạy**, và ở đây kiến trúc hiện tại chặn lại:
+
+`Index` là bất biến theo thiết kế. `IndexBuilder` chỉ có `add_dir` / `add_file` rồi `finish()` —
+**không có API xoá**. Chuỗi nằm chung trong một arena `Vec<u8>`, tên tệp chỉ là `Span { off, len }`
+trỏ vào đó, nên xoá một mục tại chỗ là không làm được: khoảng trống để lại không ai dùng được, còn
+dồn lại thì mọi span phía sau đều phải dịch.
+
+Đó chính là thứ làm nó nhanh (xem bất biến số 6 trong `README.md`), nên không thể vứt đi. Ba đường ra:
+
+| Cách | Đánh đổi |
+|---|---|
+| Dựng lại toàn bộ index mỗi khi có thay đổi | Đơn giản nhất, nhưng ~38 giây một lần — mâu thuẫn với chính chữ "realtime" |
+| **Lớp phủ nhỏ có thể sửa, nằm cạnh index đông cứng** | Tìm kiếm phải quét hai nơi rồi hợp nhất, và cần nén định kỳ. Chi phí nằm ở chỗ đo được, kiểm soát được |
+| Đổi `Index` sang cấu trúc có tombstone + free list | Phá vỡ SoA + arena — mất đúng thứ khiến tìm kiếm chạy 0,5 ms |
+
+**Nghiêng về cách 2.** Index đông cứng giữ nguyên như hôm nay; thay đổi đi vào một lớp phủ nhỏ —
+vài nghìn mục là cùng, giữa hai lần nén. Tìm kiếm quét lớp phủ trước (nó bé nên gần như miễn phí),
+rồi quét index chính và bỏ qua những mục lớp phủ đã đánh dấu xoá. Nén thành index mới khi lớp phủ
+vượt ngưỡng hoặc khi máy rảnh.
+
+Cách này còn có một lợi thế không hiển nhiên với **đổi tên thư mục**: một thao tác đổi tên thư mục
+làm đổi đường dẫn của toàn bộ tệp bên dưới nó. Nhưng bảng `dirs` được tách riêng từ P2, nên đó chỉ
+là sửa **một** mục — vẫn rẻ kể cả khi thư mục đó chứa 50.000 tệp.
+
+### Việc phải làm
+
+- [ ] Đọc `FSCTL_READ_USN_JOURNAL` liên tục cho từng volume NTFS, nối từ `next_usn` đã lưu
+- [ ] Phát hiện **journal bị xoá rồi tạo lại**: `journal_id` khác `VolumeStamp` → buộc quét lại đầy đủ
+- [ ] Phát hiện **journal cuộn vòng**: `next_usn` đã lưu cũ hơn bản ghi cũ nhất còn lại → quét lại đầy đủ
+- [ ] Diễn giải `USN_REASON_*`: tạo, xoá, đổi tên, đổi dữ liệu
+- [ ] Ghép cặp `RENAME_OLD_NAME` + `RENAME_NEW_NAME` — hai bản ghi rời của cùng một thao tác
+- [ ] Lớp phủ có thể sửa, hợp nhất lúc tìm kiếm, nén định kỳ
+- [ ] Volume gắn vào / tháo ra giữa chừng
+- [ ] Service chết rồi bật lại → nối tiếp từ `next_usn` đã lưu, không quét lại từ đầu
+- [ ] Cài / gỡ service, elevate **đúng một lần** lúc cài
+- [ ] Gỡ ứng dụng thì **phải** gỡ luôn service
+- [ ] Service là **tuỳ chọn** — không cài thì ứng dụng vẫn chạy đúng như hôm nay
+
+### Giao tiếp giữa service và GUI — chọn đường ít quyền nhất trước
+
+Service chạy dưới `LocalSystem`, tức là **đọc được mọi tệp trên máy**. GUI chạy dưới quyền người
+dùng thường. Bất cứ kênh nào nối hai bên cũng là một mặt tấn công leo thang đặc quyền:
+
+| Cách | Mặt tấn công | Độ trễ |
+|---|---|---|
+| **Service ghi cache, GUI theo dõi tệp bằng `ReadDirectoryChangesW`** | Gần như không có — không tồn tại kênh ra lệnh nào | Cao hơn, phải ghi lại cả tệp |
+| Named pipe có ACL chặt | Phải tự viết ACL đúng; sai một chỗ là mọi tiến trình local đều ra lệnh được cho service | Thấp |
+| TCP trên localhost | Không nên — mọi thứ trên máy đều nối được | Thấp |
+
+**Bắt đầu bằng cách 1.** Chỉ chuyển sang named pipe khi **đo được** rằng độ trễ ghi tệp là vấn đề
+thật, chứ không phải vì nó nghe chuyên nghiệp hơn. Nếu dùng pipe: ACL chỉ mở cho SID của phiên đăng
+nhập tương tác, và service phải coi **mọi** thông điệp nhận được là dữ liệu không tin được — nó là
+bên đang giữ đặc quyền.
+
+### Rủi ro cần theo dõi
+
+| Rủi ro | Giảm thiểu |
+|---|---|
+| Service treo hoặc rò bộ nhớ, chạy nền hàng tháng không ai để ý | Log xoay vòng; đo mức dùng RAM sau 24 giờ và sau 7 ngày trước khi coi là xong |
+| Đổi tên thư mục gốc làm sai đường dẫn hàng loạt | Test riêng: đổi tên thư mục có ≥10.000 tệp bên dưới |
+| Cặp đổi tên bị tách qua hai lượt đọc journal | Giữ bản ghi lẻ lại tới lượt sau, không xử lý vội |
+| Gỡ ứng dụng để sót service `LocalSystem` | Test gỡ cài đặt là **tiêu chí nghiệm thu**, không phải việc làm thêm |
+| Lớp phủ phình vô hạn nếu không nén | Ngưỡng cứng + nén cưỡng bức, có test khoá lại |
+
+### Tiêu chí nghiệm thu
+
+- [ ] Tạo một tệp `.mp4` mới → thấy trong kết quả **dưới 5 giây**, không bấm gì
+- [ ] Xoá tệp đó → biến khỏi kết quả, cũng không bấm gì
+- [ ] Đổi tên một thư mục có ≥1.000 tệp media → mọi đường dẫn con cập nhật đúng
+- [ ] Tắt service → ứng dụng vẫn tìm kiếm bình thường trên cache cũ
+- [ ] Gỡ ứng dụng → `sc query` không còn thấy service
+- [ ] Chạy liên tục 24 giờ → RAM không tăng đơn điệu
+
+---
+
+## BT — Bảo trì sau phát hành 🟢
+
+Không phải một giai đoạn có điểm kết thúc. Quy tắc số 5 vẫn nguyên hiệu lực: **mọi vấn đề gặp trong
+lúc dùng thật đều phải ghi lại**, theo đúng bảng phân loại ở [`docs/README.md`](./docs/README.md).
+
+### Ghi vào đâu
+
+Không đổi gì so với trước: đọc bảng "Ghi vào file nào?" từ trên xuống, dừng ở dòng khớp đầu tiên.
+Mỗi phiên dùng thật có phát hiện gì thì thêm một mục có ngày vào
+[`docs/test-log.md`](./docs/test-log.md).
+
+Khác biệt duy nhất của giai đoạn này: **nguồn phát hiện là người dùng, không phải kịch bản test.**
+Nghĩa là mô tả ban đầu sẽ mơ hồ ("tìm không ra"), và việc đầu tiên luôn là **tái hiện được lỗi** —
+chưa tái hiện được thì chưa biết mình đang sửa cái gì.
+
+### Những ca đã biết là dễ sai, cần thu thập thêm
+
+`SPEC-002` xuất phát từ đúng một lần người dùng dán tiêu đề video vào và không ra kết quả. Nó phơi
+ra hai chuyện cùng lúc: dấu câu dính vào token, và tên tệp bị trình tải xuống cắt ngắn. Loại ca đó
+gần như chắc chắn còn nữa:
+
+| Ca | Vì sao dễ sai |
+|---|---|
+| Số tập `S01E02` / `1x02` / `Tập 2` | Ba cách viết cùng một thứ, hiện được chấm điểm như ba chuỗi không liên quan |
+| Viết tắt (`ĐH`, `TP.HCM`) | Fold xong còn `dh`, `tp.hcm` — dấu chấm vẫn dính vào token |
+| Chỉ gõ năm (`2019`) | Khớp cả tên tệp, đường dẫn lẫn số thứ tự ngẫu nhiên — nhiễu rất nặng |
+| Ý nghĩa nằm hết ở tên thư mục, tên tệp chỉ là `1.mp4` | Đã xử lý ở `SPEC-001`, nhưng **trọng số** thư mục so với tên tệp thì chưa hề kiểm chứng bằng dữ liệu thật |
+| Tên riêng có `đ` gõ không dấu (`da nang` ↔ `Đà Nẵng`) | Đã có test, nhưng chỉ với vài chuỗi cố định |
+
+### Đề xuất: đo thay vì đoán, nhưng chỉ đo tại chỗ
+
+Muốn chỉnh điểm số cho đúng thì cần biết truy vấn nào **trả về 0 kết quả** — đó là tín hiệu rõ nhất
+cho biết chỗ nào đang hỏng. Đề xuất: ghi các truy vấn 0 kết quả vào một log **cục bộ**, kèm nút xem,
+nút xoá và nút tắt hẳn ngay trong giao diện.
+
+Ràng buộc bắt buộc nếu làm: **không gửi đi đâu hết.** Truy vấn tìm kiếm cho biết người dùng có
+những tệp gì trên máy — đó là dữ liệu riêng tư, không phải số liệu sử dụng. Mặc định phải là tắt,
+và bật lên phải là một hành động có chủ ý.
 
 ---
 
