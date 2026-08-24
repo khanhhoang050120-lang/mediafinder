@@ -340,6 +340,198 @@ pub fn run_incremental() -> bool {
     true
 }
 
+/// Report what the change journal still remembers being deleted.
+///
+/// Written to answer one question the index cannot: an index says what is
+/// there now, never what used to be. When a scan returns far fewer files than
+/// the last one, the only honest source is the journal — it recorded every
+/// deletion as it happened, with the name and the time.
+///
+/// Reads nothing but the journal and writes nothing at all.
+///
+/// ```text
+/// mediafinder.exe --audit D
+/// ```
+pub fn run_audit(args: &[String]) {
+    use ntfs::usn_journal;
+    use ntfs::volume;
+    use std::collections::BTreeMap;
+
+    let only: Option<char> = args
+        .iter()
+        .skip_while(|a| *a != "--audit")
+        .nth(1)
+        .and_then(|a| a.chars().next())
+        .map(|c| c.to_ascii_uppercase());
+
+    for v in volume::list_volumes() {
+        if !v.is_scannable() {
+            continue;
+        }
+        if only.is_some_and(|c| v.letter.to_ascii_uppercase() != c) {
+            continue;
+        }
+        let Ok(handle) = volume::open_volume(&v) else {
+            tracing::error!("ổ {}: không mở được", v.letter);
+            continue;
+        };
+
+        let started = std::time::Instant::now();
+        match usn_journal::audit_deletions(&handle, v.letter, true) {
+            Ok((deletions, oldest, newest)) => {
+                let files = deletions.iter().filter(|d| !d.is_dir).count();
+                let dirs = deletions.len() - files;
+                tracing::info!(
+                    "ổ {}: nhật ký còn nhớ từ usn={} tới {} — {} tệp media và {} thư mục đã bị xoá [{:.1}s]",
+                    v.letter,
+                    oldest,
+                    newest,
+                    files,
+                    dirs,
+                    started.elapsed().as_secs_f64()
+                );
+
+                // Group by day, so a mass deletion shows up as a spike rather
+                // than as a wall of individual lines.
+                let mut per_day: BTreeMap<String, usize> = BTreeMap::new();
+                for d in deletions.iter().filter(|d| !d.is_dir) {
+                    *per_day.entry(filetime_day(d.filetime)).or_default() += 1;
+                }
+                for (day, n) in &per_day {
+                    tracing::info!("    {day}: {n} tệp media");
+                }
+
+                // And by extension, because "70 000 files" says much less than
+                // "70 000 thumbnails" or "70 000 videos".
+                let mut per_ext: BTreeMap<String, usize> = BTreeMap::new();
+                for d in deletions.iter().filter(|d| !d.is_dir) {
+                    let ext = d
+                        .name
+                        .rsplit_once('.')
+                        .map(|(_, e)| e.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    *per_ext.entry(ext).or_default() += 1;
+                }
+                let mut by_count: Vec<_> = per_ext.into_iter().collect();
+                by_count.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+                for (ext, n) in by_count.iter().take(12) {
+                    tracing::info!("    .{ext}: {n}");
+                }
+
+                // Which folders lost files. The journal names only the parent
+                // reference number, but the index still holds a table of
+                // directories with theirs — so any folder that survived the
+                // deletion can be named.
+                if let Ok(cache) = index::persist::load() {
+                    let ix = &cache.index;
+                    let mut by_frn: std::collections::HashMap<u64, usize> =
+                        std::collections::HashMap::new();
+                    for i in 0..ix.dir_count() {
+                        if ix.volume_of_dir(i) == (v.letter as u8).to_ascii_uppercase() {
+                            by_frn.insert(ix.dir_frn(i), i);
+                        }
+                    }
+                    // Folders that were deleted too, so a path can be walked
+                    // back up out of the deleted records themselves.
+                    let gone_dirs: std::collections::HashMap<u64, (&str, u64)> = deletions
+                        .iter()
+                        .filter(|d| d.is_dir)
+                        .map(|d| (d.frn, (d.name.as_str(), d.parent_frn)))
+                        .collect();
+
+                    let resolve = |mut frn: u64| -> Option<String> {
+                        let mut parts: Vec<&str> = Vec::new();
+                        for _ in 0..64 {
+                            if let Some(&i) = by_frn.get(&frn) {
+                                let mut path = ix.dir_path(i).to_string();
+                                for part in parts.iter().rev() {
+                                    path.push('\\');
+                                    path.push_str(part);
+                                }
+                                return Some(path);
+                            }
+                            let (name, parent) = *gone_dirs.get(&frn)?;
+                            parts.push(name);
+                            frn = parent;
+                        }
+                        None
+                    };
+
+                    let mut per_dir: BTreeMap<String, usize> = BTreeMap::new();
+                    let mut unknown = 0usize;
+                    for d in deletions.iter().filter(|d| !d.is_dir) {
+                        match resolve(d.parent_frn) {
+                            Some(path) => *per_dir.entry(path).or_default() += 1,
+                            None => unknown += 1,
+                        }
+                    }
+                    let mut ranked: Vec<_> = per_dir.into_iter().collect();
+                    ranked.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+                    tracing::info!("  thư mục đã mất tệp ({} thư mục):", ranked.len());
+                    for (dir, n) in ranked.iter().take(25) {
+                        tracing::info!("    {n:>6}  {dir}");
+                    }
+                    if unknown > 0 {
+                        tracing::info!("    {unknown} tệp không dựng lại được đường dẫn");
+                    }
+
+                    // The top of each deleted tree: the folder whose own parent
+                    // still exists. That is the thing that was actually deleted;
+                    // everything below it merely went with it.
+                    let mut roots: BTreeMap<String, usize> = BTreeMap::new();
+                    for d in deletions.iter().filter(|d| d.is_dir) {
+                        if by_frn.contains_key(&d.parent_frn) {
+                            if let Some(parent) = resolve(d.parent_frn) {
+                                *roots
+                                    .entry(format!("{parent}\\{}", d.name))
+                                    .or_default() += 1;
+                            }
+                        }
+                    }
+                    if !roots.is_empty() {
+                        tracing::info!("  thư mục GỐC bị xoá (thư mục cha vẫn còn):");
+                        for dir in roots.keys().take(25) {
+                            tracing::info!("    {dir}");
+                        }
+                    }
+                }
+
+                for d in deletions.iter().filter(|d| !d.is_dir).take(8) {
+                    tracing::info!("    ví dụ: {} ({})", d.name, filetime_day(d.filetime));
+                }
+            }
+            Err(e) => tracing::error!("ổ {}: {e}", v.letter),
+        }
+    }
+}
+
+/// Windows FILETIME to a `YYYY-MM-DD HH` string, without pulling in a date crate.
+fn filetime_day(ft: i64) -> String {
+    // FILETIME counts 100-nanosecond ticks from 1601-01-01; Unix time counts
+    // seconds from 1970-01-01. 11644473600 seconds separate the two epochs.
+    const TICKS_PER_SEC: i64 = 10_000_000;
+    const EPOCH_DIFF: i64 = 11_644_473_600;
+    let unix = ft / TICKS_PER_SEC - EPOCH_DIFF;
+    if unix <= 0 {
+        return "?".into();
+    }
+    let days = unix / 86_400;
+    let hour = (unix % 86_400) / 3600;
+
+    // Civil-from-days, the standard algorithm — no external crate, no drift.
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02} {hour:02}h")
+}
+
 /// Read back the journal from each cursor the scan just recorded.
 ///
 /// The cursor is captured *before* a volume is enumerated, and enumerating
@@ -956,7 +1148,23 @@ fn print_samples(set: &ntfs::tree::ResolvedSet) {
 
 #[cfg(test)]
 mod tests {
-    use super::HOTKEY;
+    use super::{filetime_day, HOTKEY};
+
+    /// A wrong date here would be worse than no date: it is read while working
+    /// out when files disappeared, and a plausible-looking wrong day would send
+    /// the search in the wrong direction.
+    #[test]
+    fn filetime_converts_to_the_right_calendar_day() {
+        // Anchors computed independently: FILETIME = (unix + 11644473600) × 10^7.
+        assert_eq!(filetime_day(125_911_584_000_000_000), "2000-01-01 00h");
+        // 2026-08-24 12:00 UTC
+        assert_eq!(filetime_day(134_320_464_000_000_000), "2026-08-24 12h");
+        // A leap day, which is where naive date maths usually breaks.
+        // 2024-02-29 00:00 UTC = unix 1709164800
+        assert_eq!(filetime_day(133_536_384_000_000_000), "2024-02-29 00h");
+        // Nonsense in, honest answer out — never a date from 1601.
+        assert_eq!(filetime_day(0), "?");
+    }
 
     /// Locks the reasoning behind the combination rather than the combination
     /// itself — changing the key is fine, dropping one of these modifiers is

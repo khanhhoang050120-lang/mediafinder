@@ -36,10 +36,10 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 | [config.md](./config.md) | 5 | 1 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 3 | 1 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
-| [check.md](./check.md) | 5 | 0 | Nghi ngờ đã kiểm chứng |
+| [check.md](./check.md) | 6 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 3 | 1 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **38** | **3** | |
+| **Cộng** | **39** | **3** | |
 
 ### Mục còn mở
 

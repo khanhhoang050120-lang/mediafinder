@@ -18,6 +18,8 @@ fn main() {
         mediafinder::run_indexer();
     } else if args.iter().any(|a| a == "--watch") {
         mediafinder::run_watch(&args);
+    } else if args.iter().any(|a| a == "--audit") {
+        mediafinder::run_audit(&args);
     } else {
         mediafinder::run_gui();
     }

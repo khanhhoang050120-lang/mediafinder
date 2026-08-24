@@ -236,3 +236,58 @@ trạng thái đĩa đã không còn. Tổng dung lượng cũng đi cùng chi�
 point, nếu không nó vừa đếm trùng vừa chui vào những cây lẽ ra phải loại — và trên NAS thì junction
 còn có thể tạo thành vòng lặp thật sự. Đây chính là thứ khiến duyệt thư mục khó đúng hơn đọc MFT,
 và nó vừa tự chứng minh ngay trong công cụ kiểm chứng của tôi.
+
+---
+
+## CHECK-006 ✅ — 70.000 tệp biến mất: MediaFinder có xoá gì không?
+
+**Giai đoạn:** P9 · **Trạng thái:** KHÔNG PHẢI LỖI · **Ngày:** 2026-08-24
+
+**Câu hỏi.** Người dùng hỏi thẳng: chênh lệch 117.128 → 46.700 có phải là mất dữ liệu không, và
+phần mềm có xoá gì không. Với câu hỏi này thì trấn an là vô trách nhiệm — phải có bằng chứng.
+
+**Bước 1 — MediaFinder có đường mã nào xoá tệp không.** `grep` toàn bộ mã nguồn tìm `remove_file`,
+`remove_dir`, `DeleteFile`, `SHFileOperation`, `IFileOperation`, `File::create`, `OpenOptions`:
+
+| Nơi | Đối tượng |
+|---|---|
+| `ipc/elevate.rs` | `progress.json` — tệp của chính MediaFinder |
+| `index/persist.rs` | `index.bin` — cache |
+| `media/enrich.rs` | `metadata.bin` — kho metadata |
+| `media/dupes.rs` | trong `mod tests`, tạo tệp tạm để test |
+
+**Không có một lệnh nào chạm tới tệp của người dùng.** Tính năng tìm trùng lặp chỉ đọc 64 KB đầu
+và cuối để so vân tay; không có nút xoá.
+
+**Bước 2 — hỏi USN journal.** Chỉ mục nói cái gì *đang* có, không bao giờ nói cái gì *đã từng* có.
+Nguồn duy nhất trả lời được là journal — nó ghi từng lần xoá kèm tên và thời điểm. Viết chế độ
+`--audit`, chỉ đọc journal và không ghi gì.
+
+Kết quả trên ổ D:
+
+```
+70.461 tệp media và 4.430 thư mục đã bị xoá
+    2026-08-24 08h (UTC): 70.460 tệp
+    .mp3: 67.305 · .mp4: 2.793 · .mov: 187 · .png: 151
+thư mục GỐC bị xoá (thư mục cha vẫn còn):
+    D:\Sounds Edit\HƯNG
+```
+
+**Đúng một thư mục bị xoá**, trong đúng một giờ. 966 thư mục con mất tệp, tất cả đều nằm dưới nó.
+Thời điểm 08h UTC = **15h giờ địa phương**, và lượt quét trùng lặp của MediaFinder chạy 09h11–09h20
+UTC — **sau** khi việc xoá đã xong.
+
+**Bước 3 — có phải chuyển chỗ không?** Di chuyển trong cùng một volume sinh bản ghi `RENAME`, không
+sinh `FILE_DELETE`. Journal ghi `FILE_DELETE`, nên thư mục không bị chuyển đi đâu trong D:. Tìm
+trên cả ba ổ NAS tới độ sâu 3 cấp: không có thư mục nào tên `HƯNG`.
+
+**Bước 4 — còn khôi phục được không?** `D:\$RECYCLE.BIN` giữ 43.011 tệp nhưng chỉ 1.116 là media
+(16,6 GB). Một cây thư mục 265 GB thì vượt hạn ngạch thùng rác, nên Windows xoá thẳng.
+
+**Kết luận.** Không phải hồi quy, không phải lỗi phần mềm, và MediaFinder không xoá gì. Đây là một
+thao tác xoá thư mục xảy ra lúc 15h ngày 24/8, trước cả lượt quét trùng lặp.
+
+**Vì sao đáng giữ lại chế độ `--audit`.** Nó dựng lại được đường dẫn đầy đủ của những thư mục
+**đã bị xoá** — bằng cách đi ngược chuỗi cha qua chính các bản ghi xoá, cho tới khi gặp một thư mục
+còn tồn tại trong index. Không có nó thì câu trả lời dừng ở "70.000 tệp mất ở đâu đó"; có nó thì
+câu trả lời là một đường dẫn cụ thể và một mốc giờ.

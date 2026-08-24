@@ -250,6 +250,12 @@ pub fn open_volume(vol: &VolumeInfo) -> Result<VolumeHandle, NtfsError> {
 pub struct JournalInfo {
     pub journal_id: u64,
     pub next_usn: i64,
+    /// The oldest record the ring still holds.
+    ///
+    /// The journal is a fixed-size ring, so this moves forward as old records
+    /// are overwritten. It is how far back the journal can answer questions
+    /// about what happened — anything before it is gone for good.
+    pub first_usn: i64,
 }
 
 /// Query the USN journal.
@@ -282,6 +288,7 @@ pub fn query_journal(vol: &VolumeHandle) -> Result<JournalInfo, NtfsError> {
     Ok(JournalInfo {
         journal_id: data.UsnJournalID,
         next_usn: data.NextUsn,
+        first_usn: data.FirstUsn,
     })
 }
 

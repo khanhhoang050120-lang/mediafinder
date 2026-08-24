@@ -60,6 +60,7 @@ mod rec {
     pub const MAJOR_VERSION: usize = 4;
     pub const FILE_REFERENCE_NUMBER: usize = 8;
     pub const PARENT_FILE_REFERENCE_NUMBER: usize = 16;
+    pub const TIMESTAMP: usize = 32;
     pub const REASON: usize = 40;
     pub const FILE_ATTRIBUTES: usize = 52;
     pub const FILE_NAME_LENGTH: usize = 56;
@@ -227,6 +228,145 @@ pub fn read_batch(vol: &VolumeHandle, letter: char, from: Cursor) -> Result<Batc
             next_usn: usn,
         },
     })
+}
+
+/// One deletion, as the journal recorded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deletion {
+    pub name: String,
+    /// The entry's own reference number.
+    ///
+    /// Needed to rebuild the tree afterwards: when a whole folder is deleted,
+    /// its children name it as their parent, and it in turn names *its*
+    /// parent — so the path can be walked back up out of the deleted records
+    /// themselves, until it reaches a folder that still exists.
+    pub frn: u64,
+    pub parent_frn: u64,
+    pub is_dir: bool,
+    /// Windows FILETIME: 100-nanosecond ticks since 1601-01-01 UTC.
+    pub filetime: i64,
+}
+
+/// Everything the journal still remembers about files that were deleted.
+///
+/// Separate from [`read_batch`] because it needs something that one throws
+/// away: the **name**. A `Change::Gone` deliberately carries only a reference
+/// number, since the index already knows what that entry was — but a person
+/// asking "what happened to my files" needs the names back.
+///
+/// Reads from the oldest record the journal still holds, so how far back it
+/// can see depends on the journal's size and how busy the volume has been.
+pub fn audit_deletions(
+    vol: &VolumeHandle,
+    letter: char,
+    media_only: bool,
+) -> Result<(Vec<Deletion>, i64, i64), NtfsError> {
+    use crate::index::model::classify_name;
+
+    let live = super::volume::query_journal(vol)?;
+    let mut buffer: Vec<u64> = vec![0; BUFFER_BYTES / 8];
+    let mut out = Vec::new();
+    // `FirstUsn` is the oldest record still in the ring.
+    let mut usn = live.first_usn;
+    let oldest = usn;
+
+    loop {
+        let input = READ_USN_JOURNAL_DATA_V0 {
+            StartUsn: usn,
+            ReasonMask: u32::MAX,
+            ReturnOnlyOnClose: 0,
+            Timeout: 0,
+            BytesToWaitFor: 0,
+            UsnJournalID: live.journal_id,
+        };
+        let mut returned = 0u32;
+        let result = unsafe {
+            DeviceIoControl(
+                vol.raw(),
+                FSCTL_READ_USN_JOURNAL,
+                Some(&input as *const _ as *const c_void),
+                std::mem::size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
+                Some(buffer.as_mut_ptr() as *mut c_void),
+                BUFFER_BYTES as u32,
+                Some(&mut returned),
+                None,
+            )
+        };
+        if let Err(e) = result {
+            if restart_reason(&e).is_some() {
+                break;
+            }
+            return Err(NtfsError::Enumerate { letter, source: e });
+        }
+        if (returned as usize) < 8 {
+            break;
+        }
+        let bytes =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, returned as usize) };
+        let next = i64::from_le_bytes(bytes[..8].try_into().unwrap());
+        collect_deletions(&bytes[8..], media_only, &mut out, classify_name);
+        if next == usn {
+            break;
+        }
+        usn = next;
+    }
+
+    Ok((out, oldest, usn))
+}
+
+fn collect_deletions(
+    mut bytes: &[u8],
+    media_only: bool,
+    out: &mut Vec<Deletion>,
+    is_media: impl Fn(&str) -> Option<crate::index::model::MediaKind>,
+) {
+    while bytes.len() >= rec::MIN_SIZE {
+        let len = u32::from_le_bytes(bytes[rec::RECORD_LENGTH..][..4].try_into().unwrap()) as usize;
+        if len < rec::MIN_SIZE || len > bytes.len() {
+            break;
+        }
+        let record = &bytes[..len];
+        bytes = &bytes[len..];
+
+        if u16::from_le_bytes(record[rec::MAJOR_VERSION..][..2].try_into().unwrap()) != 2 {
+            continue;
+        }
+        let why = u32::from_le_bytes(record[rec::REASON..][..4].try_into().unwrap());
+        if why & reason::FILE_DELETE == 0 {
+            continue;
+        }
+        let name_len =
+            u16::from_le_bytes(record[rec::FILE_NAME_LENGTH..][..2].try_into().unwrap()) as usize;
+        let name_off =
+            u16::from_le_bytes(record[rec::FILE_NAME_OFFSET..][..2].try_into().unwrap()) as usize;
+        if name_len == 0 || name_off + name_len > len {
+            continue;
+        }
+        let name = String::from_utf16_lossy(
+            &record[name_off..name_off + name_len]
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect::<Vec<u16>>(),
+        );
+        let attrs = u32::from_le_bytes(record[rec::FILE_ATTRIBUTES..][..4].try_into().unwrap());
+        let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
+        if media_only && !is_dir && is_media(&name).is_none() {
+            continue;
+        }
+        out.push(Deletion {
+            name,
+            frn: u64::from_le_bytes(
+                record[rec::FILE_REFERENCE_NUMBER..][..8].try_into().unwrap(),
+            ),
+            parent_frn: u64::from_le_bytes(
+                record[rec::PARENT_FILE_REFERENCE_NUMBER..][..8]
+                    .try_into()
+                    .unwrap(),
+            ),
+            is_dir,
+            filetime: i64::from_le_bytes(record[rec::TIMESTAMP..][..8].try_into().unwrap()),
+        });
+    }
 }
 
 /// Translate a Win32 error into "the incremental path is over", or `None` if
