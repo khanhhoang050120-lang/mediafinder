@@ -48,6 +48,11 @@ pub fn run_gui() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .manage(media::thumbnail::ThumbnailService::new())
+        .register_asynchronous_uri_scheme_protocol(
+            ipc::protocol::SCHEME,
+            |ctx, request, responder| ipc::protocol::handle(ctx.app_handle(), request, responder),
+        )
         .invoke_handler(tauri::generate_handler![
             ipc::commands::search,
             ipc::commands::index_status,

@@ -30,8 +30,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P2** | Index + fold + search + bench | ✅ **XONG** — 72/72 test, bench 3,01 ms worst case |
 | **P3** | Nối Tauri + UI tối giản | ✅ **XONG** — 96/96 test, mở tệp + mở thư mục đã kiểm chứng |
 | **P4** | Cache trên đĩa + luồng elevate | ✅ **XONG** — 100/100 test, người dùng xác nhận chạy được |
-| **P5** | Thumbnail + lưới ảo hoá | 🔵 **đang làm** |
-| **P6** | Enrichment metadata + lọc | ⬜ chưa bắt đầu |
+| **P5** | Thumbnail + lưới ảo hoá | ✅ **XONG** — 108 test, 5.000 kết quả = 118 node |
+| **P6** | Enrichment metadata + lọc | 🔵 **sẵn sàng** |
 | **P7** | Tìm file trùng | ⬜ chưa bắt đầu |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ⬜ chưa bắt đầu |
 
@@ -267,21 +267,48 @@ nút "Quét lại" đẩy UAC đúng một lần.
 
 ---
 
-## P5 — Thumbnail + lưới ảo hoá ⬜
+## P5 — Thumbnail + lưới ảo hoá ✅
 
 **Tiêu chí nghiệm thu:** 5.000 kết quả, cuộn mượt, chỉ ~30 DOM node (đo bằng DevTools).
 
-- [ ] Thêm crate `image`, `lru`
-- [ ] `media/thumbnail.rs` — `IShellItemImageFactory::GetImage`
-- [ ] `media/thumbnail.rs` — thử `SIIGBF_INCACHEONLY` trước, fallback sinh mới
-- [ ] `media/thumbnail.rs` — pool 4 worker, mỗi thread `CoInitializeEx(APARTMENTTHREADED)`
-- [ ] `media/thumbnail.rs` — HBITMAP → RGBA → encode
-- [ ] `media/thumbnail.rs` — LRU cache ~500 entry
-- [ ] `ipc/protocol.rs` — đăng ký scheme `thumb://{file_id}?s=N`
-- [ ] `src/lib/VirtualGrid.svelte` — ảo hoá list + grid, tái dùng DOM
-- [ ] Chỉ sinh thumbnail cho hàng đang hiển thị
-- [ ] Nâng giới hạn kết quả lên 5.000
-- [ ] Đo DOM node bằng DevTools khi cuộn
+- [x] Thêm crate `image` (chỉ mã hoá PNG), `lru`
+- [x] `media/thumbnail.rs` — `IShellItemImageFactory::GetImage`, không cần bundle ffmpeg
+- [x] `media/thumbnail.rs` — thử `SIIGBF_INCACHEONLY` trước, fallback sinh mới
+- [x] `media/thumbnail.rs` — pool 4 worker, mỗi thread `CoInitializeEx(APARTMENTTHREADED)` một lần
+- [x] `media/thumbnail.rs` — HBITMAP → RGBA (top-down, hoán BGR) → PNG
+- [x] `media/thumbnail.rs` — LRU 512 mục + hàng đợi chặn trên 64 việc
+- [x] `ipc/protocol.rs` — scheme `thumb://{epoch}/{index}?s=N`, có epoch chống lẫn ảnh sau khi quét lại
+- [x] `src/lib/VirtualList.svelte` — ảo hoá cả list lẫn grid, tái dùng DOM
+- [x] Chỉ sinh thumbnail cho hàng đang hiển thị (`loading="lazy"` + ảo hoá)
+- [x] Giới hạn kết quả 5.000 (đã đặt từ P2)
+- [x] Nút chuyển chế độ xem danh sách ↔ lưới ảnh
+- [x] Điều hướng bàn phím theo lưới (`←→` khi ở chế độ lưới)
+- [x] Giới hạn kích thước thumbnail phía server (chống URL bịa số lớn)
+- [x] Kiểm chứng sinh thumbnail thật từ thư viện người dùng (video/ảnh/nhạc)
+- [x] Đo số phần tử khi cuộn — **phẳng hoàn toàn**, xem bảng dưới
+- [x] Buộc thumbnail thật, không nhận icon loại tệp (`SIIGBF_THUMBNAILONLY`)
+
+### Số đo ảo hoá (đếm phần tử UIA của WebView)
+
+| Truy vấn | Số kết quả | Phần tử UIA |
+|---|---|---|
+| `Deep-sea.avif` | 38 | 118 |
+| `anglerfish` | 84 | 133 |
+| `deep sea` | 3.333 | **118** |
+| `mp4` | 5.000 | **118** |
+| `a` | 5.000 | **118** |
+
+5.000 kết quả render đúng bằng số phần tử với 38 kết quả — số node không phụ thuộc số kết quả.
+
+### Số đo thumbnail
+
+| | Trước khi sửa | Sau |
+|---|---|---|
+| video | 1280×720 · 1.269.526 byte · 980ms | 192×108 · **37.475 byte** · **51ms** |
+| image | 242×242 · 82.888 byte · 50ms | 192×192 · **51.976 byte** · **9ms** |
+| cache lần 2 | — | **0,003 ms** |
+
+Cache 512 mục: ~18 MB thay vì 650 MB.
 
 ---
 

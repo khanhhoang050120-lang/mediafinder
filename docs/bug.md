@@ -7,7 +7,7 @@
 
 **Trạng thái:** `MỞ` · `ĐANG SỬA` · `ĐÃ SỬA` · `WORKAROUND` · `CẦN XÁC MINH` · `CẦN QUYẾT ĐỊNH` · `KHÔNG SỬA` · `KHÔNG PHẢI LỖI`
 
-**Cấp ID tiếp theo:** `BUG-009`
+**Cấp ID tiếp theo:** `BUG-012`
 
 ## Bảng tổng hợp
 
@@ -21,6 +21,9 @@
 | [BUG-006](#bug-006) | 🟠 | Fold tách âm tiết Hangul thành Jamo, không ghép lại | P2 | ĐÃ SỬA |
 | [BUG-007](#bug-007) | 🔴 | `BinaryHeap::with_capacity(limit+1)` cấp phát không giới hạn | P2 | ĐÃ SỬA |
 | [BUG-008](#bug-008) | 🔴 | Lượt quét thất bại ghi đè chỉ mục tốt bằng chỉ mục rỗng | P4 | ĐÃ SỬA |
+| [BUG-009](#bug-009) | 🔴 | `convertFileSrc` mã hoá `/` thành `%2F` → mọi thumbnail 400 trong im lặng | P5 | ĐÃ SỬA |
+| [BUG-010](#bug-010) | 🔴 | Thumbnail video trả về ảnh full-res, 1,27 MB mỗi cái | P5 | ĐÃ SỬA |
+| [BUG-011](#bug-011) | 🟠 | Video hiện icon chung của Windows thay vì khung hình thật | P5 | ĐÃ SỬA |
 
 ---
 
@@ -291,3 +294,139 @@ Test thứ hai kiểm tra lượt quét thất bại vẫn đặt `finished`, n�
 luôn có đủ quyền. Nó chỉ lộ khi hỏi *"nếu bước này thất bại thì sao?"* ở từng chỗ có `continue`
 hoặc bỏ qua lỗi. Mỗi lần bỏ qua một lỗi là một lần ngầm khẳng định *"phần còn lại vẫn có nghĩa"* —
 và ở đây lời khẳng định đó sai.
+
+---
+
+## BUG-009 🔴 — `convertFileSrc` mã hoá `/` thành `%2F` → mọi thumbnail 400 trong im lặng
+
+**Giai đoạn:** P5 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Lưới ảnh dựng đúng — đủ cột, ảo hoá chạy, tên tệp hiện đủ — nhưng **không ô nào có
+ảnh**. Không có thông báo lỗi, không có ảnh vỡ, chỉ là ô trống.
+
+**Vì sao im lặng.** Ba lớp che lấp nhau:
+
+1. Trình duyệt không báo gì khi `<img>` nhận HTTP 400.
+2. `onerror` của tôi gắn class `failed` → `display: none`, nên ảnh hỏng bị **giấu đi** thay vì
+   hiện biểu tượng vỡ. Đó là chủ ý (tệp không có preview thì không nên hiện ảnh vỡ), nhưng nó
+   cũng giấu luôn lỗi thật.
+3. Handler phía Rust trả `BAD_REQUEST` rồi thôi, không ghi log gì.
+
+**Cách tìm ra.** Không đoán mò — thêm đúng **một dòng log** vào nhánh phân tích thất bại:
+
+```
+WARN thumb: không phân tích được đường dẫn "/2%2F84341"
+```
+
+Nhìn là ra ngay.
+
+**Nguyên nhân.** URL thumbnail dựng bằng `convertFileSrc(`${epoch}/${index}`, "thumb")`.
+Hàm này **percent-encode** tham số được truyền vào, nên dấu `/` biến thành `%2F` trước khi tới
+backend. Hàm `parse_path` tách theo `/` nên không tách được gì.
+
+Không thể tránh bằng cách tự dựng URL: trên Windows, Tauri phục vụ scheme tuỳ biến qua
+`http://thumb.localhost`, còn trên nền tảng khác là `thumb://localhost`. `convertFileSrc` tồn tại
+chính để che khác biệt đó — viết tay URL sẽ chạy trong trình duyệt rồi 404 ở đây.
+
+**Cách sửa.** Nối hai số bằng `_` thay vì `/`. Dấu gạch dưới là ký tự **unreserved** nên
+`encodeURIComponent` không đụng tới.
+
+**Chống tái phát.** Test `a_slash_separator_is_rejected_because_it_never_arrives_intact` dùng đúng
+chuỗi quan sát được (`/2%2F84341`) và khẳng định nó **không** phân tích được — nếu ai đổi lại về
+dấu `/`, test sẽ đỏ ngay.
+
+**Bài học.** Một `onerror` xử lý "đẹp" có thể **giấu mất lỗi thật**. Ở đây việc ẩn ảnh hỏng là
+đúng về mặt sản phẩm, nhưng nó khiến 100% thất bại trông y hệt 0% thất bại. Nhánh lỗi ở phía
+server cần ghi log ngay cả khi phía client đã xử lý "êm".
+
+---
+
+## BUG-010 🔴 — Thumbnail video trả về ảnh full-res, 1,27 MB mỗi cái
+
+**Giai đoạn:** P5 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Test tích hợp dựng thumbnail thật từ thư viện người dùng chạy **pass**. Nhưng số
+liệu in ra rất bất thường:
+
+```
+video  1269526 byte   980ms
+image    82888 byte    50ms
+audio    13804 byte   158ms
+```
+
+Yêu cầu 192×192, nhận về:
+
+| | Kích thước thật |
+|---|---|
+| video | **1280 × 720** |
+| image | 242 × 242 |
+| audio | 192 × 192 |
+
+**Nguyên nhân.** Cờ `SIIGBF_BIGGERSIZEOK` — nó *mời* provider trả về kích thước tự nhiên của nó,
+và provider video hiểu đúng nghĩa đen: trả nguyên khung hình 720p. Tệ hơn, `SIIGBF_RESIZETOFIT`
+thực chất bằng **0**, nên `RESIZETOFIT | BIGGERSIZEOK` chỉ còn `BIGGERSIZEOK`.
+
+**Mức độ nghiêm trọng.** Cache đặt 512 mục với giả định "10–25 KB mỗi PNG". Với 1,27 MB mỗi cái,
+cache đó là **650 MB RAM** — nhiều hơn cả index gấp 80 lần. Cộng thêm 980ms mỗi ảnh và ~1,3 MB
+truyền qua protocol cho **mỗi hàng** trong danh sách.
+
+**Cách sửa.** Bỏ `SIIGBF_BIGGERSIZEOK`. Thêm lưới an toàn phía Rust: nếu provider vẫn trả về to
+hơn kích thước yêu cầu thì thu nhỏ lại bằng `image::imageops::resize`. Provider thumbnail là code
+của bên thứ ba — một gói codec có thể cài provider riêng — nên không thể chỉ tin vào cờ.
+
+**Kết quả đo được.**
+
+| | Trước | Sau | |
+|---|---|---|---|
+| video | 1280×720 · 1.269.526 byte · 980ms | 192×108 · **37.475 byte** · **51ms** | nhỏ hơn 34× |
+| image | 242×242 · 82.888 byte · 50ms | 192×192 · **51.976 byte** · **9ms** | |
+
+Cache 512 mục giờ khoảng 18 MB thay vì 650 MB.
+
+**Bài học.** Test **pass** mà vẫn có lỗi nặng. Test hỏi "có dựng được ảnh không?" và câu trả lời
+là có. Chỉ vì test **in ra số byte và thời gian** nên con số 1.269.526 mới đập vào mắt. Nếu chỉ
+`assert!(png.len() > 200)` thì lỗi này đã lọt tới tận khi người dùng thấy app ăn 650 MB RAM.
+
+---
+
+## BUG-011 🟠 — Video hiện icon chung của Windows thay vì khung hình thật
+
+**Giai đoạn:** P5 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Sau khi sửa `BUG-009`, lưới ảnh đã hiện thumbnail. Nhưng nhìn kỹ ảnh chụp:
+**ảnh** (`.avif`, `.webp`, `.jpg`) có preview thật, còn **mọi video** (`.mp4`, `.webm`) đều hiện
+cùng một biểu tượng nút play xám — icon loại tệp của Windows.
+
+Nghịch lý: test tích hợp trước đó **đã trích được khung hình thật** từ một tệp `.mp4`. Nên trích
+xuất là làm được.
+
+**Nguyên nhân.** `IShellItemImageFactory::GetImage` không có cờ `SIIGBF_THUMBNAILONLY` sẽ **lùi về
+icon loại tệp** khi không có thumbnail sẵn. Tệ hơn: Windows **cache cả icon đó**, nên đường
+`SIIGBF_INCACHEONLY` trả về icon rồi dừng — và bước trích khung hình thật không bao giờ được chạy.
+
+Mỗi video trong lưới vì thế đều hiện đúng một biểu tượng giống nhau.
+
+**Vì sao đáng sửa.** Một công cụ tìm media mà hiện icon chung thì **không nói thêm điều gì** ngoài
+thứ tên tệp đã nói. Chính khung hình mới là lý do người ta cần lưới ảnh thay vì danh sách.
+
+**Cách sửa.** Thêm `SIIGBF_THUMBNAILONLY` vào **cả hai** lời gọi. Nó từ chối icon loại tệp:
+
+- Tệp có thumbnail thật → trả về khung hình / ảnh bìa.
+- Tệp không có → trả về rỗng, giao diện hiện huy hiệu màu theo loại.
+
+**Đánh đổi có chủ ý.** Tệp mp3 không nhúng ảnh bìa giờ **không có ảnh** thay vì hiện icon nốt nhạc.
+Đó là lựa chọn đúng: huy hiệu màu `A` của chúng ta đã nói "đây là nhạc" rồi, một icon nốt nhạc xám
+chỉ thêm nhiễu.
+
+**Kết quả đo được sau khi sửa.**
+
+```
+video  37.475 byte   54ms   ← khung hình thật
+image  51.976 byte   10ms   ← thumbnail thật
+audio  KHÔNG DỰNG ĐƯỢC     ← tệp không có ảnh bìa, huy hiệu màu thay thế
+```
+
+**Bài học.** Ảnh chụp màn hình bắt được lỗi mà test không bắt được. Test hỏi *"có dựng được ảnh
+không?"* và câu trả lời là có — chỉ là **ảnh sai**. Cả ba lỗi của P5 (`BUG-009`, `BUG-010`,
+`BUG-011`) đều chỉ lộ ra khi **nhìn vào thứ hiện lên màn hình**, chứ không phải khi đọc kết quả
+test.

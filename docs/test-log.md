@@ -187,3 +187,36 @@ Nó chỉ lộ khi hỏi *"nếu bước này thất bại thì sao?"* ở từn
 
 **Mục 5 lại là may mắn.** UAC bị từ chối ngoài ý muốn, nhưng nhờ đó **đường xử lý khó nhất được
 kiểm chứng trước** — và nó đúng hoàn toàn.
+
+### 2026-08-24 — Lượt test sau P5
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **108/108 pass** |
+| 2 | Chất lượng code Rust | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Type-check frontend | `npm run check` | ✅ 0 lỗi, 0 warning |
+| 4 | Dựng thumbnail thật | integration test trên thư viện người dùng | ✅ video + ảnh, kèm số byte và thời gian |
+| 5 | Ảnh có bị lật ngược không | **nhìn ảnh chụp** | ✅ trời trên, đường dưới — thứ tự dòng top-down đúng |
+| 6 | Màu có bị đảo không | **nhìn ảnh chụp** | ✅ trời xanh, cỏ xanh — hoán BGR→RGB đúng |
+| 7 | Cache thumbnail | đo lần 1 vs lần 2 | ✅ 13,65ms → **0,003ms**, cùng con trỏ `Arc` |
+| 8 | Kích thước thumbnail | đọc header PNG | ❌ **tìm ra `BUG-010`** — 1280×720 thay vì 192 — đã sửa |
+| 9 | Thumbnail hiện trong lưới | **nhìn ảnh chụp** | ❌ **tìm ra `BUG-009`** — ô trống hoàn toàn — đã sửa |
+| 10 | Video có khung hình thật không | **nhìn ảnh chụp** | ❌ **tìm ra `BUG-011`** — icon chung — đã sửa |
+| 11 | Ảo hoá: số node theo số kết quả | đếm phần tử UIA | ✅ 38 kết quả → 118 node · **5.000 kết quả → 118 node** |
+| 12 | Chuyển chế độ danh sách ↔ lưới | bấm nút qua UIA | ✅ hoạt động |
+| 13 | Giới hạn kích thước phía server | unit test `parse_size` | ✅ `s=999999` bị chặn ở 512 |
+
+**Kết luận lượt test P5:** 10/13 pass, 3 mục tìm ra lỗi — cả ba đều đã sửa.
+
+**Điểm đáng ghi nhất của P5: cả ba lỗi đều tìm ra bằng cách NHÌN, không phải bằng cách đọc kết quả
+test.**
+
+- `BUG-010` — test **pass**, nhưng con số `1269526 byte` in ra đập vào mắt. Nếu test chỉ
+  `assert!(png.len() > 200)` thì lỗi đã lọt tới khi người dùng thấy app ăn 650 MB RAM.
+- `BUG-009` — không có lỗi nào ở đâu cả. Trình duyệt im lặng khi `<img>` nhận 400, `onerror` của
+  tôi lại **giấu** ảnh hỏng đi. Chỉ ảnh chụp mới cho thấy ô trống. Sau đó thêm **một dòng log**
+  là ra ngay nguyên nhân.
+- `BUG-011` — thumbnail đã hiện, test vẫn pass. Nhưng nhìn kỹ thì mọi video đều cùng một icon xám.
+
+Bài học chung: **"có ảnh" không có nghĩa là "đúng ảnh".** Ba lỗi này đều lọt qua mọi assertion về
+kiểu dữ liệu và kích thước; chỉ có mắt người mới phân biệt được khung hình thật với icon chung.

@@ -44,6 +44,13 @@ pub struct AppState {
     /// matches has been superseded and stops as soon as it notices.
     generation: AtomicU64,
     meta: RwLock<IndexMeta>,
+    /// Bumped on every index replacement.
+    ///
+    /// Entry numbers are positions in the index, so after a rebuild the same
+    /// number means a different file. Thumbnail URLs carry this epoch so a
+    /// request issued before the swap is refused rather than answered with a
+    /// picture of the wrong file.
+    epoch: AtomicU64,
     /// True while an elevated indexer child is running.
     ///
     /// Guards against a second UAC prompt while the first scan is still going,
@@ -63,6 +70,7 @@ impl AppState {
             index: ArcSwap::from_pointee(Index::default()),
             generation: AtomicU64::new(0),
             meta: RwLock::new(IndexMeta::default()),
+            epoch: AtomicU64::new(1),
             scanning: AtomicBool::new(false),
         }
     }
@@ -87,6 +95,8 @@ impl AppState {
         };
         self.index.store(Arc::new(index));
         *self.meta.write() = meta;
+        // After this, every previously issued thumbnail URL is stale.
+        self.epoch.fetch_add(1, Ordering::Release);
     }
 
     /// Record that no index could be loaded, and why.
@@ -108,6 +118,10 @@ impl AppState {
 
     pub fn generation(&self) -> &AtomicU64 {
         &self.generation
+    }
+
+    pub fn index_epoch(&self) -> u64 {
+        self.epoch.load(Ordering::Acquire)
     }
 
     pub fn is_scanning(&self) -> bool {
@@ -177,6 +191,20 @@ mod tests {
         assert!(!m.loaded);
         assert_eq!(m.file_count, 0);
         assert_eq!(m.problem.as_deref(), Some("chưa có cache"));
+    }
+
+    #[test]
+    fn epoch_changes_whenever_the_index_does() {
+        // Thumbnail URLs are only safe because of this: a stale request must
+        // not resolve against a different file.
+        let s = AppState::new();
+        let first = s.index_epoch();
+        s.replace(index_with(3), 0);
+        let second = s.index_epoch();
+        assert_ne!(first, second);
+
+        s.replace(index_with(4), 0);
+        assert_ne!(second, s.index_epoch());
     }
 
     #[test]

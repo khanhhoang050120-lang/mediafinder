@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type MediaKind = "video" | "image" | "audio";
 
@@ -10,6 +10,8 @@ export interface SearchHit {
   score: number;
   /** How many of the query's words this file actually contains. */
   matched: number;
+  /** Position in the index, used to build the thumbnail URL. */
+  index: number;
 }
 
 export interface RelaxedInfo {
@@ -28,6 +30,8 @@ export interface SearchResponse {
    * no results, because the user stops looking.
    */
   relaxed: RelaxedInfo | null;
+  /** Which index these results came from; pins thumbnail URLs to it. */
+  epoch: number;
 }
 
 export interface IndexMeta {
@@ -125,6 +129,24 @@ export function scanProgress(): Promise<ScanStatus> {
 /** Load the cache the indexer just wrote. */
 export function reloadIndex(): Promise<IndexMeta> {
   return invoke<IndexMeta>("reload_index");
+}
+
+/**
+ * URL of a result's thumbnail.
+ *
+ * `convertFileSrc` maps the custom scheme to whatever form the platform's
+ * webview accepts — on Windows `thumb://` becomes `http://thumb.localhost`.
+ * Writing the scheme by hand would work in a browser and silently 404 here.
+ *
+ * The epoch pins the URL to the index that produced it, so a rescan landing
+ * mid-scroll cannot paint one file's picture beside another file's name.
+ *
+ * The two numbers are joined with `_` rather than `/`: `convertFileSrc`
+ * percent-encodes what it is given, so a slash reaches the backend as `%2F`
+ * and splits nothing.
+ */
+export function thumbUrl(epoch: number, index: number, size: number): string {
+  return `${convertFileSrc(`${epoch}_${index}`, "thumb")}?s=${size}`;
 }
 
 export function formatCount(n: number): string {

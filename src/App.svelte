@@ -1,5 +1,6 @@
 <script lang="ts">
   import ContextMenu, { type MenuItem } from "./lib/ContextMenu.svelte";
+  import VirtualList from "./lib/VirtualList.svelte";
   import {
     coalesce,
     formatCount,
@@ -11,6 +12,7 @@
     revealInExplorer,
     scanProgress,
     searchFiles,
+    thumbUrl,
     type IndexMeta,
     type MediaKind,
     type RelaxedInfo,
@@ -24,8 +26,18 @@
     { key: "audio", label: "Nhạc" },
   ];
 
+  // Rows are a fixed height so the virtualiser can find any index by
+  // arithmetic instead of measuring; measuring would mean laying out every
+  // result, which is the cost being avoided.
+  const LIST_ROW = 46;
+  const GRID_CELL = 168;
+  const GRID_MIN_COL = 168;
+  const THUMB_LIST = 64;
+  const THUMB_GRID = 256;
+
   let query = $state("");
   let hits = $state<SearchHit[]>([]);
+  let epoch = $state(0);
   let selected = $state(0);
   let elapsedMs = $state(0);
   let searching = $state(false);
@@ -36,13 +48,19 @@
   let menu = $state<{ x: number; y: number; hit: SearchHit } | null>(null);
   let scan = $state<ScanProgress | null>(null);
   let scanning = $state(false);
+  let grid = $state(false);
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   let inputEl: HTMLInputElement | undefined = $state();
-  let listEl: HTMLDivElement | undefined = $state();
+  let listRef = $state<ReturnType<typeof VirtualList> | undefined>();
+  let resultsWidth = $state(0);
+
+  const columns = $derived(
+    grid ? Math.max(1, Math.floor(resultsWidth / GRID_MIN_COL)) : 1,
+  );
+  const rowHeight = $derived(grid ? GRID_CELL : LIST_ROW);
 
   indexStatus().then((m) => (meta = m));
-  // A scan may already be running from a previous window session.
   scanProgress().then((s) => {
     if (s.scanning) startPolling();
   });
@@ -55,8 +73,8 @@
       scan = null;
       startPolling();
     } catch (e) {
-      // Declining UAC lands here. The backend already phrases it as an
-      // answer rather than a failure, so show it verbatim.
+      // Declining UAC lands here. The backend already phrases it as an answer
+      // rather than a failure, so show it verbatim.
       error = String(e);
     }
   }
@@ -69,7 +87,7 @@
       try {
         status = await scanProgress();
       } catch {
-        return; // transient; the next tick will pick it up
+        return; // transient; the next tick picks it up
       }
       scan = status.progress;
 
@@ -129,10 +147,11 @@
         // `null` means a newer keystroke already superseded this one.
         if (!res) return;
         hits = res.hits;
+        epoch = res.epoch;
         relaxed = res.relaxed;
         elapsedMs = res.elapsedMs;
         selected = 0;
-        listEl?.scrollTo({ top: 0 });
+        listRef?.scrollToTop();
       })
       .catch((e) => (error = String(e)))
       .finally(() => (searching = false));
@@ -180,35 +199,44 @@
   function move(delta: number) {
     if (!hits.length) return;
     selected = Math.max(0, Math.min(hits.length - 1, selected + delta));
-    // Keep the selection in view without yanking the whole list around.
-    listEl
-      ?.querySelector<HTMLElement>(`[data-row="${selected}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    listRef?.scrollToIndex(selected);
   }
 
   function onKeydown(e: KeyboardEvent) {
-    // While the context menu is up it owns the keyboard. Both components
-    // listen on `window`, and `stopPropagation` does not stop a sibling
-    // listener on the same target — without this guard Escape would close the
-    // menu *and* clear the search box in the same keystroke.
+    // While the context menu is up it owns the keyboard. Both components listen
+    // on `window`, and `stopPropagation` does not stop a sibling listener on
+    // the same target — without this guard Escape would close the menu *and*
+    // clear the search box in the same keystroke.
     if (menu) return;
 
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        move(1);
+        move(columns);
         break;
       case "ArrowUp":
         e.preventDefault();
-        move(-1);
+        move(-columns);
+        break;
+      case "ArrowRight":
+        if (grid) {
+          e.preventDefault();
+          move(1);
+        }
+        break;
+      case "ArrowLeft":
+        if (grid) {
+          e.preventDefault();
+          move(-1);
+        }
         break;
       case "PageDown":
         e.preventDefault();
-        move(10);
+        move(columns * 5);
         break;
       case "PageUp":
         e.preventDefault();
-        move(-10);
+        move(-columns * 5);
         break;
       case "Enter":
         e.preventDefault();
@@ -265,6 +293,26 @@
           onclick={() => toggleKind(k.key)}
         >{k.label}</button>
       {/each}
+      <button
+        class="chip icon"
+        class:on={grid}
+        title={grid ? "Chuyển sang danh sách" : "Chuyển sang lưới ảnh"}
+        aria-label={grid ? "Chuyển sang danh sách" : "Chuyển sang lưới ảnh"}
+        onclick={() => (grid = !grid)}
+      >
+        {#if grid}
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <path d="M2 4h12M2 8h12M2 12h12" stroke-linecap="round" />
+          </svg>
+        {:else}
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <rect x="2" y="2" width="5" height="5" rx="1" />
+            <rect x="9" y="2" width="5" height="5" rx="1" />
+            <rect x="2" y="9" width="5" height="5" rx="1" />
+            <rect x="9" y="9" width="5" height="5" rx="1" />
+          </svg>
+        {/if}
+      </button>
       <button class="chip rescan" onclick={startScan} disabled={scanning}>
         {scanning ? "Đang quét…" : "Quét lại"}
       </button>
@@ -286,9 +334,9 @@
           <span class="scan-count">ổ {scan.volumesDone + 1}/{scan.volumesTotal}</span>
         {/if}
       </div>
-      <!-- Indeterminate on purpose: the total record count of a volume is not
-           known until the scan reaches the end of it, so any percentage would
-           be invented. -->
+      <!-- Indeterminate on purpose: a volume's total record count is not known
+           until the scan reaches the end of it, so any percentage would be
+           invented. -->
       <div class="scan-bar"><div class="scan-fill"></div></div>
     </div>
   {/if}
@@ -300,33 +348,53 @@
     </div>
   {/if}
 
-  <div class="results" bind:this={listEl} role="listbox" tabindex="-1" aria-label="Kết quả tìm kiếm">
+  <div class="results" class:grid bind:clientWidth={resultsWidth}>
     {#if hits.length}
-      {#each hits as hit, i}
-        <div
-          class="row"
-          class:sel={i === selected}
-          data-row={i}
-          role="option"
-          aria-selected={i === selected}
-          tabindex="-1"
-          onclick={() => (selected = i)}
-          ondblclick={() => open(hit)}
-          oncontextmenu={(e) => onContextMenu(e, i)}
-          onkeydown={() => {}}
-        >
-          <span class="kind {hit.kind}">{hit.kind[0].toUpperCase()}</span>
-          <span class="text">
-            <span class="name">{hit.name}</span>
-            <span class="dir">{hit.dir}</span>
-          </span>
-          {#if relaxed}
-            <span class="matched" title="Số từ khớp trên tổng số từ trong truy vấn">
-              {hit.matched}/{relaxed.totalTokens}
+      <VirtualList
+        bind:this={listRef}
+        items={hits}
+        itemHeight={rowHeight}
+        {columns}
+        overscan={grid ? 2 : 4}
+      >
+        {#snippet row(hit: SearchHit, i: number)}
+          <div
+            class="row"
+            class:sel={i === selected}
+            role="option"
+            aria-selected={i === selected}
+            tabindex="-1"
+            onclick={() => (selected = i)}
+            ondblclick={() => open(hit)}
+            oncontextmenu={(e) => onContextMenu(e, i)}
+            onkeydown={() => {}}
+          >
+            <!--
+              `loading="lazy"` matters even here: the virtualiser keeps a few
+              overscan rows in the DOM that are not on screen, and without it
+              every one of them would trigger a decode.
+            -->
+            <img
+              class="thumb"
+              src={thumbUrl(epoch, hit.index, grid ? THUMB_GRID : THUMB_LIST)}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              onerror={(e) => (e.currentTarget as HTMLImageElement).classList.add("failed")}
+            />
+            <span class="kind {hit.kind}">{hit.kind[0].toUpperCase()}</span>
+            <span class="text">
+              <span class="name">{hit.name}</span>
+              <span class="dir">{hit.dir}</span>
             </span>
-          {/if}
-        </div>
-      {/each}
+            {#if relaxed}
+              <span class="matched" title="Số từ khớp trên tổng số từ trong truy vấn">
+                {hit.matched}/{relaxed.totalTokens}
+              </span>
+            {/if}
+          </div>
+        {/snippet}
+      </VirtualList>
     {:else}
       <p class="empty">
         {#if !query.trim()}
@@ -387,7 +455,7 @@
   .search:focus { border-color: var(--accent); }
   .search::placeholder { color: var(--text-dim); }
 
-  .chips { display: flex; gap: 6px; }
+  .chips { display: flex; gap: 6px; align-items: center; }
   .chip {
     padding: 7px 13px;
     font: inherit;
@@ -404,7 +472,16 @@
     background: var(--accent);
     border-color: var(--accent);
   }
-
+  .chip.icon {
+    display: grid;
+    place-items: center;
+    padding: 7px 10px;
+  }
+  .chip.icon svg {
+    width: 15px;
+    height: 15px;
+    stroke-linejoin: round;
+  }
   .chip.rescan { margin-left: 4px; }
   .chip.rescan:disabled { opacity: 0.55; }
 
@@ -423,7 +500,6 @@
     margin-bottom: 8px;
   }
   .scan-count { color: var(--text-dim); }
-
   .scan-bar {
     height: 4px;
     overflow: hidden;
@@ -441,6 +517,18 @@
     0% { transform: translateX(-100%); }
     100% { transform: translateX(340%); }
   }
+
+  /* Amber rather than red: this is not an error, it is the search telling the
+     user what it did. Red would suggest something went wrong. */
+  .partial {
+    padding: 9px 14px;
+    font-size: 12.5px;
+    color: #ffe0b0;
+    background: #3d3020;
+    border: 1px solid #5c4726;
+    border-radius: 8px;
+  }
+  .partial b { color: #ffc978; }
 
   .error {
     display: flex;
@@ -466,46 +554,38 @@
     cursor: default;
   }
 
-  /* Amber rather than red: this is not an error, it is the search telling the
-     user what it did. Red would suggest something went wrong. */
-  .partial {
-    padding: 9px 14px;
-    font-size: 12.5px;
-    color: #ffe0b0;
-    background: #3d3020;
-    border: 1px solid #5c4726;
-    border-radius: 8px;
-  }
-  .partial b { color: #ffc978; }
-
-  .matched {
-    flex: 0 0 auto;
-    padding: 2px 7px;
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-dim);
-    background: #2c313b;
-    border-radius: 999px;
-  }
-
   .results {
+    display: flex;
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
     background: var(--bg-raised);
     border: 1px solid var(--border);
     border-radius: 10px;
   }
 
+  /* ---- list mode ---- */
   .row {
     display: flex;
     gap: 11px;
     align-items: center;
-    padding: 7px 12px;
+    height: 100%;
+    padding: 0 12px;
     cursor: default;
   }
   .row:hover { background: #262a33; }
   .row.sel { background: #2f3a4f; }
+
+  .thumb {
+    flex: 0 0 auto;
+    width: 40px;
+    height: 30px;
+    object-fit: cover;
+    background: #12151b;
+    border-radius: 4px;
+  }
+  /* A file the shell cannot preview keeps its coloured kind badge instead of
+     showing a broken-image glyph. */
+  .thumb:global(.failed) { display: none; }
 
   .kind {
     flex: 0 0 22px;
@@ -521,8 +601,8 @@
   .kind.image { background: #23a06a; }
   .kind.audio { background: #c2683a; }
 
-  /* The two lines must never widen the row: long paths are the norm here, and
-     a horizontal scrollbar on the whole list would make it unusable. */
+  /* Long paths are the norm here; a horizontal scrollbar on the whole list
+     would make it unusable. */
   .text { min-width: 0; display: flex; flex-direction: column; }
   .name,
   .dir {
@@ -533,7 +613,46 @@
   .name { font-size: 14px; }
   .dir { font-size: 11.5px; color: var(--text-dim); }
 
+  .matched {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    background: #2c313b;
+    border-radius: 999px;
+  }
+
+  /* ---- grid mode ---- */
+  .results.grid .row {
+    position: relative;
+    flex-direction: column;
+    gap: 6px;
+    align-items: stretch;
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .results.grid .thumb {
+    flex: 1;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    object-fit: contain;
+    border-radius: 6px;
+  }
+  .results.grid .kind {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    opacity: 0.9;
+  }
+  .results.grid .text { flex: 0 0 auto; }
+  .results.grid .name { font-size: 12px; white-space: normal; line-height: 1.3; max-height: 2.6em; }
+  .results.grid .dir { display: none; }
+  .results.grid .matched { position: absolute; top: 14px; right: 14px; }
+
   .empty {
+    flex: 1;
     margin: 0;
     padding: 40px;
     text-align: center;

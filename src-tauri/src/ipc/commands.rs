@@ -28,6 +28,8 @@ pub struct SearchHit {
     pub score: i32,
     /// How many of the query's words this file actually contains.
     pub matched: u16,
+    /// Position in the index, used to build the thumbnail URL.
+    pub index: u32,
 }
 
 /// Present when nothing matched the whole query, so the UI can say plainly
@@ -49,6 +51,9 @@ pub struct SearchResponse {
     pub elapsed_ms: f64,
     pub searched: usize,
     pub relaxed: Option<RelaxedInfo>,
+    /// Which index these results came from; thumbnail URLs carry it so a
+    /// rescan cannot make them point at the wrong file.
+    pub epoch: u64,
 }
 
 fn parse_kinds(kinds: &[String]) -> Vec<MediaKind> {
@@ -100,6 +105,7 @@ pub async fn search(
             elapsed_ms: elapsed.as_secs_f64() * 1000.0,
             searched: index.len(),
             relaxed: None,
+            epoch: state.index_epoch(),
         });
     }
 
@@ -115,6 +121,7 @@ pub async fn search(
                 kind: index.kind(i).as_str(),
                 score: h.score,
                 matched: h.matched,
+                index: h.index,
             }
         })
         .collect();
@@ -128,6 +135,7 @@ pub async fn search(
             total_tokens: r.total_tokens,
             best_matched: r.best_matched,
         }),
+        epoch: state.index_epoch(),
     })
 }
 
