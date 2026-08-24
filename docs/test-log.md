@@ -274,3 +274,46 @@ chụp màn hình**, không mục nào bị test bắt.
 Cả hai con số đều **đúng** — nhưng chúng mô tả hai tập khác nhau: 500 là số nhóm đã tải về giao
 diện, còn dung lượng là tổng của cả 6.780 nhóm. Ghép lại thành một câu, nó nói sai gấp hơn mười
 lần. Không assertion nào bắt được loại lỗi này, vì từng thành phần đều chính xác.
+
+---
+
+### 2026-08-24 — Lượt test sau P8 (chạy trên **bản release**, không phải dev)
+
+Toàn bộ mục 4–16 chạy trên `target/release/mediafinder.exe` đã build bằng `cargo tauri build`,
+khởi động bằng `Start-Process` (tách khỏi tiến trình cha) để tránh [BUG-002](./bug.md#bug-002).
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **125/125 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Type-check frontend | `npm run check` | ✅ 106 tệp, 0 lỗi, 0 warning |
+| 4 | Build bản phát hành | `cargo tauri build` | ✅ exe **9,9 MB** + bộ cài NSIS, 3m23s |
+| 5 | Khởi động bản release | đọc log | ✅ nạp cache **117.128 tệp** trong **27 ms** |
+| 6 | Đăng ký phím tắt | đọc log | ✅ `phím tắt toàn cục: Ctrl+Alt+Space` |
+| 7 | Phím tắt có thật sự chiếm được không | tiến trình khác thử `RegisterHotKey` | ✅ trả `1409` — hệ thống xác nhận |
+| 8 | Gọi cửa sổ khi **không** có focus | `keybd_event` + `GetForegroundWindow` | ✅ lên foreground |
+| 9 | Bấm lại khi **đang** có focus | như trên | ✅ ẩn đi |
+| 10 | Bấm lại khi đang ẩn | như trên | ✅ hiện + focus |
+| 11 | Gọi lại khi đang **thu nhỏ** | `SW_MINIMIZE` rồi bấm, đọc `IsIconic` | ✅ 3/3 chu kỳ phục hồi |
+| 12 | **Gọi rồi gõ luôn** | bấm phím tắt rồi `SendKeys` ngay | ❌ **tìm ra lỗi** — chữ không vào ô nhập ([BUG-015](./bug.md#bug-015)) |
+| 13 | Gọi lại lần hai rồi gõ | gõ `avatar` khi ô đang có `anglerfish` | ✅ sau khi sửa: thay thế, không nối thêm |
+| 14 | Tìm kiếm trên bản release | gõ `anglerfish` | ✅ **84 kết quả · 0,5 ms** |
+| 15 | Thumbnail trên bản release | nhìn ảnh chụp | ✅ hiện đủ ảnh, độ phân giải, thời lượng, dung lượng |
+| 16 | **Mở thư mục chứa tệp** | `Ctrl+Enter`, rồi hỏi Explorer đang chọn gì | ✅ chọn đúng `D:\TÀI NGUYÊN DEEP SEA\anglerfish\img\anglerfish.webp` |
+| 17 | **Mở tệp** | `Enter`, rồi đọc tiến trình mới | ✅ `Photos — 'anglerfish.webp'` |
+| 18 | Phím tắt bị ứng dụng khác chiếm | chiếm trước rồi mở app | ❌ **tìm ra lỗi** — vẫn mời gọi phím tắt đã mất ([BUG-014](./bug.md#bug-014)) |
+| 19 | Ứng dụng có chịu khởi động không khi mất phím tắt | như trên | ✅ mở cửa sổ bình thường, chỉ ghi `WARN` |
+| 20 | Kịch bản test có gõ nhầm chỗ không | `GetForegroundWindow` trước mỗi lần gõ | ❌ **tìm ra lỗi** — đã gõ vào VS Code ([BUG-016](./bug.md#bug-016)) |
+
+**Kết luận lượt test P8:** 17/20 pass, 3 mục tìm ra vấn đề — cả ba đều đã sửa hoặc đã có quy tắc
+phòng tránh.
+
+**Mục 12 đáng ghi nhất.** Phím tắt đạt mọi tiêu chí đã đặt ra: gọi được, ẩn được, phục hồi được từ
+trạng thái thu nhỏ, và log nói nó đăng ký thành công. Nhưng thứ người dùng thật sự cần —
+*bấm rồi gõ* — thì hỏng. Không tiêu chí nào trong danh sách nghiệm thu mô tả **hành động tiếp theo**
+sau khi cửa sổ hiện ra, nên tất cả đều xanh trong khi tính năng vô dụng.
+
+**Mục 16 và 17 chạy trên bản release là có chủ ý.** Hai tính năng này người dùng nêu là *bắt buộc
+phải có*, và cả hai đều gọi COM. Bản debug chạy đúng không bảo đảm bản release cũng vậy, nên cả
+hai được kiểm chứng lại bằng cách **hỏi hệ điều hành** — Explorer đang chọn tệp nào, và tiến trình
+nào vừa xuất hiện — chứ không tin vào việc lệnh trả về `Ok`.

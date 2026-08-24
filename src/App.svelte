@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { listen } from "@tauri-apps/api/event";
+
   import ContextMenu, { type MenuItem } from "./lib/ContextMenu.svelte";
   import VirtualList from "./lib/VirtualList.svelte";
   import {
@@ -18,6 +20,7 @@
     formatBytes,
     formatDuration,
     formatResolution,
+    hotkeyStatus,
     searchFiles,
     thumbUrl,
     type IndexMeta,
@@ -26,6 +29,7 @@
     type DupeProgress,
     type EnrichStatus,
     type Filters,
+    type HotkeyStatus,
     type RelaxedInfo,
     type ScanProgress,
     type SearchHit,
@@ -126,6 +130,24 @@
   const rowHeight = $derived(grid ? GRID_CELL : LIST_ROW);
 
   indexStatus().then((m) => (meta = m));
+
+  // Asked once: registration happens at startup and the answer never changes.
+  let hotkey = $state<HotkeyStatus | null>(null);
+  hotkeyStatus().then((h) => (hotkey = h));
+
+  // The backend fires this whenever it brings the window forward on purpose —
+  // the global hotkey, or a second launch reaching the copy already running.
+  // Selecting rather than just focusing follows what every launcher does: the
+  // next keystroke starts a new search instead of appending to the old one.
+  $effect(() => {
+    const stop = listen("summon", () => {
+      inputEl?.focus();
+      inputEl?.select();
+    });
+    return () => {
+      stop.then((off) => off());
+    };
+  });
 
   // Enrichment runs for tens of minutes; poll slowly. It only ever moves in
   // one direction, so there is nothing to miss by looking less often.
@@ -708,6 +730,20 @@
       <p class="empty">
         {#if !query.trim()}
           Gõ để tìm kiếm · chuột phải vào kết quả để mở thư mục chứa tệp
+          {#if hotkey}
+            <br />
+            <span class="hint" class:taken={!hotkey.active}>
+              {#each hotkey.combo.split("+") as key, i}
+                {#if i > 0}+{/if}<kbd>{key}</kbd>
+              {/each}
+              {#if hotkey.active}
+                để gọi cửa sổ này từ bất kỳ đâu
+              {:else}
+                đang bị ứng dụng khác chiếm — đóng ứng dụng đó rồi mở lại
+                MediaFinder để dùng được phím tắt
+              {/if}
+            </span>
+          {/if}
         {:else if searching}
           Đang tìm…
         {:else}
@@ -1047,6 +1083,28 @@
   .results.grid .matched { position: absolute; top: 14px; right: 14px; }
   /* In the grid the picture carries the meaning; the numbers would crowd it. */
   .results.grid .facts { display: none; }
+
+  .hint {
+    display: inline-block;
+    margin-top: 14px;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+  /* Amber rather than red: the app still works, only the shortcut is gone. */
+  .hint.taken {
+    color: #d8a657;
+  }
+
+  .hint kbd {
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text);
+    background: #2c313b;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+  }
 
   .empty {
     flex: 1;

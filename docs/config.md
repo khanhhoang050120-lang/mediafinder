@@ -137,3 +137,30 @@ Get-Process mediafinder -ErrorAction SilentlyContinue | Stop-Process -Force
 **Vì sao để `WORKAROUND` chứ không phải `ĐÃ SỬA`.** Đây là hành vi của công cụ dev, không phải
 lỗi của sản phẩm. Sửa triệt để thì phải dùng job object hoặc `taskkill /T` mỗi lần dừng — chưa
 đáng ở giai đoạn này, nhưng ghi lại để lần sau nhận ra ngay thay vì đi tìm nguyên nhân.
+
+---
+
+## CONF-005 🟡 — `cargo fmt` chưa từng chạy, nay lệch với toàn bộ mã nguồn
+
+**Giai đoạn:** P8 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Chạy `cargo fmt --check` lần đầu ở P8: **51 điểm lệch trên 20 tệp**, trải khắp mọi
+giai đoạn từ P1 tới P8. Không phải lỗi mới — vòng kiểm tra của dự án từ trước tới nay là
+`cargo test` + `cargo clippy` + `npm run check`, chưa bao giờ có `cargo fmt`.
+
+**Nguyên nhân.** Mã trong dự án được xuống dòng bằng tay để chú thích và biểu thức dài đọc dễ hơn.
+`rustfmt` mặc định xếp lại theo `max_width = 100`, nên gần như tệp nào cũng lệch ở vài chỗ.
+
+**Vì sao chưa sửa ở P8.** Chạy `cargo fmt` bây giờ sẽ sinh một diff khổng lồ **không liên quan gì
+tới P8**, trộn lẫn vào commit cuối cùng của giai đoạn và làm hỏng khả năng truy vết `git blame` cho
+toàn bộ mã đã viết từ P1. Đây là quyết định của chủ dự án, không phải việc nên tự làm kèm.
+
+**Hai lựa chọn.**
+
+| Cách | Đánh đổi |
+|---|---|
+| Chạy `cargo fmt` một lần, thêm vào vòng kiểm tra | Thống nhất về sau, nhưng một commit chạm 20 tệp và mất định dạng thủ công ở nhiều chỗ |
+| Thêm `rustfmt.toml` nới `max_width`, rồi mới format | Diff nhỏ hơn nhiều, giữ được phần lớn cách xuống dòng hiện tại |
+
+Cách thứ hai hợp với dự án này hơn: phần lớn điểm lệch là do độ rộng dòng, không phải do thụt lề
+hay dấu ngoặc sai.

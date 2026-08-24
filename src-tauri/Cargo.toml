@@ -20,6 +20,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+
+# A launcher that has to be found and clicked is not a launcher. The hotkey is
+# what makes this reachable mid-task without leaving whatever you were doing.
+tauri-plugin-global-shortcut = "2"
+# Pressing the hotkey must reach the window that is already open, not start a
+# second copy that reads the same cache all over again.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

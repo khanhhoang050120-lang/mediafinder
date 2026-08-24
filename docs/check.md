@@ -55,3 +55,32 @@ thường — và đó đúng là thứ cần loại bỏ khỏi một công c�
 
 **Bài học.** Một con số trông "sai" chưa chắc là lỗi — nhưng cũng không được cho qua chỉ vì code
 trông có vẻ đúng. Phải đo bằng một công cụ độc lập.
+
+---
+
+## CHECK-002 ✅ — "Phím tắt tự nhiên ngừng hoạt động" — hoá ra là do kịch bản test
+
+**Giai đoạn:** P8 · **Trạng thái:** KHÔNG PHẢI LỖI · **Ngày:** 2026-08-24
+
+**Nghi ngờ.** Sau vài lượt test, `Ctrl+Alt+Space` không còn gọi được cửa sổ nữa. Cửa sổ nằm ở
+trạng thái thu nhỏ và không phản ứng. Nếu đúng là phím tắt "hỏng dần theo thời gian" thì đây là
+lỗi nặng — người dùng sẽ gặp nó sau vài giờ dùng máy.
+
+**Cách đo.** Ba câu hỏi, mỗi câu một phép đo độc lập:
+
+| Câu hỏi | Cách đo | Kết quả |
+|---|---|---|
+| Có phím bổ trợ nào bị kẹt không? | `GetAsyncKeyState` cho Shift/Ctrl/Alt/Win | Không, cả bốn đều nhả |
+| Ứng dụng còn giữ đăng ký không? | Tiến trình khác thử `RegisterHotKey` cùng tổ hợp | Trả `1409` — **vẫn giữ** |
+| `unminimize` có làm việc không? | `SW_MINIMIZE` rồi bấm phím tắt, đọc `IsIconic` | `True` → `False`, **phục hồi được** |
+
+Ba chu kỳ thu nhỏ ↔ gọi lại liên tiếp đều thành công.
+
+**Kết luận.** Phím tắt không hỏng. Lần "không phản ứng" là do cửa sổ đang ở trạng thái mà kịch bản
+test không lường: bấm phím trong lúc foreground thuộc về cửa sổ khác thì `toggle` gọi `summon` —
+đúng như thiết kế — nhưng phép đo của tôi lại đọc trạng thái quá sớm / sai cửa sổ. Cùng gốc với
+[BUG-016](./bug.md#bug-016).
+
+**Chi phí thật.** Đo cả ba câu hỏi mất khoảng bốn phút. Bốn phút này đổi lấy việc **không** đi sửa
+một lỗi không tồn tại trong `register_hotkey` — nơi mà mọi thay đổi đều có thể làm hỏng nhánh đang
+chạy đúng.

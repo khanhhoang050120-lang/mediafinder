@@ -158,6 +158,18 @@ export function indexStatus(): Promise<IndexMeta> {
   return invoke<IndexMeta>("index_status");
 }
 
+export interface HotkeyStatus {
+  /// `+`-separated, e.g. `Ctrl+Alt+Space`.
+  combo: string;
+  /// False when another application already owned the combination.
+  active: boolean;
+}
+
+/// The backend owns the combination; asking keeps it from being written twice.
+export function hotkeyStatus(): Promise<HotkeyStatus> {
+  return invoke<HotkeyStatus>("hotkey_status");
+}
+
 export interface ScanProgress {
   phase: "volumes" | "scanning" | "resolving" | "indexing" | "saving" | "done" | "error";
   volume: string;

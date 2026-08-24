@@ -7,6 +7,8 @@
 //!   `ipc`    — Tauri commands, the `thumb://` protocol, elevation plumbing
 //!   `state`  — shared application state (ArcSwap index + search generation)
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 pub mod index;
 pub mod ipc;
 pub mod media;
@@ -53,6 +55,19 @@ pub fn run_gui() {
     enrich.start(app_state.snapshot());
 
     tauri::Builder::default()
+        // Single instance first: it must intercept a second launch before the
+        // rest of the setup runs, or two copies would race to read the same
+        // cache and register the same hotkey.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Someone launched the app again — or pressed the hotkey while a
+            // copy was already open. Show what they already have.
+            summon(app);
+        }))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .setup(|app| {
+            register_hotkey(app.handle());
+            Ok(())
+        })
         .manage(app_state)
         .manage(media::thumbnail::ThumbnailService::new())
         .manage(enrich)
@@ -73,9 +88,98 @@ pub fn run_gui() {
             ipc::commands::find_duplicates,
             ipc::commands::dupe_progress,
             ipc::commands::dupe_groups,
+            ipc::commands::hotkey_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");
+}
+
+/// The hotkey that brings the window forward from anywhere.
+///
+/// `Ctrl+Alt+Space` rather than something shorter: a global shortcut is taken
+/// away from every other application on the machine, so it has to be one
+/// nothing else is likely to want. Plain `Alt+Space` is the Windows system
+/// menu, and `Ctrl+Space` belongs to input-method switching in several
+/// languages — including Vietnamese.
+pub const HOTKEY: &str = "Ctrl+Alt+Space";
+
+/// Whether [`HOTKEY`] is actually ours.
+///
+/// A global shortcut is a process-wide OS resource, claimed once at startup and
+/// never given back, so a process-wide flag is an honest way to hold the answer.
+/// The UI reads it before offering the key: a hint that names a shortcut which
+/// does nothing is worse than no hint at all.
+pub static HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn register_hotkey(app: &tauri::AppHandle) {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    let handle = app.clone();
+    let result = app.global_shortcut().on_shortcut(HOTKEY, move |_app, _sc, event| {
+        // Fire on press only. Without this the window would toggle twice per
+        // keypress — once down, once up — and end up back where it started.
+        if event.state == ShortcutState::Pressed {
+            toggle(&handle);
+        }
+    });
+
+    match result {
+        Ok(()) => {
+            HOTKEY_ACTIVE.store(true, Ordering::Relaxed);
+            tracing::info!("phím tắt toàn cục: {HOTKEY}");
+        }
+        // Another application already owns this combination. Not fatal — the
+        // window still works, it just cannot be summoned — so say so and carry
+        // on rather than refusing to start. The flag stays false and the UI
+        // stops advertising the key.
+        Err(e) => tracing::warn!("không đăng ký được phím tắt {HOTKEY}: {e}"),
+    }
+}
+
+/// Bring the window to the front, focused and ready to type into.
+fn summon(app: &tauri::AppHandle) {
+    use tauri::Manager;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    // Unminimise before showing: a minimised window that is merely shown stays
+    // in the taskbar.
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    // Focusing the window is not the same as focusing the search box: the caret
+    // could be anywhere in the page, or nowhere at all if the window was
+    // hidden. A launcher whose hotkey does not leave you able to type is not
+    // doing its job, so tell the UI to put the caret back where it belongs.
+    //
+    // A dedicated event rather than a plain window-focus listener: this fires
+    // only when the user asked for the window, not every time they alt-tab back
+    // to it mid-edit, which would select and then wipe whatever they had typed.
+    use tauri::Emitter;
+    let _ = window.emit("summon", ());
+}
+
+/// Show the window, or hide it if it is already the one in front.
+///
+/// Toggling matters for a launcher: the same key that summons it should
+/// dismiss it, so it can be opened and closed without the hand leaving the
+/// keyboard.
+fn toggle(app: &tauri::AppHandle) {
+    use tauri::Manager;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let focused = window.is_focused().unwrap_or(false);
+
+    if visible && focused {
+        let _ = window.hide();
+    } else {
+        summon(app);
+    }
 }
 
 /// Indexer mode (`--index`). Runs elevated, scans every NTFS volume, and — from
@@ -503,6 +607,28 @@ fn print_samples(set: &ntfs::tree::ResolvedSet) {
             "--- đường dẫn sâu nhất ---\n  {}\\{}",
             set.dirs[deepest.dir_id as usize],
             deepest.name
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HOTKEY;
+
+    /// Locks the reasoning behind the combination rather than the combination
+    /// itself — changing the key is fine, dropping one of these modifiers is
+    /// not.
+    ///
+    /// `Alt+Space` alone opens the Windows system menu on every window, and
+    /// `Ctrl+Space` is the input-method switch in several languages, Vietnamese
+    /// among them. Either would work on the test machine and then quietly fight
+    /// the operating system on a user's.
+    #[test]
+    fn the_hotkey_avoids_combinations_windows_and_the_ime_already_use() {
+        assert!(
+            HOTKEY.contains("Ctrl") && HOTKEY.contains("Alt"),
+            "phím tắt {HOTKEY} phải giữ cả Ctrl lẫn Alt: thiếu Ctrl thì đụng \
+             menu hệ thống của Windows, thiếu Alt thì đụng phím chuyển bộ gõ"
         );
     }
 }

@@ -32,21 +32,23 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 
 | File | Số mục | Còn mở | Nội dung |
 |---|---|---|---|
-| [bug.md](./bug.md) | 13 | 0 | Lỗi làm phần mềm chạy sai |
-| [config.md](./config.md) | 4 | 0 | Xung đột cấu hình / phiên bản |
+| [bug.md](./bug.md) | 16 | 0 | Lỗi làm phần mềm chạy sai |
+| [config.md](./config.md) | 5 | 1 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 2 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
-| [check.md](./check.md) | 1 | 0 | Nghi ngờ đã kiểm chứng |
+| [check.md](./check.md) | 2 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 2 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **26** | **0** | |
+| **Cộng** | **31** | **1** | |
 
 ### Mục còn mở
 
-_Không còn mục nào đang chờ xử lý._
+[CONF-005](./config.md#conf-005) — `cargo fmt` chưa từng chạy, nay lệch 51 điểm trên 20 tệp.
+Cần chủ dự án chọn: format một lần, hay nới `max_width` trước rồi mới format.
 
-Hai mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
-[BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`) và
+Ba mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
+[BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`),
+[BUG-016](./bug.md#bug-016) (kiểm tra foreground trước khi bơm phím) và
 [CONF-004](./config.md#conf-004) (dọn tiến trình giữ port 1420 trước khi chạy dev).
 
 ## Vì sao tìm trùng lặp không băm toàn bộ

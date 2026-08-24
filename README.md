@@ -79,6 +79,24 @@ Những điểm dưới đây là **cố ý**. Đọc trước khi định "sử
 9. **Chỉ hỗ trợ NTFS.** Volume exFAT/FAT32 (USB, thẻ SD) không có MFT/USN — được phát hiện
    và báo rõ cho người dùng, không im lặng bỏ qua.
 
+10. **Gọi cửa sổ xong phải gõ được ngay.** `summon()` không chỉ hiện cửa sổ mà còn phát sự
+    kiện `summon` để giao diện đặt con trỏ vào ô tìm kiếm và bôi đen nội dung cũ. Hiện cửa
+    sổ mà con trỏ nằm chỗ khác thì phím tắt gần như vô dụng — xem
+    [`docs/bug.md`](./docs/bug.md#bug-015).
+
+## Cách dùng
+
+| Thao tác | Phím |
+|---|---|
+| Gọi cửa sổ từ bất kỳ đâu, hoặc ẩn đi | `Ctrl+Alt+Space` |
+| Di chuyển trong kết quả | `↑ ↓ ← → PageUp PageDown` |
+| Mở tệp bằng ứng dụng mặc định | `Enter` |
+| Mở thư mục chứa tệp trong Explorer | `Ctrl+Enter`, hoặc chuột phải |
+| Xoá truy vấn | `Esc` |
+
+Nếu một ứng dụng khác đã chiếm `Ctrl+Alt+Space`, MediaFinder vẫn khởi động bình thường và
+nói rõ trên màn hình trống rằng phím tắt không dùng được.
+
 ## Bố cục
 
 ```

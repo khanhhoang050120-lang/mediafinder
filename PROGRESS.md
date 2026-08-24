@@ -33,7 +33,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P5** | Thumbnail + lưới ảo hoá | ✅ **XONG** — 108 test, 5.000 kết quả = 118 node |
 | **P6** | Enrichment metadata + lọc | ✅ **XONG** — 118 test, lọc 1080p chạy 9,1 ms |
 | **P7** | Tìm file trùng | ✅ **XONG** — 124 test, tìm ra 520,7 GB trùng lặp |
-| **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | 🔵 **sẵn sàng** |
+| **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ✅ **XONG** — 126 test, kiểm chứng trên bản release |
 
 ---
 
@@ -380,13 +380,51 @@ Mẫu trùng lặp điển hình: CapCut nhân bản asset qua từng draft
 
 ---
 
-## P8 — Hoàn thiện ⬜
+## P8 — Hoàn thiện ✅
 
-- [ ] Hotkey toàn cục gọi cửa sổ
-- [x] Điều hướng bàn phím: `↑ ↓ Enter Esc`
-- [ ] Cập nhật realtime qua `FSCTL_READ_USN_JOURNAL`
-- [ ] Thông báo rõ cho volume non-NTFS bị bỏ qua
-- [ ] `cargo tauri build` → chạy exe release, xác nhận toàn bộ vẫn hoạt động
+- [x] Hotkey toàn cục `Ctrl+Alt+Space` gọi cửa sổ từ bất kỳ đâu
+- [x] Bấm lại để ẩn — cùng một phím mở và đóng, tay không rời bàn phím
+- [x] Một phiên bản duy nhất — bấm hotkey tới cửa sổ đang mở, không mở bản thứ hai
+- [x] Không đăng ký được phím tắt thì cảnh báo rồi chạy tiếp, không từ chối khởi động
+- [x] Gợi ý phím tắt hiện ngay trên màn hình trống
+- [x] Điều hướng bàn phím `↑ ↓ ← → Enter Esc PageUp PageDown` (làm ở P3/P5)
+- [x] Thông báo rõ cho volume non-NTFS bị bỏ qua (làm ở P1)
+- [x] `cargo tauri build` → exe **9,9 MB** + bộ cài NSIS
+- [x] Chạy chính exe release: tìm kiếm, thumbnail, mở tệp, mở thư mục — tất cả hoạt động
+
+### Đo được trên bản release
+
+| Việc | Số đo |
+|---|---|
+| Nạp cache lúc khởi động | **27 ms** cho 117.128 tệp |
+| Tìm `anglerfish` | **84 kết quả · 0,5 ms** |
+| Tìm `avatar` | **54 kết quả · 0,5 ms** |
+| Gọi cửa sổ từ trạng thái thu nhỏ | 3/3 chu kỳ phục hồi |
+| Mở thư mục chứa tệp | Explorer xác nhận đúng tệp, đường dẫn có dấu tiếng Việt |
+| Mở tệp | tiến trình `Photos — 'anglerfish.webp'` xuất hiện |
+
+Hai lỗi lộ ra ở lượt test này, cả hai đều đã sửa:
+[BUG-014](docs/bug.md#bug-014) (mời gọi phím tắt mà app không sở hữu) và
+[BUG-015](docs/bug.md#bug-015) (gọi được cửa sổ nhưng không đặt con trỏ vào ô tìm kiếm).
+
+### Cập nhật realtime qua USN Journal — KHÔNG LÀM, có lý do
+
+`FSCTL_READ_USN_JOURNAL` cần mở handle `\\.\C:`, tức là **cần quyền Administrator**. Đo được ở
+P1: chạy không elevate thì mọi volume đều trả `AccessDenied`.
+
+Nhưng bất biến kiến trúc số 3 (xem `README.md`) là **GUI không bao giờ chạy elevated** — để giữ
+kéo-thả từ Explorer và không có UAC mỗi lần mở app. Hai điều này loại trừ nhau.
+
+Các cách vượt qua, và vì sao không chọn:
+
+| Cách | Vấn đề |
+|---|---|
+| Cho GUI elevate | Phá bất biến số 3 — UAC mỗi lần mở, mất kéo-thả từ Explorer |
+| Windows Service chạy nền có quyền | Đúng đắn nhất (Everything làm vậy), nhưng là một dự án con riêng: cài đặt, gỡ bỏ, IPC, quyền |
+| Scheduled Task chạy `--index` định kỳ | Khả thi, nhưng vẫn là quét định kỳ chứ không phải realtime |
+
+**Đã chọn:** giữ nút "Quét lại" — quét đầy đủ mất ~38 giây và người dùng chủ động. `next_usn` của
+từng volume vẫn được lưu trong cache, nên nếu sau này thêm service thì hạ tầng đã sẵn sàng.
 
 ---
 

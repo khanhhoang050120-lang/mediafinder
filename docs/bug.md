@@ -527,3 +527,116 @@ chính chỗ đó là chỗ tôi nhầm.
 **Bài học.** `sort` rồi `pop` là một cặp dễ nhầm: thứ tự đọc **ngược** với thứ tự trong vector.
 Và cái giá của nhầm lẫn này không phải là lỗi mà là **im lặng** — hệ thống làm việc chăm chỉ hàng
 chục phút cho đúng thứ ít hữu ích nhất, trong khi mọi chỉ báo đều xanh.
+
+---
+
+## BUG-014 🟠 — Màn hình trống mời gọi một phím tắt mà ứng dụng có thể không sở hữu
+
+**Giai đoạn:** P8 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** `register_hotkey` đã được viết để "cảnh báo rồi chạy tiếp" khi phím tắt bị chiếm —
+nhưng nhánh đó chưa bao giờ được chạy thử. Đem chạy thật (một tiến trình khác `RegisterHotKey`
+`Ctrl+Alt+Space` trước) thì ứng dụng khởi động bình thường, ghi log:
+
+```
+WARN không đăng ký được phím tắt Ctrl+Alt+Space: HotKey already registered
+```
+
+Vấn đề nằm ở chỗ **người dùng không bao giờ thấy dòng log đó** — họ mở app từ Explorer, không có
+cửa sổ terminal nào cả. Trong khi đó màn hình trống vẫn in nguyên:
+
+> `Ctrl` + `Alt` + `Space` để gọi cửa sổ này từ bất kỳ đâu
+
+Một câu hướng dẫn **sai sự thật**. Người dùng bấm, không có gì xảy ra, và không có cách nào biết
+tại sao. Với loại lỗi này thì không có hint còn đỡ hơn có.
+
+**Nguyên nhân.** Kết quả đăng ký chỉ đi vào log, không đi vào trạng thái nào mà giao diện đọc được.
+Cộng thêm: tổ hợp phím được viết **hai nơi** — hằng `HOTKEY` trong Rust và chuỗi `<kbd>` cứng
+trong `App.svelte` — nên kể cả khi đăng ký thành công, đổi phím ở một nơi sẽ làm nơi kia nói dối.
+
+**Cách sửa.** Một cờ toàn tiến trình `HOTKEY_ACTIVE` (đúng bản chất: đăng ký phím tắt là tài nguyên
+cấp tiến trình của hệ điều hành) cộng lệnh `hotkey_status` trả về **cả tổ hợp lẫn tình trạng**:
+
+```rust
+pub struct HotkeyStatus { pub combo: String, pub active: bool }
+```
+
+Giao diện tự tách `combo` theo dấu `+` thành các phím, nên chỉ còn **một** nơi trong mã nguồn quyết
+định phím tắt là gì. Khi `active == false`, dòng hint đổi sang màu hổ phách và đổi nội dung thành
+*"đang bị ứng dụng khác chiếm — đóng ứng dụng đó rồi mở lại MediaFinder để dùng được phím tắt"*.
+
+Màu hổ phách chứ không phải đỏ: ứng dụng vẫn chạy đủ chức năng, chỉ mất mỗi phím tắt.
+
+**Bài học.** Một nhánh xử lý lỗi chưa từng chạy thì chưa phải là đã xử lý xong. Ở đây nhánh đó
+**hoạt động đúng** — nó chỉ báo cho sai người: cho người viết code, không cho người dùng.
+
+---
+
+## BUG-015 🔴 — Phím tắt gọi được cửa sổ nhưng không đặt được con trỏ vào ô tìm kiếm
+
+**Giai đoạn:** P8 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Bấm `Ctrl+Alt+Space` → cửa sổ hiện lên, đúng như thiết kế. Gõ luôn `anglerfish` →
+**không có chữ nào vào ô tìm kiếm**. Ảnh chụp cho thấy ô nhập không có viền focus và vẫn còn
+placeholder.
+
+Đây là lỗi nặng nhất có thể có với một launcher: toàn bộ lý do tồn tại của phím tắt là *bấm rồi
+gõ ngay*. Gọi được cửa sổ mà phải với tay ra chuột bấm vào ô nhập thì phím tắt gần như vô nghĩa.
+
+**Nguyên nhân.** `summon()` gọi `unminimize` → `show` → `set_focus`. Cả ba đều thao tác trên **cửa
+sổ**, không cái nào chạm tới **phần tử DOM** bên trong WebView. Phía frontend chỉ đặt focus đúng
+hai chỗ: `autofocus` lúc tải trang, và khi bấm `Escape`. Không có gì chạy khi cửa sổ được gọi lại.
+
+Con trỏ vì thế ở lại chỗ nó đang ở — một hàng kết quả, một nút bấm, hoặc không đâu cả nếu cửa sổ
+vừa bị ẩn.
+
+**Cách sửa.** `summon()` phát thêm một sự kiện `summon`; giao diện lắng nghe và gọi
+`inputEl.focus()` + `inputEl.select()`.
+
+Dùng sự kiện riêng chứ **không** dùng `window.addEventListener("focus", …)`: sự kiện focus của cửa
+sổ cũng nổ mỗi lần người dùng alt-tab quay lại giữa chừng, và khi đó `select()` sẽ bôi đen truy vấn
+họ đang gõ dở — phím tiếp theo xoá sạch. Sự kiện riêng chỉ nổ khi người dùng **chủ động gọi** cửa
+sổ: phím tắt, hoặc lần chạy thứ hai bị `single_instance` chuyển hướng về.
+
+`select()` chứ không chỉ `focus()`: đó là quy ước của mọi launcher — lần gọi sau bắt đầu một truy
+vấn mới, không nối thêm vào truy vấn cũ. Đã kiểm chứng: gõ `anglerfish` → ẩn → gọi lại → gõ
+`avatar` → ô nhập chỉ còn `avatar`, không phải `anglerfishavatar`.
+
+**Vì sao lọt tới tận P8.** Điều hướng bàn phím được nghiệm thu ở P3/P5 bằng cách bấm phím **trong
+lúc cửa sổ đang mở sẵn và đang có focus** — trạng thái mà `autofocus` lúc tải trang đã lo xong.
+Phím tắt mới là thứ đầu tiên tạo ra tình huống "cửa sổ vừa từ trạng thái ẩn quay lại", và lỗi chỉ
+tồn tại trong đúng tình huống đó.
+
+---
+
+## BUG-016 🟡 — Bơm phím để test có thể rơi vào cửa sổ của người dùng
+
+**Giai đoạn:** P8 · **Trạng thái:** WORKAROUND · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Kịch bản test bơm `Down` rồi `Ctrl+Enter` để thử "mở thư mục chứa tệp". Không có
+cửa sổ Explorer nào mở ra. Kiểm tra lại thì cửa sổ đang ở foreground **không phải MediaFinder mà
+là VS Code của người dùng** — hai phím đó đã đi vào trình soạn thảo của họ.
+
+**Nguyên nhân.** Giữa hai lần gọi công cụ của tôi, VS Code giành lại foreground. `keybd_event`
+không gửi phím tới một cửa sổ cụ thể — nó bơm vào **hàng đợi đầu vào của hệ thống**, và hệ thống
+giao cho cửa sổ nào đang ở trước tại đúng khoảnh khắc đó.
+
+**Cách xử lý.** Hai quy tắc, áp dụng cho mọi kịch bản test bơm phím về sau:
+
+1. **Gộp cả chuỗi thao tác vào một tiến trình PowerShell duy nhất.** Mỗi lần trả quyền về cho tôi
+   là một lần foreground có thể đổi chủ.
+2. **Kiểm tra foreground ngay trước khi gõ, và huỷ nếu sai:**
+
+   ```powershell
+   if ((Fg) -ne $appPid) { Write-Output "HUY: cua so khong o foreground"; exit 1 }
+   ```
+
+   Thà không test được còn hơn gõ nhầm vào máy người khác.
+
+**Liên quan.** Cùng họ với [BUG-003](#bug-003) — ở đó là *chụp* nhầm màn hình người dùng, ở đây là
+*gõ* nhầm vào cửa sổ người dùng. Cùng một gốc: thao tác ở cấp hệ thống thì không tự biết nó đang
+nhắm vào ai.
+
+**Ghi chú trung thực.** Lần chạy hỏng đó đã thực sự gửi `Down` và `Ctrl+Enter` vào VS Code trước
+khi tôi phát hiện. Hai phím này không sửa nội dung tệp, nhưng có thể đã đổi vị trí con trỏ hoặc mở
+thêm một khung soạn thảo.

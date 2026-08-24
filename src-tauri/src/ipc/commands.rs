@@ -188,6 +188,28 @@ pub fn enrich_status(
     enrich.status()
 }
 
+/// The summon shortcut, and whether the app actually managed to claim it.
+///
+/// The combination is sent to the frontend rather than written there too, so
+/// there is exactly one place in the codebase that decides what the key is.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HotkeyStatus {
+    /// The combination, `+`-separated — the UI splits it into keycaps.
+    pub combo: String,
+    /// False when another application got there first.
+    pub active: bool,
+}
+
+/// Report the global shortcut so the UI only advertises a key that works.
+#[tauri::command]
+pub fn hotkey_status() -> HotkeyStatus {
+    use std::sync::atomic::Ordering;
+    HotkeyStatus {
+        combo: crate::HOTKEY.to_string(),
+        active: crate::HOTKEY_ACTIVE.load(Ordering::Relaxed),
+    }
+}
+
 /// Start a rescan in an elevated child process.
 ///
 /// Returns as soon as the child is running. The scan itself takes tens of
