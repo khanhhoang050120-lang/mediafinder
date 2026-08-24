@@ -26,7 +26,11 @@
 | BUG-005 | 🟡 | Tiến độ quét báo trùng bản ghi cuối | P1 | ĐÃ SỬA |
 | PERF-001 | 🟡 | Cấp phát `String` cho mỗi thành phần đường dẫn khi lọc | P1 | ĐÃ SỬA |
 | CHECK-001 | ✅ | Nghi ngờ pha 2 loại nhầm 99,7% file trên C: | P1 | KHÔNG PHẢI LỖI |
-| ISSUE-001 | 🟠 | Kết quả trên C: toàn tài nguyên công cụ, không phải media | P1 | CẦN QUYẾT ĐỊNH |
+| ISSUE-001 | 🟠 | Kết quả trên C: toàn tài nguyên công cụ, không phải media | P1 | ĐÃ SỬA |
+| BUG-006 | 🟠 | Fold tách âm tiết Hangul thành Jamo, không ghép lại | P2 | ĐÃ SỬA |
+| BUG-007 | 🔴 | `BinaryHeap::with_capacity(limit+1)` cấp phát không giới hạn | P2 | ĐÃ SỬA |
+| SPEC-001 | 🔴 | Đặc tả chỉ tìm trong **tên file** → vô dụng với dữ liệu thật | P2 | ĐÃ SỬA |
+| PERF-002 | ✅ | Chọn lọc tốn hơn quét ở `limit` lớn | P2 | ĐÃ TỐI ƯU −39,5% |
 
 ---
 
@@ -330,6 +334,169 @@ người dùng đi tìm. Chúng làm loãng xếp hạng ở P2 và tốn công 
 **Chưa tự quyết** vì đây là quyết định về sản phẩm chứ không phải sửa lỗi — nó thay đổi thứ
 người dùng tìm thấy được.
 
+**→ Đã giải quyết (2026-08-24).** Người dùng cho biết **không lưu ảnh/video trên ổ C:**, nên có
+thể lọc mạnh tay mà không sợ mất dữ liệu thật.
+
+Cách xử lý: thay vì liệt kê từng thư mục công cụ (rồi phải bổ sung mãi mãi), thêm **một quy tắc
+tổng quát** — `skip_dot_directories`: bỏ qua mọi thư mục có tên bắt đầu bằng dấu chấm.
+
+Vì sao quy tắc này đúng:
+- Trên Windows, dotfolder là quy ước dành cho công cụ và cấu hình; media người dùng gần như
+  không bao giờ nằm ở đó.
+- Nó bao phủ **mọi công cụ cài trong tương lai** mà không cần biết tên trước.
+- Nó bắt luôn rác do ứng dụng tự tạo: CapCut giấu bản nháp đã xoá trong `.recycle_bin` **ngay
+  bên trong thư mục dự án của người dùng** trên ổ D:.
+
+Kiểm chứng bằng chính các đường dẫn có thật từ lượt quét P1: `.gradle` `.rustup` `.vscode`
+`.antigravity-ide` `.cache` `.recycle_bin` — tất cả đều bị loại.
+
+Bổ sung thêm 3 tên rõ nghĩa không bắt đầu bằng dấu chấm: `bower_components` `__pycache__`
+`site-packages`.
+
+**Cố ý KHÔNG cấm** `build` `dist` `target` `bin` `obj` `vendor` `packages`. Chúng phổ biến trong
+cây mã nguồn, nhưng cũng là tên thư mục hoàn toàn bình thường mà người ta có thể để media trong
+đó. Rủi ro không cân xứng: **mất file của người dùng trong im lặng tệ hơn nhiều so với hiện thừa
+vài file.** Có test `ordinary_folder_names_are_never_excluded` khoá lại quyết định này.
+
+---
+
+## BUG-006 🟠 — Fold tách âm tiết Hangul thành Jamo, không ghép lại
+
+**Giai đoạn:** P2 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Test thất bại với thông báo trông như vô lý:
+
+```
+assertion `left == right` failed
+  left: "한국어"
+ right: "한국어"
+```
+
+Hai chuỗi hiển thị **giống hệt nhau** nhưng khác nhau ở mức byte.
+
+**Nguyên nhân.** Hàm fold chạy NFD rồi lọc bỏ combining mark. Nhưng NFD tách **nhiều hơn** dấu
+phụ Latin: một âm tiết Hangul như `한` bị tách thành ba Jamo riêng biệt (`ᄒ` + `ᅡ` + `ᆫ`), mà
+Jamo **không phải** combining mark nên chúng sống sót qua bộ lọc. Kết quả là chuỗi ở dạng phân
+rã — nhìn thì giống, byte thì khác.
+
+**Ảnh hưởng.** Không làm sai kết quả tìm kiếm (cả query lẫn index đều phân rã như nhau nên vẫn
+khớp). Nhưng: chuỗi folded của tên CJK **phình gấp 3 lần** trong arena, và giá trị trả về không
+còn khớp với thứ người dùng nhìn thấy — sẽ gây rắc rối khi cần highlight đoạn khớp ở P3.
+
+**Cách sửa.** Thêm bước ghép lại **NFC** ở cuối: NFD → bỏ mark → map ký tự không phân rã →
+lowercase → **NFC**. Bước này khôi phục `한`, còn `ế` vẫn là `e` vì dấu đã bị bỏ, không còn gì để
+ghép lại.
+
+**Bài học.** NFD được chọn để tách dấu phụ tiếng Việt, nhưng nó là phép biến đổi **toàn cục** —
+nó cũng làm những việc mình không hề yêu cầu với các hệ chữ khác. Test tiếng Hàn được viết chỉ
+để "kiểm tra fold không phá tên nước ngoài", vậy mà lại bắt được đúng vấn đề này.
+
+---
+
+## BUG-007 🔴 — `BinaryHeap::with_capacity(limit+1)` cấp phát không giới hạn
+
+**Giai đoạn:** P2 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Test `spans_many_chunks_correctly` (truyền `limit` rất lớn để lấy hết kết quả)
+thất bại khi cấp phát.
+
+**Nguyên nhân.** Mỗi chunk song song khởi tạo heap bằng
+`BinaryHeap::with_capacity(opts.limit + 1)`. Với `limit` lớn, **mỗi chunk** cố cấp phát một vùng
+nhớ khổng lồ — và có hàng chục chunk chạy song song.
+
+**Mức độ nghiêm trọng.** Nặng. Đây không phải lỗi chỉ xảy ra trong test: bất kỳ lời gọi nào từ
+tầng IPC truyền `limit` lớn (dù vô tình) đều làm ứng dụng cạn RAM. Và vì `panic = "abort"` ở bản
+release (xem `RISK-001`), nó sẽ **giết cả app** chứ không trả lỗi.
+
+**Cách sửa.** Chặn trần capacity theo kích thước chunk: `opts.limit.min(end - start) + 1`.
+Một chunk không thể sinh ra nhiều kết quả hơn số mục nó chứa, nên đây vừa là cận đúng vừa là cận
+chặt.
+
+**Ghi chú.** Bug này chỉ lộ ra vì test cố tình dùng `limit` cực lớn để kiểm tra ranh giới chunk —
+tức là **một test viết cho mục đích khác** lại bắt được lỗi. Nếu chỉ test bằng `limit` mặc định
+5.000 thì nó sẽ nằm im tới tận khi có người dùng thật gặp phải.
+
+---
+
+## SPEC-001 🔴 — Đặc tả chỉ tìm trong tên file → vô dụng với dữ liệu thật
+
+**Giai đoạn:** P2 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Sau khi dựng index từ lượt quét thật (117.123 tệp media), chạy thử tìm kiếm:
+
+```
+"tieng viet" → 0 kết quả
+"da nang"    → 0 kết quả
+"bai"        → 5 kết quả  ✓
+```
+
+Ban đầu trông như lỗi fold tiếng Việt. Nhưng `bai` **có** tìm ra `bài 10.mp3` và
+`BÀI 75____The BEST and WORST Forms of Magnesium.mp3` — fold hoạt động hoàn hảo.
+
+**Nguyên nhân thật.** Đặc tả gốc mục 3.3 quy định:
+
+> *"Thuật toán lọc dựa trên việc kiểm tra chuỗi con chứa trong chuỗi tên tệp"*
+
+Chỉ tên tệp. Nhưng thư viện thật được tổ chức thế này:
+
+```
+D:\Sounds Edit\HƯNG\WISE\DATA TẠO VID HƯNG\HAN QUOC\13\BÀI 13_ UROLOGIST_...\154.mp3
+   └───────────────── mọi từ khoá tìm được đều nằm ở đây ─────────────────┘  └─ tên tệp
+```
+
+Tên tệp là `154.mp3`, `27.mp3`, `seg_116.wav`, `b000_why-giant-squids.mp4`. **Toàn bộ ý nghĩa
+nằm trong tên thư mục.** Với cách tổ chức này, tìm theo tên tệp trả về gần như không gì cả.
+
+**Vì sao đây là lỗi đặc tả chứ không phải lỗi code.** Code làm đúng y những gì đặc tả yêu cầu.
+Chỉ có dữ liệu thật mới phơi ra rằng yêu cầu đó sai. Everything cũng tìm cả đường dẫn — đó là
+hành vi đúng, và đặc tả gốc đã bỏ sót.
+
+**Cách sửa.** Tìm cả trong đường dẫn thư mục, nhưng có ba ràng buộc:
+
+1. **Điểm thư mục luôn thấp hơn mọi điểm tên tệp** (`DIR_WORD_START` 250 / `DIR_SUBSTRING` 200
+   so với 400–1000 của tên tệp). Một tệp thật sự tên `holiday.mp4` không bao giờ bị đẩy xuống
+   dưới một tệp chỉ nằm trong thư mục tên `holiday videos`.
+2. **Chấm điểm thư mục một lần cho cả truy vấn**, không phải một lần cho mỗi tệp. 116k tệp dùng
+   chung 4k thư mục → tiết kiệm khoảng **28 lần** công việc. Kết quả lưu trong bảng phẳng
+   `dir_count × token_count`, tra cứu O(1) trong vòng lặp nóng.
+3. **Chuỗi folded của thư mục lưu theo thư mục**, không theo tệp — vài trăm KB thay vì hàng chục MB.
+
+**Lợi ích kèm theo.** Truy vấn nhiều từ khoá giờ có thể trải giữa thư mục và tên tệp:
+`avatar 2024` khớp `D:\Phim\2024\avatar.mkv` — `2024` lấy từ thư mục, `avatar` từ tên tệp.
+
+**Bài học.** Đây là lỗi nghiêm trọng nhất tìm được từ đầu dự án, và **không một unit test nào có
+thể bắt được** — vì test do tôi tự nghĩ ra dữ liệu, và tôi đặt tên tệp có nghĩa như người ta
+thường làm. Chỉ có dữ liệu thật của người dùng mới lộ ra cách tổ chức khác hẳn.
+
+---
+
+## PERF-002 ✅ — Chọn lọc tốn hơn quét ở `limit` lớn
+
+**Giai đoạn:** P2 · **Trạng thái:** ĐÃ TỐI ƯU · **Ngày:** 2026-08-24
+
+**Phát hiện.** Bench `selection_cost` tách riêng chi phí chọn lọc khỏi chi phí quét:
+
+| `limit` | Thời gian |
+|---|---|
+| 1 | 944 µs |
+| 100 | 965 µs |
+| 5.000 | **2,25 ms** |
+
+Quét thực sự chỉ tốn ~944 µs. Ở `limit=5000`, **chọn lọc tốn 1,3 ms — nhiều hơn cả việc quét.**
+
+**Nguyên nhân.** Mỗi chunk song song đóng góp tối đa `limit` kết quả. Với index 500k chia thành
+31 chunk, vector gộp chứa tới **155.000 hit**, rồi `sort_unstable` toàn bộ để lấy ra 5.000.
+Đó là khoảng 2,6 triệu phép so sánh để giữ lại 3% dữ liệu.
+
+**Cách tối ưu.** Dùng `select_nth_unstable_by` phân hoạch trong O(n) **trước khi** sort, rồi chỉ
+sort phần sống sót: ~215.000 phép so sánh thay vì 2,6 triệu.
+
+**Kết quả đo được.** `limit=5000`: **2,25 ms → 1,35 ms (−39,5%)**. `limit=1` và `limit=100` không
+đổi, đúng như dự đoán. Toàn bộ 71 test vẫn pass — thứ tự kết quả không thay đổi.
+
+**Ghi chú.** Đây là tối ưu tìm ra **nhờ đo**, không phải nhờ đoán. Trực giác ban đầu là chi phí
+nằm ở việc quét chuỗi; số liệu chỉ ra ngược lại.
+
 ---
 
 ## Nhật ký test
@@ -381,3 +548,39 @@ Phát hiện thêm 1 vấn đề sản phẩm cần người dùng quyết đị
 BUG-005 và PERF-001 thì ngược lại, không test nào bắt được vì hàm cần volume thật — chỉ đọc lại
 code mới thấy. Bài học: **test tổng hợp, chạy dữ liệu thật, và đọc lại code là ba việc khác nhau,
 không thay thế được cho nhau.**
+
+### 2026-08-24 — Lượt test sau P2
+
+| # | Nội dung test | Lệnh / cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **72/72 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch, 0 warning |
+| 3 | Fold tiếng Việt | 12 test riêng cho `fold` | ✅ `đ Đ ơ ư ế ự ằ ỗ`, dấu chồng, bảng chữ cái đầy đủ |
+| 4 | Fold không phá hệ chữ khác | test Nhật/Hàn/Đức/Ba Lan | ❌ **tìm ra BUG-006** (Hangul) — đã sửa |
+| 5 | Fold có idempotent không | fold hai lần | ✅ không đổi — query và index luôn khớp cách fold |
+| 6 | Xếp hạng đúng thứ tự | test acceptance của kế hoạch | ✅ `avatar.mkv` > `avatar_extended` > `my_avatar_backup` |
+| 7 | Kết quả có tất định không | chạy 12 lần cùng truy vấn | ✅ giống hệt nhau — thứ tự `(score, index)` là toàn phần |
+| 8 | Ranh giới chunk | index > 2×CHUNK | ❌ **tìm ra BUG-007** (cấp phát) — đã sửa |
+| 9 | Bench 500k entry | `cargo bench` | ✅ worst case **3,01 ms** / mục tiêu 20 ms |
+| 10 | Rayon có đáng không | `RAYON_NUM_THREADS=1` so sánh | ✅ song song nhanh hơn **2,6–4,5×** → giữ |
+| 11 | Chi phí chọn lọc | bench `selection_cost` | ❌ **tìm ra PERF-002** — tối ưu **−39,5%** |
+| 12 | Quét thật + dựng index | chạy elevated trên C: + D: | ✅ 117.123 tệp, index **7,6 MB** |
+| 13 | Tìm kiếm trên dữ liệu thật | thử truy vấn sau khi quét | ❌ **tìm ra SPEC-001** — chỉ tìm tên tệp là vô dụng — đã sửa |
+| 14 | Truy vấn 0 kết quả là đúng hay sai | đối chiếu bằng PowerShell | ✅ `tieng viet` → 0 là **đúng**, không có thư mục nào như vậy trên D: |
+| 15 | Tên thư mục tiếng Việt thật | test dùng tên lấy nguyên văn từ D: | ✅ `nhac nen` `nang dong` `tao vid` `han quoc` đều khớp |
+
+**Kết luận lượt test P2:** 11/15 pass ngay, 4 mục tìm ra vấn đề — đã sửa hết
+(`BUG-006`, `BUG-007`, `SPEC-001`, `PERF-002`).
+
+**Vấn đề nghiêm trọng nhất từ đầu dự án là `SPEC-001`**, và nó đáng để rút kinh nghiệm:
+
+- 67 unit test **không bắt được**, vì dữ liệu test do tôi tự nghĩ ra, mà tôi đặt tên tệp có
+  nghĩa như người ta thường làm (`holiday.mp4`, `avatar.mkv`).
+- Thư viện thật lại tổ chức ngược hẳn: tên thư mục mang toàn bộ ý nghĩa
+  (`DATA TẠO VID HƯNG\HAN QUOC\13\BÀI 13...`), tên tệp chỉ là số (`154.mp3`).
+- Chỉ khi chạy trên **dữ liệu thật của người dùng** mới lộ ra rằng yêu cầu trong đặc tả là sai.
+
+Bài học bổ sung ở mục 14: **kết quả rỗng cũng phải kiểm chứng.** `tieng viet → 0` trông y hệt
+một lỗi fold. Chỉ đối chiếu bằng công cụ độc lập mới phân biệt được "không tìm thấy vì hỏng" và
+"không tìm thấy vì không tồn tại". Và câu truy vấn thử nghiệm phải lấy từ dữ liệu thật, không
+được tự nghĩ ra — nếu không thì không phân biệt nổi hai trường hợp đó.

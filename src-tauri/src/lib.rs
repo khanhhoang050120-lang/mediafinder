@@ -35,10 +35,13 @@ pub fn run_gui() {
 /// `--dry-run` stops after reporting statistics and sample paths, which is how
 /// the scan is validated without needing the rest of the pipeline.
 pub fn run_indexer() {
+    use index::model::IndexBuilder;
     use ntfs::{tree, usn_enum, volume};
 
     let dry_run = std::env::args().any(|a| a == "--dry-run");
     tracing::info!(dry_run, "indexer starting");
+
+    let mut builder = IndexBuilder::new();
 
     let volumes = volume::list_volumes();
     if volumes.is_empty() {
@@ -144,11 +147,74 @@ pub fn run_indexer() {
             print_samples(&set);
         }
         grand_total += set.files.len();
+
+        // Fold into the shared index. Directory ids are per-volume, so each
+        // one is re-registered and remapped as it is added.
+        let build_started = std::time::Instant::now();
+        builder.reserve(set.dirs.len(), set.files.len());
+        let remap: Vec<u32> = set.dirs.iter().map(|d| builder.add_dir(d)).collect();
+        for f in &set.files {
+            builder.add_file(&f.name, f.kind, remap[f.dir_id as usize]);
+        }
+        tracing::info!(
+            "nạp vào index: {:.2}s",
+            build_started.elapsed().as_secs_f64()
+        );
     }
 
-    tracing::info!("TỔNG: {grand_total} tệp media");
+    let ix = builder.finish();
+    tracing::info!(
+        "TỔNG: {grand_total} tệp media · index {} mục / {} thư mục · RAM ~{:.1} MB",
+        ix.len(),
+        ix.dir_count(),
+        ix.memory_bytes() as f64 / (1024.0 * 1024.0)
+    );
+
     if dry_run {
+        demo_searches(&ix);
         tracing::info!("--dry-run: không ghi cache (ghi cache thuộc giai đoạn P4)");
+    }
+}
+
+/// Run a few searches against the freshly built index.
+///
+/// The point is the Vietnamese cases: proving on real filenames, not synthetic
+/// test data, that a query typed without diacritics finds names that have them.
+fn demo_searches(ix: &index::model::Index) {
+    use index::search::{search, SearchOptions};
+    use std::sync::atomic::AtomicU64;
+
+    if ix.is_empty() {
+        return;
+    }
+    let cancel = AtomicU64::new(0);
+    let opts = SearchOptions {
+        limit: 5,
+        ..Default::default()
+    };
+
+    // Queries chosen from directory names that actually exist on the scanned
+    // volumes, typed *without* diacritics. Guessing at plausible-sounding
+    // Vietnamese words proves nothing: an empty result set is impossible to
+    // tell apart from a broken fold.
+    tracing::info!("--- thử tìm kiếm (gõ KHÔNG dấu, dữ liệu CÓ dấu) ---");
+    for query in ["nhac nen", "nang dong", "bai", "hung", "screenshot"] {
+        let started = std::time::Instant::now();
+        let hits = search(ix, query, &opts, &cancel, 0);
+        let elapsed = started.elapsed();
+        tracing::info!(
+            "  \"{}\" → {} kết quả trong {:.2}ms",
+            query,
+            hits.len(),
+            elapsed.as_secs_f64() * 1000.0
+        );
+        for h in hits.iter().take(3) {
+            tracing::info!(
+                "      [{}] {}",
+                h.score,
+                ix.full_path(h.index as usize)
+            );
+        }
     }
 }
 

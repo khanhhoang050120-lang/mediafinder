@@ -24,8 +24,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 |----|----------|-----------|
 | **P0** | Scaffold + kiểm tra toolchain | ✅ **XONG** — 27/27, test 8/8 pass |
 | **P1** | Enumerator NTFS (USN) | ✅ **XONG** — 29/29 test, quét thật 4,1 triệu bản ghi |
-| **P2** | Index + fold + search + bench | 🔵 **sẵn sàng bắt đầu** |
-| **P3** | Nối Tauri + UI tối giản | ⬜ chưa bắt đầu |
+| **P2** | Index + fold + search + bench | ✅ **XONG** — 72/72 test, bench 3,01 ms worst case |
+| **P3** | Nối Tauri + UI tối giản | 🔵 **sẵn sàng bắt đầu** |
 | **P4** | Cache trên đĩa + luồng elevate | ⬜ chưa bắt đầu |
 | **P5** | Thumbnail + lưới ảo hoá | ⬜ chưa bắt đầu |
 | **P6** | Enrichment metadata + lọc | ⬜ chưa bắt đầu |
@@ -105,30 +105,68 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 - [x] `BUG-005` 🟡 tiến độ báo trùng, kèm lỗi logic throttle nặng hơn chưa từng chạy — đã sửa
 - [x] `PERF-001` 🟡 cấp phát `String` mỗi thành phần đường dẫn — đã sửa
 - [x] `CHECK-001` ✅ nghi ngờ loại nhầm 99,7% → kiểm chứng độc lập, **không phải lỗi**
-- [ ] `ISSUE-001` 🟠 kết quả C: toàn tài nguyên công cụ — **cần quyết định về sản phẩm**
+- [x] `ISSUE-001` 🟠 kết quả C: toàn tài nguyên công cụ → đã giải quyết ở P2 bằng `skip_dot_directories`
 
 ⚠️ **Bẫy đã biết:** đừng lọc thư mục ở pha 1 — bất khả thi, record chưa có path.
 ⚠️ **Bẫy đã biết:** nếu đổi sang parse `$MFT` thô thì phải lọc namespace tên 8.3, nếu không mỗi file ra 2 lần.
 
 ---
 
-## P2 — Index + fold + search ⬜
+## P2 — Index + fold + search ✅
 
 **Tiêu chí nghiệm thu:** `fold("Tiếng Việt Đà Nẵng") == "tieng viet da nang"`;
 bench 500k entry **p99 < 20ms**; `avatar` xếp `Avatar.mkv` trên `my_avatar_backup_2019.mkv`.
 
-- [ ] `index/model.rs` — `Span`, `MediaKind`, `Index` (Struct-of-Arrays + string arena)
-- [ ] `index/model.rs` — builder `Vec<RawRecord>` → `Index`, dedupe bảng thư mục
-- [ ] `index/fold.rs` — NFD → bỏ combining marks → `đ`/`Đ`→`d` → lowercase
-- [ ] `index/fold.rs` — **unit test tiếng Việt**: `đ Đ ơ ư ế ự ằ ỗ`, lẫn ASCII, chuỗi rỗng
-- [ ] `index/search.rs` — tách token, `memmem::Finder` dựng sẵn mỗi token
-- [ ] `index/search.rs` — AND đa token
-- [ ] `index/search.rs` — chấm điểm 4 bậc (exact / prefix / biên từ / substring) + thưởng
-- [ ] `index/search.rs` — top-K min-heap cục bộ mỗi thread, merge rồi sort
-- [ ] `index/search.rs` — huỷ sớm theo generation counter
-- [ ] `benches/search.rs` + khai báo `[[bench]]` trong Cargo.toml
-- [ ] Bench p99 < 20ms trên 500k entry tổng hợp
-- [ ] **Quyết định dựa trên số đo:** giữ rayon hay bỏ về đơn luồng
+- [x] `index/model.rs` — `Span`, `MediaKind`, `Index` (Struct-of-Arrays + string arena)
+- [x] `index/model.rs` — builder `Vec<RawRecord>` → `Index`, dedupe bảng thư mục
+- [x] `index/fold.rs` — NFD → bỏ combining marks → `đ`/`Đ`→`d` → lowercase
+- [x] `index/fold.rs` — **unit test tiếng Việt**: `đ Đ ơ ư ế ự ằ ỗ`, lẫn ASCII, chuỗi rỗng
+- [x] `index/search.rs` — tách token, `memmem::Finder` dựng sẵn mỗi token
+- [x] `index/search.rs` — AND đa token
+- [x] `index/search.rs` — chấm điểm 4 bậc (exact / prefix / biên từ / substring) + thưởng
+- [x] `index/search.rs` — top-K min-heap cục bộ mỗi thread, merge rồi sort
+- [x] `index/search.rs` — huỷ sớm theo generation counter
+- [x] `benches/search.rs` + khai báo `[[bench]]` trong Cargo.toml
+- [x] `index/fold.rs` — ghép lại NFC ở cuối (NFD tách Hangul thành Jamo — xem `BUG-006`)
+- [x] `index/search.rs` — thứ tự **tất định** `(score, index)`, có test chạy 12 lần liên tiếp
+- [x] Nối index vào indexer: `--dry-run` dựng `Index` thật và báo dung lượng RAM
+- [x] Bench 500k entry — worst case **3,01 ms**, mục tiêu 20 ms → **dư 6,6 lần**
+- [x] **Quyết định dựa trên số đo: GIỮ rayon** — đo trên 12 nhân, song song nhanh hơn 2,6–4,5×
+- [x] Tối ưu theo số đo: `select_nth_unstable_by` trước khi sort → **−39,5%** ở `limit=5000`
+
+### Số liệu bench (500k entry, 12 nhân)
+
+| Truy vấn | Song song | Đơn luồng | Rayon nhanh hơn |
+|---|---|---|---|
+| `avatar 1080p` | 0,99 ms | 4,83 ms | 4,5x |
+| `family trip 2024` | 1,10 ms | 5,18 ms | 4,5x |
+| `holiday` | 1,28 ms | 5,84 ms | 2,7x |
+| `tieng viet` | 1,37 ms | 6,29 ms | 2,7x |
+| `a` (worst case) | **3,01 ms** | 14,76 ms | 2,6x |
+
+Dựng index 500k: **183 ms**. Với thư viện thật 124k file thì khoảng 45 ms — không đáng kể
+so với 20 giây quét MFT.
+
+### Kiểm chứng trên dữ liệu thật (117.123 tệp, index 7,6 MB)
+
+Gõ **không dấu**, dữ liệu **có dấu**:
+
+| Truy vấn | Tìm ra | Điểm |
+|---|---|---|
+| `nhac nen` | `…\tây ban nha\`**`nhạc nền`**`.mp3` | 1447 |
+| `nhac nen` | `…\HAN QUOC\`**`nhạc nền`**` hàn.MP3` | 1446 |
+| `nang dong` | `…\NHẠC NỀN\Nhạc\`**`Năng Động`**`\SLPSTRM - Fireflies.mp3` | 545 |
+| `bai` | `…\DS3-BÀI 10\materials\audio\`**`bài 10`**`.mp3` | 848 |
+| `hung` | `…\`**`hung`**`arian-goulash-soup…mp4` | 824 |
+
+Thang điểm đúng thiết kế: khớp trọn tên tệp 1447 · khớp đầu tên 824–848 ·
+khớp **tên thư mục** 445–545 (luôn xếp dưới).
+
+### Sai lệch có chủ ý so với đặc tả gốc
+
+Đặc tả mục 3.3 quy định chỉ tìm trong **tên tệp**. Dữ liệu thật chứng minh yêu cầu đó sai —
+xem `SPEC-001` trong `bug.md`. Đã đổi sang tìm cả đường dẫn thư mục, với điểm thấp hơn.
+
 
 ---
 
@@ -221,6 +259,9 @@ nút "Quét lại" đẩy UAC đúng một lần.
 
 | Ngày | Mục | Kế hoạch | Thực tế | Lý do |
 |------|-----|----------|---------|-------|
+| 2026-08-24 | Phạm vi tìm kiếm | chỉ **tên tệp** (đặc tả mục 3.3) | tìm cả **đường dẫn thư mục** | Dữ liệu thật tổ chức theo kiểu tên thư mục mang toàn bộ ý nghĩa, tên tệp chỉ là số. Tìm theo tên tệp trả về gần như rỗng. Xem `SPEC-001`. |
+| 2026-08-24 | Lọc thư mục | danh sách tên cố định | thêm quy tắc `skip_dot_directories` | Một quy tắc thay cho danh sách phải bổ sung mãi mãi; bao phủ cả công cụ cài sau này. Xem `ISSUE-001`. |
+| 2026-08-24 | `MediaKind` | thuộc P2 | kéo sớm sang P1 | Bộ lọc phần mở rộng chạy ngay lúc quét MFT, viết bảng này hai lần là vô lý. |
 | 2026-08-24 | crate `windows` | `0.58` | **`0.61`** | Tauri 2.11 đã kéo về `windows 0.61.3`. Giữ 0.58 → 2 bản trong graph, tốn build time và dễ xung đột type. Bump lúc chưa viết dòng Win32 nào là miễn phí; để sau sẽ phải sửa code. |
 
 ---

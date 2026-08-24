@@ -47,7 +47,14 @@ pub const DEFAULT_EXCLUDED: &[&str] = &[
     "perflogs",
     "msocache",
     "$sysreset",
+    // Dependency and build trees. Unambiguous names only — `build`, `dist`,
+    // `target` and `bin` are deliberately absent because they are also
+    // perfectly ordinary folder names a person might keep media in, and
+    // silently losing a file is far worse than showing a spurious one.
     "node_modules",
+    "bower_components",
+    "__pycache__",
+    "site-packages",
 ];
 
 #[derive(Debug, Clone)]
@@ -59,6 +66,21 @@ pub struct ResolveOptions {
     /// handful of entries a linear `eq_ignore_ascii_case` scan is both faster
     /// and allocation-free.
     pub excluded: Vec<String>,
+
+    /// Skip any directory whose name starts with `.`, and everything under it.
+    ///
+    /// One rule that replaces an ever-growing blocklist. A real scan of C:
+    /// returned almost nothing but tool assets — `.gradle` caches, `.rustup`
+    /// docs, `.vscode` and `.antigravity-ide` extension icons, `.cache`
+    /// runtimes — none of which anyone searches for in a media finder. On
+    /// Windows a leading dot is the convention for tool and config
+    /// directories, so this also covers every tool installed in future without
+    /// needing to name it.
+    ///
+    /// It catches application-managed rubbish too: CapCut keeps deleted drafts
+    /// in `.recycle_bin` inside the user's own project folders.
+    pub skip_dot_directories: bool,
+
     /// Guard against a malformed parent chain; real NTFS trees are far shallower.
     pub max_depth: usize,
 }
@@ -67,8 +89,18 @@ impl Default for ResolveOptions {
     fn default() -> Self {
         Self {
             excluded: DEFAULT_EXCLUDED.iter().map(|s| s.to_string()).collect(),
+            skip_dot_directories: true,
             max_depth: 128,
         }
+    }
+}
+
+impl ResolveOptions {
+    fn is_excluded(&self, name: &str) -> bool {
+        if self.skip_dot_directories && name.starts_with('.') {
+            return true;
+        }
+        self.excluded.iter().any(|e| e.eq_ignore_ascii_case(name))
     }
 }
 
@@ -238,9 +270,7 @@ impl Resolver<'_> {
         for &frn in chain.iter().rev() {
             let node = &self.nodes[&frn];
 
-            if !excluded
-                && (self.opts.excluded.iter()).any(|e| e.eq_ignore_ascii_case(&node.name))
-            {
+            if !excluded && self.opts.is_excluded(&node.name) {
                 excluded = true;
             }
             if excluded {
@@ -396,6 +426,73 @@ mod tests {
         let set = resolve(records, 'C', &ResolveOptions::default());
         assert!(set.files.is_empty());
         assert_eq!(set.stats.excluded, 1);
+    }
+
+    #[test]
+    fn skips_dot_directories() {
+        let records = vec![
+            dir(10, ROOT, "Users"),
+            dir(11, 10, "me"),
+            dir(12, 11, ".gradle"),
+            dir(13, 12, "caches"),
+            file(100, 13, "icon.mp4"),
+            dir(20, 11, "Videos"),
+            file(101, 20, "keep.mp4"),
+        ];
+        let set = resolve(records, 'C', &ResolveOptions::default());
+
+        assert_eq!(set.files.len(), 1);
+        assert_eq!(set.files[0].name, "keep.mp4");
+        assert_eq!(set.stats.excluded, 1);
+    }
+
+    #[test]
+    fn dot_directory_rule_catches_app_managed_rubbish() {
+        // CapCut hides deleted drafts in `.recycle_bin` inside the user's own
+        // project folder — real paths seen during the P1 scan of D:.
+        let records = vec![
+            dir(10, ROOT, "capcut data"),
+            dir(11, 10, "CapCut Drafts"),
+            dir(12, 11, ".recycle_bin"),
+            dir(13, 12, "98"),
+            file(100, 13, "draft_cover.jpg"),
+            file(101, 11, "real_project.mp4"),
+        ];
+        let set = resolve(records, 'D', &ResolveOptions::default());
+
+        assert_eq!(set.files.len(), 1);
+        assert_eq!(set.files[0].name, "real_project.mp4");
+    }
+
+    #[test]
+    fn dot_directory_rule_can_be_turned_off() {
+        let records = vec![
+            dir(10, ROOT, ".hidden"),
+            file(100, 10, "clip.mp4"),
+        ];
+        let opts = ResolveOptions {
+            skip_dot_directories: false,
+            ..Default::default()
+        };
+        let set = resolve(records, 'C', &opts);
+        assert_eq!(path_of(&set, &set.files[0]), r"C:\.hidden\clip.mp4");
+    }
+
+    #[test]
+    fn ordinary_folder_names_are_never_excluded() {
+        // `build`, `dist`, `target` and `bin` are common in source trees but
+        // are also perfectly ordinary folder names. Losing a user's media
+        // silently is much worse than showing a few build artefacts, so these
+        // must stay searchable.
+        for name in ["build", "dist", "target", "bin", "obj", "vendor", "packages"] {
+            let records = vec![dir(10, ROOT, name), file(100, 10, "clip.mp4")];
+            let set = resolve(records, 'D', &ResolveOptions::default());
+            assert_eq!(
+                set.files.len(),
+                1,
+                "folder named {name:?} must not be excluded"
+            );
+        }
     }
 
     #[test]
