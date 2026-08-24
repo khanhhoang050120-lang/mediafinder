@@ -15,6 +15,13 @@ npm run tauri dev
 Lần chạy đầu cần quét ổ đĩa → sẽ có một prompt UAC (chỉ cho tiến trình con `--index`).
 Các lần sau load từ cache, **không có UAC**.
 
+## Tài liệu
+
+| File | Nội dung |
+|---|---|
+| [PROGRESS.md](./PROGRESS.md) | Tiến độ 9 giai đoạn, tiêu chí nghiệm thu, nhật ký kiểm chứng |
+| [docs/](./docs/) | Sổ ghi vấn đề — lỗi, cấu hình, rủi ro, hiệu năng, kiểm chứng, sản phẩm, đặc tả, nhật ký test |
+
 ## Bất biến kiến trúc
 
 Những điểm dưới đây là **cố ý**. Đọc trước khi định "sửa cho gọn" — mỗi cái đều

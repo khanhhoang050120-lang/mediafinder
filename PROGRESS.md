@@ -2,7 +2,7 @@
 
 > **File này là nguồn sự thật duy nhất về trạng thái dự án.**
 > Kế hoạch chi tiết: `C:\Users\Padoma1\.claude\plans\b-n-h-y-c-docs-transient-plum.md`
-> Bất biến kiến trúc: `README.md`
+> Bất biến kiến trúc: `README.md` · Sổ ghi vấn đề: [`docs/`](./docs/)
 
 ## Quy tắc làm việc
 
@@ -11,8 +11,11 @@
 3. Mỗi tiêu chí nghiệm thu phải ghi **bằng chứng thực tế** vào Nhật ký kiểm chứng cuối file.
 4. Phải làm khác kế hoạch → ghi vào mục "Sai lệch so với kế hoạch" kèm lý do.
 5. **Xong mỗi giai đoạn phải đóng vai tester**: chạy một lượt test chủ động đi tìm lỗi
-   (không chỉ chạy cho có), sửa những gì tìm được, rồi ghi **toàn bộ** phát hiện vào `bug.md`.
-   Giai đoạn chỉ được coi là xong khi lượt test đã chạy và `bug.md` đã cập nhật.
+   (không chỉ chạy cho có), sửa những gì tìm được, rồi ghi **toàn bộ** phát hiện vào
+   thư mục [`docs/`](./docs/) — mỗi loại vấn đề một file, xem bảng "ghi vào file nào"
+   ở [`docs/README.md`](./docs/README.md). Kết quả lượt test ghi vào
+   [`docs/test-log.md`](./docs/test-log.md).
+   Giai đoạn chỉ được coi là xong khi lượt test đã chạy và `docs/` đã cập nhật.
 
 Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` đã kiểm chứng chạy được · `[!]` đang vướng
 
@@ -68,7 +71,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 - [x] **`npm run tauri dev` mở được cửa sổ** — `916x659`, class `Tauri Window`, title `MediaFinder`,
       render đúng: title bar + icon, placeholder tiếng Việt đủ dấu, dark theme, focus ring
 
-### Lượt test P0 (xem chi tiết ở `bug.md`)
+### Lượt test P0 (chi tiết ở [`docs/`](./docs/))
 - [x] `cargo test` — pass
 - [x] `cargo clippy --all-targets` — **sạch, 0 warning**
 - [x] Dispatch `--index` — vào đúng indexer mode, không mở GUI
@@ -99,7 +102,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 - [x] Chạy thật: C: **3.559.309 bản ghi / 18,5s**, D: **530.731 / 20,4s** — 0 bản ghi hỏng, 0 mồ côi, 0 vòng lặp
 - [x] Đối chiếu chéo bằng PowerShell — số liệu khớp cả chiều giữ lẫn chiều loại (xem `CHECK-001`)
 
-### Lượt test P1 (chi tiết ở `bug.md`)
+### Lượt test P1 (chi tiết ở [`docs/`](./docs/))
 - [x] 13 mục test → 11 pass ngay, 2 mục **tìm ra lỗi** và đã sửa
 - [x] `BUG-004` 🔴 `.ts` (TypeScript) bị phân loại thành video — đã sửa + thêm test chống tái phát
 - [x] `BUG-005` 🟡 tiến độ báo trùng, kèm lỗi logic throttle nặng hơn chưa từng chạy — đã sửa
@@ -165,7 +168,7 @@ khớp **tên thư mục** 445–545 (luôn xếp dưới).
 ### Sai lệch có chủ ý so với đặc tả gốc
 
 Đặc tả mục 3.3 quy định chỉ tìm trong **tên tệp**. Dữ liệu thật chứng minh yêu cầu đó sai —
-xem `SPEC-001` trong `bug.md`. Đã đổi sang tìm cả đường dẫn thư mục, với điểm thấp hơn.
+xem [`SPEC-001`](./docs/spec.md#spec-001). Đã đổi sang tìm cả đường dẫn thư mục, với điểm thấp hơn.
 
 
 ---
