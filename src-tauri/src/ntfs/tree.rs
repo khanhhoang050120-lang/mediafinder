@@ -110,6 +110,15 @@ pub struct ResolvedFile {
     pub name: String,
     pub kind: MediaKind,
     pub dir_id: u32,
+    /// The file's own File Reference Number.
+    ///
+    /// Carried through so a later USN journal record — which identifies files
+    /// only by FRN — can find this entry again. A deleted file has no path
+    /// left to match on, so the FRN is the only identity that survives.
+    ///
+    /// Unique *per volume*, not per machine. The volume is already encoded in
+    /// the directory path, so it is not stored a second time.
+    pub frn: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +139,11 @@ pub struct ResolveStats {
 pub struct ResolvedSet {
     /// Absolute directory paths. Index 0 is always the volume root (`C:`).
     pub dirs: Vec<String>,
+    /// The FRN of each directory in `dirs`, same order and length.
+    ///
+    /// Entry 0 is the volume root, which is recognised by record number rather
+    /// than by a record of its own; it is stored as [`ROOT_RECORD_NUMBER`].
+    pub dir_frns: Vec<u64>,
     pub files: Vec<ResolvedFile>,
     pub stats: ResolveStats,
 }
@@ -176,6 +190,7 @@ pub fn resolve(records: Vec<RawRecord>, letter: char, opts: &ResolveOptions) -> 
         // Index 0 is the volume root. Note the missing trailing backslash:
         // joining appends one, so `C:` + `\` + `Users` gives `C:\Users`.
         dirs: vec![format!("{letter}:")],
+        dir_frns: vec![ROOT_RECORD_NUMBER],
         memo: HashMap::new(),
         stats: ResolveStats::default(),
     };
@@ -192,6 +207,7 @@ pub fn resolve(records: Vec<RawRecord>, letter: char, opts: &ResolveOptions) -> 
                     // Safe: files are only collected when `kind` is `Some`.
                     kind: f.kind.expect("file record without a media kind"),
                     dir_id,
+                    frn: f.frn,
                 });
             }
             DirState::Excluded => resolver.stats.excluded += 1,
@@ -203,6 +219,7 @@ pub fn resolve(records: Vec<RawRecord>, letter: char, opts: &ResolveOptions) -> 
 
     ResolvedSet {
         dirs: resolver.dirs,
+        dir_frns: resolver.dir_frns,
         files: out,
         stats: resolver.stats,
     }
@@ -212,6 +229,7 @@ struct Resolver<'a> {
     nodes: HashMap<u64, DirNode>,
     opts: &'a ResolveOptions,
     dirs: Vec<String>,
+    dir_frns: Vec<u64>,
     memo: HashMap<u64, DirState>,
     stats: ResolveStats,
 }
@@ -285,6 +303,7 @@ impl Resolver<'_> {
             path.push_str(&node.name);
             let id = self.dirs.len() as u32;
             self.dirs.push(path.clone());
+            self.dir_frns.push(frn);
             self.memo.insert(frn, DirState::Ok(id));
             state = DirState::Ok(id);
         }
@@ -396,6 +415,67 @@ mod tests {
         assert_eq!(ids.len(), 1, "one directory must yield one entry");
         // Root plus Videos, and nothing more.
         assert_eq!(set.dirs.len(), 2);
+    }
+
+    #[test]
+    fn every_file_carries_its_own_frn_through_resolution() {
+        let records = vec![
+            dir(10, ROOT, "Videos"),
+            file(100, 10, "a.mp4"),
+            file(101, 10, "b.mp4"),
+        ];
+        let set = resolve(records, 'C', &ResolveOptions::default());
+
+        // Order is not guaranteed by anything, so match on the name.
+        let by_name = |n: &str| set.files.iter().find(|f| f.name == n).expect(n).frn;
+        assert_eq!(by_name("a.mp4"), 100);
+        assert_eq!(by_name("b.mp4"), 101);
+    }
+
+    #[test]
+    fn the_directory_table_carries_an_frn_for_every_entry() {
+        let records = vec![
+            dir(10, ROOT, "Videos"),
+            dir(11, 10, "2024"),
+            file(100, 11, "a.mp4"),
+        ];
+        let set = resolve(records, 'C', &ResolveOptions::default());
+
+        // The two tables are read by position, so a missing entry would not
+        // fail loudly — it would silently pair a path with another one's FRN.
+        assert_eq!(set.dirs.len(), set.dir_frns.len());
+
+        let frn_of = |path: &str| {
+            let i = set.dirs.iter().position(|d| d == path).expect(path);
+            set.dir_frns[i]
+        };
+        assert_eq!(frn_of("C:"), ROOT_RECORD_NUMBER, "gốc ổ đĩa");
+        assert_eq!(frn_of(r"C:\Videos"), 10);
+        assert_eq!(frn_of(r"C:\Videos\2024"), 11);
+    }
+
+    #[test]
+    fn an_excluded_directory_leaves_no_gap_between_the_two_tables() {
+        // The path-building loop pushes to `dirs` and `dir_frns` together, but
+        // `continue`s past both for an excluded component. If the two ever
+        // fall out of step, every directory after the excluded one is paired
+        // with the wrong FRN — and nothing else in the program would notice.
+        let records = vec![
+            dir(10, ROOT, "Windows"),
+            dir(11, 10, "Media"),
+            file(100, 11, "chimes.mp4"),
+            dir(20, ROOT, "Videos"),
+            file(200, 20, "keep.mp4"),
+        ];
+        let set = resolve(records, 'C', &ResolveOptions::default());
+
+        assert_eq!(set.dirs.len(), set.dir_frns.len());
+        let i = set
+            .dirs
+            .iter()
+            .position(|d| d == r"C:\Videos")
+            .expect("thư mục không bị loại");
+        assert_eq!(set.dir_frns[i], 20);
     }
 
     #[test]

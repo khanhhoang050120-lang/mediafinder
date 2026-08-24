@@ -506,9 +506,9 @@ mod tests {
 
     fn build(names: &[&str]) -> Index {
         let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\Media");
+        let d = b.add_dir(r"D:\Media", 0);
         for n in names {
-            b.add_file(n, MediaKind::Video, d);
+            b.add_file(n, MediaKind::Video, d, 0);
         }
         b.finish()
     }
@@ -598,11 +598,11 @@ mod tests {
         // folder names, numeric filenames. Filename-only search returned
         // nothing at all for this library.
         let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\Sounds Edit\HƯNG\DATA TẠO VID HƯNG\HAN QUOC\13");
-        b.add_file("154.mp3", MediaKind::Audio, d);
-        b.add_file("155.mp3", MediaKind::Audio, d);
-        let other = b.add_dir(r"D:\Misc");
-        b.add_file("999.mp3", MediaKind::Audio, other);
+        let d = b.add_dir(r"D:\Sounds Edit\HƯNG\DATA TẠO VID HƯNG\HAN QUOC\13", 0);
+        b.add_file("154.mp3", MediaKind::Audio, d, 0);
+        b.add_file("155.mp3", MediaKind::Audio, d, 0);
+        let other = b.add_dir(r"D:\Misc", 0);
+        b.add_file("999.mp3", MediaKind::Audio, other, 0);
         let ix = b.finish();
 
         assert_eq!(run(&ix, "han quoc").len(), 2);
@@ -625,8 +625,8 @@ mod tests {
             (r"D:\Sounds Edit\HƯNG\WISE\DATA TẠO VID HƯNG\HAN QUOC\13", "154.mp3"),
             (r"D:\Phim\Không dấu gì cả", "04.mp4"),
         ] {
-            let d = b.add_dir(path);
-            b.add_file(file, MediaKind::Audio, d);
+            let d = b.add_dir(path, 0);
+            b.add_file(file, MediaKind::Audio, d, 0);
         }
         let ix = b.finish();
 
@@ -647,10 +647,10 @@ mod tests {
     #[test]
     fn a_filename_match_always_outranks_a_folder_match() {
         let mut b = IndexBuilder::new();
-        let in_folder = b.add_dir(r"D:\holiday videos");
-        b.add_file("00123.mp4", MediaKind::Video, in_folder);
-        let plain = b.add_dir(r"D:\Misc");
-        b.add_file("holiday.mp4", MediaKind::Video, plain);
+        let in_folder = b.add_dir(r"D:\holiday videos", 0);
+        b.add_file("00123.mp4", MediaKind::Video, in_folder, 0);
+        let plain = b.add_dir(r"D:\Misc", 0);
+        b.add_file("holiday.mp4", MediaKind::Video, plain, 0);
         let ix = b.finish();
 
         // The file actually named `holiday` must come first, however
@@ -661,10 +661,10 @@ mod tests {
     #[test]
     fn tokens_may_be_split_across_folder_and_filename() {
         let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\Phim\2024");
-        b.add_file("avatar.mkv", MediaKind::Video, d);
-        let e = b.add_dir(r"D:\Phim\2019");
-        b.add_file("avatar.mkv", MediaKind::Video, e);
+        let d = b.add_dir(r"D:\Phim\2024", 0);
+        b.add_file("avatar.mkv", MediaKind::Video, d, 0);
+        let e = b.add_dir(r"D:\Phim\2019", 0);
+        b.add_file("avatar.mkv", MediaKind::Video, e, 0);
         let ix = b.finish();
 
         // `2024` comes from the folder, `avatar` from the filename.
@@ -675,8 +675,8 @@ mod tests {
     #[test]
     fn a_token_in_neither_name_nor_folder_still_rejects() {
         let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\Phim\2024");
-        b.add_file("avatar.mkv", MediaKind::Video, d);
+        let d = b.add_dir(r"D:\Phim\2024", 0);
+        b.add_file("avatar.mkv", MediaKind::Video, d, 0);
         let ix = b.finish();
 
         assert!(run(&ix, "avatar 1999").is_empty());
@@ -880,10 +880,10 @@ mod tests {
     #[test]
     fn respects_the_kind_filter() {
         let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\M");
-        b.add_file("holiday.mp4", MediaKind::Video, d);
-        b.add_file("holiday.jpg", MediaKind::Image, d);
-        b.add_file("holiday.mp3", MediaKind::Audio, d);
+        let d = b.add_dir(r"D:\M", 0);
+        b.add_file("holiday.mp4", MediaKind::Video, d, 0);
+        b.add_file("holiday.jpg", MediaKind::Image, d, 0);
+        b.add_file("holiday.mp3", MediaKind::Audio, d, 0);
         let ix = b.finish();
 
         let cancel = AtomicU64::new(0);

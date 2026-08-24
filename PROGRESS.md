@@ -455,20 +455,60 @@ dồn lại thì mọi span phía sau đều phải dịch.
 
 | Cách | Đánh đổi |
 |---|---|
-| Dựng lại toàn bộ index mỗi khi có thay đổi | Đơn giản nhất, nhưng ~38 giây một lần — mâu thuẫn với chính chữ "realtime" |
-| **Lớp phủ nhỏ có thể sửa, nằm cạnh index đông cứng** | Tìm kiếm phải quét hai nơi rồi hợp nhất, và cần nén định kỳ. Chi phí nằm ở chỗ đo được, kiểm soát được |
+| **Dựng lại toàn bộ `Index` trong RAM từ `Index` cũ + thay đổi** | Tưởng là đắt. Đo ra thì không |
+| Lớp phủ nhỏ có thể sửa, nằm cạnh index đông cứng | Tìm kiếm phải quét hai nơi rồi hợp nhất, cần nén định kỳ, và mọi nơi đang dùng vị trí làm định danh đều phải sửa |
 | Đổi `Index` sang cấu trúc có tombstone + free list | Phá vỡ SoA + arena — mất đúng thứ khiến tìm kiếm chạy 0,5 ms |
 
-**Nghiêng về cách 2.** Index đông cứng giữ nguyên như hôm nay; thay đổi đi vào một lớp phủ nhỏ —
-vài nghìn mục là cùng, giữa hai lần nén. Tìm kiếm quét lớp phủ trước (nó bé nên gần như miễn phí),
-rồi quét index chính và bỏ qua những mục lớp phủ đã đánh dấu xoá. Nén thành index mới khi lớp phủ
-vượt ngưỡng hoặc khi máy rảnh.
+**Đã chọn cách 1, sau khi đo.** Ban đầu bản kế hoạch này nghiêng về lớp phủ, với lý do "dựng lại
+mất ~38 giây". Con số đó **sai chỗ**: 38 giây là thời gian **quét đĩa**, không phải thời gian dựng
+cấu trúc trong RAM. Đem `cargo bench --bench search -- build` ra đo:
 
-Cách này còn có một lợi thế không hiển nhiên với **đổi tên thư mục**: một thao tác đổi tên thư mục
-làm đổi đường dẫn của toàn bộ tệp bên dưới nó. Nhưng bảng `dirs` được tách riêng từ P2, nên đó chỉ
-là sửa **một** mục — vẫn rẻ kể cả khi thư mục đó chứa 50.000 tệp.
+| Việc | Thời gian |
+|---|---|
+| Dựng `Index` 100.000 mục (kể cả fold lại toàn bộ) | **37,5 ms** |
+| Dựng `Index` 500.000 mục | **183 ms** |
+| Nạp lại metadata enrichment cho 117.128 mục | **53 ms** (đo từ log khởi động) |
+
+Thư viện thật là 117.128 tệp, nên một lần áp thay đổi tốn khoảng **100 ms** trên một luồng nền.
+Gộp thay đổi trong vài giây rồi dựng lại một lần thì chi phí là vài phần trăm của một nhân.
+
+`Index` không sửa được, nhưng **đọc được** — dựng cái mới từ cái cũ cộng danh sách thay đổi là
+hoàn toàn khả thi. Đổi lại: không lớp phủ, không tombstone, không nén, không phải sửa `search.rs`,
+và không chỗ nào trong ứng dụng phải học cách xử lý hai nguồn dữ liệu.
+
+Enrichment không cản đường: `Store` khoá theo **hash đường dẫn**, không theo vị trí, và
+`seed_from_store` vốn đã dựng lại toàn bộ vector `MediaProps` từ một `&Index` mới trong mỗi lần
+khởi động. Vị trí đổi hết sau mỗi lần dựng lại cũng không sao — `epoch` của `ArcSwap` đã lo phần
+thumbnail từ P5.
+
+**Đổi tên thư mục** vẫn rẻ như phân tích ban đầu, và vì lý do đó: bảng `dirs` tách riêng từ P2 nên
+đổi tên một thư mục chứa 50.000 tệp chỉ là sửa **một** chuỗi.
+
+### Thứ thật sự còn thiếu: định danh
+
+Bỏ được lớp phủ rồi thì chỉ còn đúng một vướng mắc kiến trúc, và nó nhỏ hơn nhiều.
+
+Journal cho biết "tệp có FRN X vừa bị xoá". Nhưng `Index` **không lưu FRN** — nó chỉ có tên, thư
+mục, loại, dung lượng, thời gian. Không có cách nào biết mục nào trong index tương ứng với FRN X.
+Ghép theo đường dẫn thì không dùng được: tệp vừa bị xoá thì không còn đường dẫn để hỏi nữa.
+
+Nên bước đầu tiên của P9 là **thêm FRN vào index**: `frn: Vec<u64>` cho tệp và `dir_frn: Vec<u64>`
+cho thư mục. Tốn 8 byte mỗi mục — khoảng 940 KB cho thư viện thật, trên nền 9,4 MB hiện tại.
+`RawRecord` đã mang sẵn `frn` và `parent_frn` từ P1; `tree.rs` chỉ đang **vứt đi** sau khi dùng
+xong.
 
 ### Việc phải làm
+
+**Giai đoạn 1 — Rust thuần, không cài service, test được bằng dữ liệu tổng hợp:**
+
+- [ ] `frn` cho tệp và `dir_frn` cho thư mục, xuyên suốt `tree.rs` → `IndexBuilder` → `Index` → cache
+- [ ] Nâng `SCHEMA_VERSION` — cache cũ phải báo "phiên bản cũ", không phải "hỏng"
+- [ ] `rebuild_with(&Index, &[Change]) -> Index` — tạo, xoá, đổi tên tệp, đổi tên thư mục
+- [ ] Đọc `FSCTL_READ_USN_JOURNAL`, dịch bản ghi thô thành `Change`
+- [ ] Phát hiện journal bị xoá rồi tạo lại, và journal cuộn vòng
+- [ ] Gộp thay đổi rồi dựng lại một lần, thay vì dựng lại theo từng thay đổi
+
+**Giai đoạn 2 — cần quyền và cần cài đặt, làm sau:**
 
 - [ ] Đọc `FSCTL_READ_USN_JOURNAL` liên tục cho từng volume NTFS, nối từ `next_usn` đã lưu
 - [ ] Phát hiện **journal bị xoá rồi tạo lại**: `journal_id` khác `VolumeStamp` → buộc quét lại đầy đủ

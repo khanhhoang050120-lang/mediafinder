@@ -140,9 +140,9 @@ mod tests {
 
     fn index_with(n: usize) -> Index {
         let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\M");
+        let d = b.add_dir(r"D:\M", 0);
         for i in 0..n {
-            b.add_file(&format!("f{i}.mp4"), MediaKind::Video, d);
+            b.add_file(&format!("f{i}.mp4"), MediaKind::Video, d, i as u64 + 1);
         }
         b.finish()
     }

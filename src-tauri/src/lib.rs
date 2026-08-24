@@ -372,9 +372,14 @@ pub fn run_indexer() {
         // one is re-registered and remapped as it is added.
         let build_started = std::time::Instant::now();
         builder.reserve(set.dirs.len(), set.files.len());
-        let remap: Vec<u32> = set.dirs.iter().map(|d| builder.add_dir(d)).collect();
+        let remap: Vec<u32> = set
+            .dirs
+            .iter()
+            .zip(&set.dir_frns)
+            .map(|(d, &frn)| builder.add_dir(d, frn))
+            .collect();
         for f in &set.files {
-            builder.add_file(&f.name, f.kind, remap[f.dir_id as usize]);
+            builder.add_file(&f.name, f.kind, remap[f.dir_id as usize], f.frn);
         }
         tracing::info!(
             "nạp vào index: {:.2}s",

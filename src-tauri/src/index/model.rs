@@ -117,6 +117,19 @@ pub struct Index {
     dir_id: Vec<u32>,
     kind: Vec<MediaKind>,
 
+    /// File Reference Number of each entry, and of each directory.
+    ///
+    /// The only identity that survives deletion: a USN journal record names a
+    /// file by FRN, and by the time the record is read the file may no longer
+    /// have a path to match against.
+    ///
+    /// FRNs are unique per volume, not per machine, so two entries on
+    /// different drives can share one. The volume is recoverable from the
+    /// directory path, so it is not stored again here — anything building a
+    /// lookup table must key on `(drive letter, frn)`.
+    frn: Vec<u64>,
+    dir_frn: Vec<u64>,
+
     /// Bytes on disk. Cheap to obtain — `GetFileAttributesEx` reads metadata
     /// only, never opening the file — so it is collected during the scan for
     /// every entry rather than enriched later.
@@ -170,6 +183,47 @@ impl Index {
 
     pub fn mtime(&self, i: usize) -> i64 {
         self.mtime.get(i).copied().unwrap_or(0)
+    }
+
+    /// File Reference Number of entry `i`, or 0 if this index predates them.
+    pub fn frn(&self, i: usize) -> u64 {
+        self.frn.get(i).copied().unwrap_or(0)
+    }
+
+    /// File Reference Number of directory `dir_id`, or 0 if unknown.
+    pub fn dir_frn(&self, dir_id: usize) -> u64 {
+        self.dir_frn.get(dir_id).copied().unwrap_or(0)
+    }
+
+    pub fn frns(&self) -> &[u64] {
+        &self.frn
+    }
+
+    pub fn dir_frns(&self) -> &[u64] {
+        &self.dir_frn
+    }
+
+    /// The drive letter entry `i` lives on, uppercased.
+    ///
+    /// Read off the directory path rather than stored: every absolute path
+    /// starts with it, and an FRN is only meaningful together with the volume
+    /// it came from.
+    pub fn volume_of(&self, i: usize) -> u8 {
+        Self::volume_of_path(self.dir(i))
+    }
+
+    /// The drive letter of directory `dir_id`, uppercased.
+    pub fn volume_of_dir(&self, dir_id: usize) -> u8 {
+        Self::volume_of_path(self.dir_path(dir_id))
+    }
+
+    fn volume_of_path(path: &str) -> u8 {
+        path.as_bytes().first().copied().unwrap_or(0).to_ascii_uppercase()
+    }
+
+    /// The absolute path of directory `dir_id`.
+    pub fn dir_path(&self, dir_id: usize) -> &str {
+        self.str_at(self.dirs[dir_id])
     }
 
     pub fn sizes(&self) -> &[u64] {
@@ -233,6 +287,7 @@ impl Index {
             + self.kind.len()
             + self.size.len() * std::mem::size_of::<u64>()
             + self.mtime.len() * std::mem::size_of::<i64>()
+            + (self.frn.len() + self.dir_frn.len()) * std::mem::size_of::<u64>()
     }
 
     fn str_at(&self, span: Span) -> &str {
@@ -255,6 +310,8 @@ pub struct IndexBuilder {
     folded: Vec<Span>,
     dir_id: Vec<u32>,
     kind: Vec<MediaKind>,
+    frn: Vec<u64>,
+    dir_frn: Vec<u64>,
     /// Reused across every file so folding does not allocate per entry.
     fold_buf: String,
 }
@@ -268,14 +325,19 @@ impl IndexBuilder {
     pub fn reserve(&mut self, dirs: usize, files: usize) {
         self.dirs.reserve(dirs);
         self.dir_folded.reserve(dirs);
+        self.dir_frn.reserve(dirs);
         self.name.reserve(files);
         self.folded.reserve(files);
         self.dir_id.reserve(files);
         self.kind.reserve(files);
+        self.frn.reserve(files);
     }
 
     /// Add a directory path, returning its global id.
-    pub fn add_dir(&mut self, path: &str) -> u32 {
+    ///
+    /// `frn` is the directory's File Reference Number, used later to apply
+    /// journal updates; pass 0 when there is none to give.
+    pub fn add_dir(&mut self, path: &str, frn: u64) -> u32 {
         let span = self.push_str(path);
 
         let mut buf = std::mem::take(&mut self.fold_buf);
@@ -286,11 +348,12 @@ impl IndexBuilder {
 
         self.dirs.push(span);
         self.dir_folded.push(folded_span);
+        self.dir_frn.push(frn);
         (self.dirs.len() - 1) as u32
     }
 
     /// Add a file. `dir_id` must have come from [`IndexBuilder::add_dir`].
-    pub fn add_file(&mut self, name: &str, kind: MediaKind, dir_id: u32) {
+    pub fn add_file(&mut self, name: &str, kind: MediaKind, dir_id: u32, frn: u64) {
         debug_assert!((dir_id as usize) < self.dirs.len(), "dir_id out of range");
 
         let name_span = self.push_str(name);
@@ -307,6 +370,7 @@ impl IndexBuilder {
         self.folded.push(folded_span);
         self.dir_id.push(dir_id);
         self.kind.push(kind);
+        self.frn.push(frn);
     }
 
     pub fn finish(self) -> Index {
@@ -318,6 +382,8 @@ impl IndexBuilder {
             folded: self.folded,
             dir_id: self.dir_id,
             kind: self.kind,
+            frn: self.frn,
+            dir_frn: self.dir_frn,
             // Filled in by a separate pass; see `Index::set_file_stats`.
             size: Vec::new(),
             mtime: Vec::new(),
@@ -383,11 +449,11 @@ mod tests {
 
     fn sample() -> Index {
         let mut b = IndexBuilder::new();
-        let phim = b.add_dir(r"D:\Phim");
-        let nhac = b.add_dir(r"D:\Nhạc");
-        b.add_file("Tiếng Việt.mp4", MediaKind::Video, phim);
-        b.add_file("Đà Nẵng 2024.mkv", MediaKind::Video, phim);
-        b.add_file("bài hát.mp3", MediaKind::Audio, nhac);
+        let phim = b.add_dir(r"D:\Phim", 0);
+        let nhac = b.add_dir(r"D:\Nhạc", 0);
+        b.add_file("Tiếng Việt.mp4", MediaKind::Video, phim, 0);
+        b.add_file("Đà Nẵng 2024.mkv", MediaKind::Video, phim, 0);
+        b.add_file("bài hát.mp3", MediaKind::Audio, nhac, 0);
         b.finish()
     }
 
@@ -417,22 +483,74 @@ mod tests {
 
     #[test]
     fn directory_text_is_stored_once_however_many_files_share_it() {
-        let mut b = IndexBuilder::new();
-        let d = b.add_dir(r"D:\A very long directory path indeed\nested\deeper\still");
-        for i in 0..100 {
-            b.add_file(&format!("f{i}.mp4"), MediaKind::Video, d);
+        fn with_dir(dir: &str) -> Index {
+            let mut b = IndexBuilder::new();
+            let d = b.add_dir(dir, 0);
+            for i in 0..100 {
+                b.add_file(&format!("f{i}.mp4"), MediaKind::Video, d, 0);
+            }
+            b.finish()
         }
+
+        let short = with_dir(r"D:\M");
+        let long = with_dir(&format!(r"D:\{}", "x".repeat(EXTRA)));
+
+        // A hundred files resolve to the same path.
+        assert_eq!(short.dir_count(), 1);
+        assert_eq!(short.dir(0), short.dir(99));
+
+        // Measure the property directly rather than against a fixed byte
+        // budget: lengthening only the *directory* name must cost roughly one
+        // copy of the extra text — twice, since the folded form is stored too.
+        // Were the path kept per file it would cost a hundred times that.
+        //
+        // A fixed ceiling would have to be raised every time a per-entry field
+        // is added (`size`, `mtime`, `frn` …), and each of those edits is a
+        // chance to quietly raise it past the point where it still proves
+        // anything.
+        let grew = long.memory_bytes() - short.memory_bytes();
+        assert!(
+            grew < 4 * EXTRA,
+            "thư mục dài thêm {EXTRA} ký tự làm index phình {grew} byte — \
+             đường dẫn đang bị nhân bản theo từng tệp"
+        );
+    }
+
+    /// Long enough that duplicating it a hundred times is unmistakable.
+    const EXTRA: usize = 500;
+
+    #[test]
+    fn file_reference_numbers_survive_into_the_index() {
+        let mut b = IndexBuilder::new();
+        let d = b.add_dir(r"D:\Phim", 0x0004_0000_0000_1234);
+        b.add_file("a.mp4", MediaKind::Video, d, 0x0002_0000_0000_00AB);
+        b.add_file("b.mp4", MediaKind::Video, d, 0x0002_0000_0000_00CD);
         let ix = b.finish();
 
-        // A hundred files resolve to the same path, but the text behind it was
-        // written into the arena exactly once.
-        assert_eq!(ix.dir_count(), 1);
-        assert_eq!(ix.dir(0), ix.dir(99));
-        assert!(
-            ix.memory_bytes() < 4000,
-            "arena grew to {} bytes — directory text is being duplicated",
-            ix.memory_bytes()
-        );
+        // The high 16 bits are the record's sequence number, not padding, so
+        // the whole 64 bits has to come back unchanged — truncating to the
+        // record number would make a reused record collide with a stale one.
+        assert_eq!(ix.frn(0), 0x0002_0000_0000_00AB);
+        assert_eq!(ix.frn(1), 0x0002_0000_0000_00CD);
+        assert_eq!(ix.dir_frn(0), 0x0004_0000_0000_1234);
+        assert_eq!(ix.frns(), &[0x0002_0000_0000_00AB, 0x0002_0000_0000_00CD]);
+    }
+
+    #[test]
+    fn the_volume_a_file_lives_on_is_read_off_its_path() {
+        let mut b = IndexBuilder::new();
+        let c = b.add_dir(r"c:\Users\Me", 10);
+        let d = b.add_dir(r"D:\Phim", 11);
+        b.add_file("a.mp4", MediaKind::Video, c, 7);
+        b.add_file("b.mp4", MediaKind::Video, d, 7);
+        let ix = b.finish();
+
+        // Two different files sharing one FRN is not a bug: an FRN is unique
+        // per volume, so identity is the pair, never the number alone.
+        assert_eq!(ix.frn(0), ix.frn(1));
+        assert_eq!(ix.volume_of(0), b'C');
+        assert_eq!(ix.volume_of(1), b'D');
+        assert_eq!(ix.volume_of_dir(0), b'C');
     }
 
     #[test]

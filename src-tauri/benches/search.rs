@@ -43,7 +43,7 @@ fn synthetic_index(entries: usize) -> Index {
     // 122k files across 5.4k directories.
     let dir_count = (entries / 22).max(1);
     let dirs: Vec<u32> = (0..dir_count)
-        .map(|d| b.add_dir(&format!(r"D:\Media\collection {}\subfolder {}", d / 40, d % 40)))
+        .map(|d| b.add_dir(&format!(r"D:\Media\collection {}\subfolder {}", d / 40, d % 40), 0))
         .collect();
 
     b.reserve(dir_count, entries);
@@ -56,7 +56,7 @@ fn synthetic_index(entries: usize) -> Index {
             2 => format!("{stem}_{i}_1080p_x265.{ext}"),
             _ => format!("{i:06} - {stem} (edited).{ext}"),
         };
-        b.add_file(&name, kind, dirs[i % dir_count]);
+        b.add_file(&name, kind, dirs[i % dir_count], 0);
     }
     b.finish()
 }
