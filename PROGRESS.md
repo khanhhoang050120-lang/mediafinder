@@ -23,8 +23,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | GĐ | Nội dung | Trạng thái |
 |----|----------|-----------|
 | **P0** | Scaffold + kiểm tra toolchain | ✅ **XONG** — 27/27, test 8/8 pass |
-| **P1** | Enumerator NTFS (USN) | 🔵 **sẵn sàng bắt đầu** |
-| **P2** | Index + fold + search + bench | ⬜ chưa bắt đầu |
+| **P1** | Enumerator NTFS (USN) | ✅ **XONG** — 29/29 test, quét thật 4,1 triệu bản ghi |
+| **P2** | Index + fold + search + bench | 🔵 **sẵn sàng bắt đầu** |
 | **P3** | Nối Tauri + UI tối giản | ⬜ chưa bắt đầu |
 | **P4** | Cache trên đĩa + luồng elevate | ⬜ chưa bắt đầu |
 | **P5** | Thumbnail + lưới ảo hoá | ⬜ chưa bắt đầu |
@@ -77,23 +77,35 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 
 ---
 
-## P1 — Enumerator NTFS (USN) ⬜
+## P1 — Enumerator NTFS (USN) ✅
 
 **Tiêu chí nghiệm thu:** `--index --dry-run` in ra số record + 20 path mẫu từ ổ C:;
 **không có tên 8.3 trùng lặp**; path resolve đúng ở độ sâu ≥5 cấp.
 
-- [ ] `ntfs/volume.rs` — liệt kê volume, lọc đúng NTFS, mở handle `\\.\X:`
-- [ ] `ntfs/volume.rs` — phát hiện USN Journal bị tắt, báo lỗi rõ ràng
-- [ ] `ntfs/usn_enum.rs` — vòng lặp `FSCTL_ENUM_USN_DATA` → `Vec<RawRecord>` (PHA 1)
-- [ ] `ntfs/usn_enum.rs` — lọc phần mở rộng ngay lúc đọc (thứ DUY NHẤT lọc được ở pha 1)
-- [ ] `ntfs/tree.rs` — dựng map FRN→record, resolve path ngược lên gốc (PHA 2)
-- [ ] `ntfs/tree.rs` — chặn vòng lặp: giới hạn độ sâu + tập `visited`
-- [ ] `ntfs/tree.rs` — record mồ côi (không thấy cha) — KHÔNG panic
-- [ ] `ntfs/tree.rs` — bộ lọc thư mục loại trừ (Windows, AppData, $Recycle.Bin, ProgramData…)
-- [ ] Unit test `tree.rs` bằng `RawRecord` tổng hợp — chạy không cần Admin/ổ NTFS
-- [ ] Golden test: cây sâu ≥5 cấp, tên Unicode, record mồ côi, vòng lặp junction
-- [ ] Cờ `--dry-run` in thống kê + path mẫu
-- [ ] Chạy thật trên ổ C: — đối chiếu 20 path mẫu với Explorer
+- [x] `ntfs/volume.rs` — liệt kê volume, lọc đúng NTFS, mở handle `\\.\X:`
+- [x] `ntfs/volume.rs` — phát hiện USN Journal bị tắt, báo lỗi rõ ràng
+- [x] `ntfs/usn_enum.rs` — vòng lặp `FSCTL_ENUM_USN_DATA` → `Vec<RawRecord>` (PHA 1)
+- [x] `ntfs/usn_enum.rs` — lọc phần mở rộng ngay lúc đọc (thứ DUY NHẤT lọc được ở pha 1)
+- [x] `ntfs/tree.rs` — dựng map FRN→record, resolve path ngược lên gốc (PHA 2)
+- [x] `ntfs/tree.rs` — chặn vòng lặp: giới hạn độ sâu + tập `visited`
+- [x] `ntfs/tree.rs` — record mồ côi (không thấy cha) — KHÔNG panic
+- [x] `ntfs/tree.rs` — bộ lọc thư mục loại trừ (Windows, AppData, $Recycle.Bin, ProgramData…)
+- [x] Unit test `tree.rs` bằng `RawRecord` tổng hợp — chạy không cần Admin/ổ NTFS
+- [x] Golden test: cây sâu ≥5 cấp, tên Unicode, record mồ côi, vòng lặp junction
+- [x] Cờ `--dry-run` in thống kê + path mẫu
+- [x] Test parser nhị phân: bản ghi hỏng, độ dài 0, độ dài vượt buffer, sai phiên bản
+- [x] Xử lý lỗi thiếu quyền Admin — báo rõ, đi tiếp ổ khác, không sập tiến trình
+- [x] Cảnh báo ổ non-NTFS — phát hiện đúng `G: (FAT32)`
+- [x] Chạy thật: C: **3.559.309 bản ghi / 18,5s**, D: **530.731 / 20,4s** — 0 bản ghi hỏng, 0 mồ côi, 0 vòng lặp
+- [x] Đối chiếu chéo bằng PowerShell — số liệu khớp cả chiều giữ lẫn chiều loại (xem `CHECK-001`)
+
+### Lượt test P1 (chi tiết ở `bug.md`)
+- [x] 13 mục test → 11 pass ngay, 2 mục **tìm ra lỗi** và đã sửa
+- [x] `BUG-004` 🔴 `.ts` (TypeScript) bị phân loại thành video — đã sửa + thêm test chống tái phát
+- [x] `BUG-005` 🟡 tiến độ báo trùng, kèm lỗi logic throttle nặng hơn chưa từng chạy — đã sửa
+- [x] `PERF-001` 🟡 cấp phát `String` mỗi thành phần đường dẫn — đã sửa
+- [x] `CHECK-001` ✅ nghi ngờ loại nhầm 99,7% → kiểm chứng độc lập, **không phải lỗi**
+- [ ] `ISSUE-001` 🟠 kết quả C: toàn tài nguyên công cụ — **cần quyết định về sản phẩm**
 
 ⚠️ **Bẫy đã biết:** đừng lọc thư mục ở pha 1 — bất khả thi, record chưa có path.
 ⚠️ **Bẫy đã biết:** nếu đổi sang parse `$MFT` thô thì phải lọc namespace tên 8.3, nếu không mỗi file ra 2 lần.
