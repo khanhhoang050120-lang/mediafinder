@@ -84,3 +84,61 @@ fn a_failed_scan_reports_finished_so_the_ui_stops_polling() {
         "thông báo phải trấn an rằng dữ liệu cũ còn nguyên"
     );
 }
+
+/// What is actually in the cache on this machine, broken down by drive.
+///
+/// A diagnostic, not an assertion: the right answer depends on what is on the
+/// disks. Run it when a scan produces a count that looks wrong.
+///
+/// ```text
+/// cargo test --test cache_safety -- --ignored inventory --nocapture
+/// ```
+#[test]
+#[ignore = "đọc cache thật của máy này; chạy với --ignored"]
+fn inventory() {
+    use std::collections::BTreeMap;
+
+    let cache = match mediafinder::index::persist::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("không nạp được cache: {e}");
+            return;
+        }
+    };
+    let ix = &cache.index;
+
+    println!("schema  = {}", cache.schema_version);
+    println!("tổng    = {} tệp / {} thư mục", ix.len(), ix.dir_count());
+
+    for v in &cache.volumes {
+        println!(
+            "  stamp ổ {}: journal_id={:#x} next_usn={} file_count={}",
+            v.letter, v.journal_id, v.next_usn, v.file_count
+        );
+    }
+
+    let mut per_drive: BTreeMap<u8, usize> = BTreeMap::new();
+    let mut with_frn = 0usize;
+    for i in 0..ix.len() {
+        *per_drive.entry(ix.volume_of(i)).or_default() += 1;
+        if ix.frn(i) != 0 {
+            with_frn += 1;
+        }
+    }
+    for (drive, n) in &per_drive {
+        println!("  ổ {}: {} tệp", *drive as char, n);
+    }
+    println!("có FRN  = {with_frn}/{}", ix.len());
+
+    // Top-level directories, to see whether a whole branch went missing.
+    let mut roots: BTreeMap<String, usize> = BTreeMap::new();
+    for i in 0..ix.dir_count() {
+        let p = ix.dir_path(i);
+        let root: String = p.split('\\').take(2).collect::<Vec<_>>().join("\\");
+        *roots.entry(root).or_default() += 1;
+    }
+    println!("thư mục gốc cấp 1 ({} nhánh):", roots.len());
+    for (r, n) in roots.iter().take(30) {
+        println!("    {r}  ({n} thư mục con)");
+    }
+}

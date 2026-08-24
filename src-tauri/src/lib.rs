@@ -187,6 +187,217 @@ fn toggle(app: &tauri::AppHandle) {
 ///
 /// `--dry-run` stops after reporting statistics and sample paths, which is how
 /// the scan is validated without needing the rest of the pipeline.
+/// Update the cache from the change journals instead of rescanning.
+///
+/// A full scan walks every MFT record on every volume — 38 seconds on this
+/// machine, most of it spent reading four million records to find out that
+/// almost nothing moved. The journal already knows what moved.
+///
+/// Returns `false` when the incremental path cannot be used, and the caller
+/// falls back to a full scan. That happens for ordinary reasons — no cache
+/// yet, a schema change, a journal that wrapped while the machine was off —
+/// so it is a normal outcome, not a failure.
+///
+/// Needs Administrator, like every direct volume read (CHECK-004).
+pub fn run_incremental() -> bool {
+    use index::update::{rebuild_with, Change};
+    use ntfs::usn_journal::{self, Batch, Cursor};
+    use ntfs::volume;
+    use rayon::prelude::*;
+
+    let started = std::time::Instant::now();
+
+    let cache = match index::persist::load() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::info!("không dùng được cập nhật nhanh: {e}");
+            return false;
+        }
+    };
+    if cache.index.is_empty() || cache.volumes.is_empty() {
+        tracing::info!("không dùng được cập nhật nhanh: cache rỗng");
+        return false;
+    }
+
+    let by_letter: std::collections::HashMap<char, _> = volume::list_volumes()
+        .into_iter()
+        .map(|v| (v.letter, v))
+        .collect();
+
+    let mut changes: Vec<Change> = Vec::new();
+    let mut stamps: Vec<index::persist::VolumeStamp> = Vec::new();
+
+    for st in &cache.volumes {
+        let Some(info) = by_letter.get(&st.letter) else {
+            // The drive is not attached right now. Leaving its entries in the
+            // index is the right call — they will still be there when it comes
+            // back, and dropping them would look like the files were deleted.
+            tracing::warn!("ổ {} không còn gắn, giữ nguyên phần đã có", st.letter);
+            stamps.push(st.clone());
+            continue;
+        };
+        let handle = match volume::open_volume(info) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("{e}");
+                return false;
+            }
+        };
+
+        let from = Cursor {
+            journal_id: st.journal_id,
+            next_usn: st.next_usn,
+        };
+        match usn_journal::read_batch(&handle, st.letter, from) {
+            Ok(Batch::Changes { changes: c, next }) => {
+                tracing::info!("ổ {}: {} thay đổi từ journal", st.letter, c.len());
+                changes.extend(c);
+                let mut updated = st.clone();
+                updated.next_usn = next.next_usn;
+                stamps.push(updated);
+            }
+            Ok(Batch::Restart(r)) => {
+                // Not an error. The journal simply cannot answer, so the only
+                // honest thing left is to look at the volume itself.
+                tracing::warn!("{}", r.message(st.letter));
+                return false;
+            }
+            Err(e) => {
+                tracing::warn!("ổ {}: đọc journal thất bại: {e}", st.letter);
+                return false;
+            }
+        }
+    }
+
+    if changes.is_empty() {
+        tracing::info!(
+            "không có thay đổi nào — chỉ mục vẫn đúng [{:.2}s]",
+            started.elapsed().as_secs_f64()
+        );
+        // Still worth saving: the cursors moved forward even with nothing to
+        // apply, and not saving them would re-read the same stretch of journal
+        // every time.
+        let _ = index::persist::save(&cache.index, stamps);
+        return true;
+    }
+
+    let (mut ix, stats) = rebuild_with(&cache.index, &changes);
+    tracing::info!(
+        "áp thay đổi: +{} tệp, -{} tệp, {} tệp chuyển chỗ, +{} thư mục, -{} thư mục, \
+         {} thư mục đổi tên, {} bỏ qua (ngoài phạm vi index)",
+        stats.files_added,
+        stats.files_removed,
+        stats.files_moved,
+        stats.dirs_added,
+        stats.dirs_removed,
+        stats.dirs_renamed,
+        stats.unresolved
+    );
+
+    // Only the entries the journal could not describe need a disk lookup: a
+    // journal record carries no size, so a newly created file arrives at zero
+    // bytes. Everything else kept the figures already measured for it.
+    let missing: Vec<u32> = (0..ix.len() as u32)
+        .filter(|&i| ix.mtime(i as usize) == 0)
+        .collect();
+    if !missing.is_empty() {
+        let stats_started = std::time::Instant::now();
+        let found: Vec<(u32, media::metadata::FileStats)> = missing
+            .par_iter()
+            .map(|&i| {
+                (
+                    i,
+                    media::metadata::file_stats(&ix.full_path(i as usize)).unwrap_or_default(),
+                )
+            })
+            .collect();
+        let mut sizes: Vec<u64> = (0..ix.len()).map(|i| ix.size(i)).collect();
+        let mut mtimes: Vec<i64> = (0..ix.len()).map(|i| ix.mtime(i)).collect();
+        for (i, st) in found {
+            sizes[i as usize] = st.size;
+            mtimes[i as usize] = st.mtime;
+        }
+        ix.set_file_stats(sizes, mtimes);
+        tracing::info!(
+            "đọc dung lượng cho {} mục mới [{:.2}s]",
+            missing.len(),
+            stats_started.elapsed().as_secs_f64()
+        );
+    }
+
+    match index::persist::save(&ix, stamps) {
+        Ok(path) => tracing::info!(
+            "cập nhật nhanh xong: {} mục, ghi {} [{:.2}s]",
+            ix.len(),
+            path.display(),
+            started.elapsed().as_secs_f64()
+        ),
+        Err(e) => {
+            tracing::error!("không ghi được cache: {e}");
+            return false;
+        }
+    }
+    true
+}
+
+/// Read back the journal from each cursor the scan just recorded.
+///
+/// The cursor is captured *before* a volume is enumerated, and enumerating
+/// every volume on a machine takes the better part of a minute — so by the
+/// time this runs there has almost certainly been real file activity to
+/// report. That makes it a genuine end-to-end check of the journal reader
+/// against a live volume, for free, inside a process that is already elevated.
+///
+/// Nothing here changes the index. It only says, in the log, whether the
+/// incremental path would have worked.
+fn check_journal_cursors(stamps: &[index::persist::VolumeStamp]) {
+    use ntfs::usn_journal::{self, Batch, Cursor};
+    use ntfs::volume;
+
+    let by_letter: std::collections::HashMap<char, _> = volume::list_volumes()
+        .into_iter()
+        .map(|v| (v.letter, v))
+        .collect();
+
+    for st in stamps {
+        if st.journal_id == 0 {
+            tracing::info!("ổ {}: không có USN journal, bỏ qua tự kiểm tra", st.letter);
+            continue;
+        }
+        let Some(info) = by_letter.get(&st.letter) else {
+            continue;
+        };
+        let Ok(handle) = volume::open_volume(info) else {
+            continue;
+        };
+
+        let from = Cursor {
+            journal_id: st.journal_id,
+            next_usn: st.next_usn,
+        };
+        let started = std::time::Instant::now();
+        match usn_journal::read_batch(&handle, st.letter, from) {
+            Ok(Batch::Changes { changes, next }) => {
+                tracing::info!(
+                    "ổ {}: tự kiểm tra journal — {} thay đổi kể từ usn={} (nay {}) [{:.0}ms]",
+                    st.letter,
+                    changes.len(),
+                    st.next_usn,
+                    next.next_usn,
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+                // A few examples, because a count alone cannot show that the
+                // names and reference numbers came out the right way round.
+                for c in changes.iter().take(3) {
+                    tracing::info!("    {}", describe(c));
+                }
+            }
+            Ok(Batch::Restart(r)) => tracing::warn!("{}", r.message(st.letter)),
+            Err(e) => tracing::warn!("ổ {}: tự kiểm tra journal thất bại: {e}", st.letter),
+        }
+    }
+}
+
 /// Follow the change journal and print what it says.
 ///
 /// A developer path, not a feature: the journal reader is unit-tested against
@@ -308,7 +519,15 @@ pub fn run_indexer() {
     use rayon::prelude::*;
 
     let dry_run = std::env::args().any(|a| a == "--dry-run");
-    tracing::info!(dry_run, "indexer starting");
+    let full = std::env::args().any(|a| a == "--full");
+    tracing::info!(dry_run, full, "indexer starting");
+
+    // Try the journal first. It answers in well under a second when it can,
+    // and a full scan is 38 — but it cannot always answer, so this is an
+    // attempt rather than a decision.
+    if !dry_run && !full && run_incremental() {
+        return;
+    }
 
     let mut builder = IndexBuilder::new();
 
@@ -607,6 +826,12 @@ pub fn run_indexer() {
         st.message = "Đang lưu chỉ mục…".into();
         p.flush();
     }
+
+    // Prove the stored cursors are usable before anything comes to depend on
+    // them. Free to do here and impossible to do anywhere else: reading the
+    // journal needs Administrator (measured — see `docs/check.md` CHECK-004),
+    // and this is the one process that has it.
+    check_journal_cursors(&stamps);
 
     let outcome = index::persist::save(&ix, stamps);
     match &outcome {

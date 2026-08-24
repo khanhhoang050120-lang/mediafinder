@@ -504,8 +504,10 @@ xong.
 - [x] `frn` cho tệp và `dir_frn` cho thư mục, xuyên suốt `tree.rs` → `IndexBuilder` → `Index` → cache
 - [x] Nâng `SCHEMA_VERSION` — cache cũ báo "phiên bản 2, phần mềm cần 3", đã kiểm chứng
 - [x] `rebuild_with(&Index, &[Change]) -> Index` — tạo, xoá, đổi tên, di chuyển tệp và thư mục
-- [~] Đọc `FSCTL_READ_USN_JOURNAL`, dịch bản ghi thô thành `Change` — **chưa chạy trên ổ thật**
-- [~] Phát hiện journal bị xoá rồi tạo lại, và journal cuộn vòng — **chưa chạy trên ổ thật**
+- [x] Đọc `FSCTL_READ_USN_JOURNAL`, dịch bản ghi thô thành `Change` — **570 bản ghi thật trong 1 ms**
+- [x] Phát hiện journal bị xoá rồi tạo lại, và journal cuộn vòng
+- [x] Tự kiểm tra journal ở cuối mỗi lần quét đầy đủ, trong tiến trình vốn đã có quyền
+- [x] `--index` thử cập nhật nhanh trước, thất bại thì tự quét đầy đủ (`--full` để ép quét)
 - [x] Gộp thay đổi rồi dựng lại một lần, thay vì dựng lại theo từng thay đổi
 - [x] Chế độ `--watch` để kiểm chứng bộ đọc journal trên volume thật
 
@@ -544,7 +546,37 @@ Bench này cũng là thứ tìm ra [BUG-017](docs/bug.md#bug-017): `rebuild_with
 nào. Nguyên nhân là số `0` đang được coi là một định danh hợp lệ, nên một thay đổi xoá sạch cả
 index. 149 test không bắt được; một con số vô lý thì bắt được ngay.
 
-### Hai ô `[~]`: viết xong nhưng chưa chạy trên ổ thật
+### Đã chạy trên ổ thật
+
+Con trỏ journal được ghi lại **trước** khi một ổ được duyệt, mà duyệt hết mọi ổ mất hàng chục giây
+— nên đến lúc quét xong chắc chắn đã có hoạt động tệp thật để đọc. `check_journal_cursors()` chạy
+ở cuối mỗi lần quét, trong đúng tiến trình vốn đã có quyền Administrator, nên **không tốn thêm lời
+nhắc UAC nào**:
+
+```
+ổ C: tự kiểm tra journal — 570 thay đổi kể từ usn=20623105360 (nay 20623167576) [1ms]
+    C: CÓ MẶT  frn=19984723347872345 cha=1688849862689891 progress.json.tmp
+ổ D: tự kiểm tra journal — 0 thay đổi kể từ usn=2088815312 (nay 2088815312) [0ms]
+```
+
+Chi tiết những gì đã và chưa xác nhận: [CHECK-003](docs/check.md#check-003).
+
+### Đọc journal có cần quyền Administrator không — đã đo, và câu trả lời là có
+
+Cả kế hoạch Windows Service dựa trên một câu chưa ai kiểm tra. Đem đo bằng tiến trình **không**
+elevate, mở `\\.\C:` với bốn mức quyền:
+
+| Quyền xin | Mở volume | `FSCTL_QUERY_USN_JOURNAL` |
+|---|---|---|
+| `0` (không xin gì) | **được** | lỗi 1 — `ERROR_INVALID_FUNCTION` |
+| `FILE_READ_ATTRIBUTES` | **được** | lỗi 1 |
+| `FILE_READ_DATA` | lỗi 5 — `ACCESS_DENIED` | — |
+| `GENERIC_READ` | lỗi 5 | — |
+
+Mở volume thì **không** cần quyền — điều này trước đây cũng tưởng là cần. Nhưng FSCTL của journal
+bị từ chối trên handle quyền thấp. Xem [CHECK-004](docs/check.md#check-004).
+
+### Cũ: hai ô `[~]` khi chưa chạy được trên ổ thật
 
 Bộ đọc journal có 17 test, gồm cả một test đi hết chặng — byte thô của journal vào, index mới ra.
 Nhưng tất cả đều chạy trên **bản ghi tự dựng bằng tay**. Chúng chứng minh mã đọc đúng cái layout
