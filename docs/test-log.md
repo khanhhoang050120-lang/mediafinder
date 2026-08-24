@@ -248,3 +248,29 @@ thuẫn. Nếu không có phép đo độc lập đó, tôi đã kết luận "c
 
 **`BUG-012` chỉ lộ ở lần đổi schema đầu tiên.** Nếu không gặp bây giờ thì sẽ gặp ở P7 hoặc P8 —
 lúc đó là dữ liệu thật của người dùng, và thông báo "cache hỏng" sẽ khiến họ nghĩ đĩa có vấn đề.
+
+### 2026-08-24 — Lượt test sau P7
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **124/124 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Type-check frontend | `npm run check` | ✅ 0 lỗi, 0 warning |
+| 4 | Hai tệp giống nhau | unit test | ✅ cùng vân tay |
+| 5 | Khác ở đầu tệp | unit test | ✅ khác vân tay |
+| 6 | **Khác ở giữa tệp** | unit test | ✅ tầng 2 **không** phân biệt được — giới hạn đã biết, tầng 3 thì được |
+| 7 | Dung lượng có trong vân tay | unit test | ✅ cùng nội dung + khác dung lượng → khác vân tay |
+| 8 | Tệp nhỏ đọc toàn bộ | unit test | ✅ vẫn phân biệt được |
+| 9 | Quét thật 3 TB | bấm nút qua UIA | ✅ **6.780 nhóm · 520,7 GB** trong 584s |
+| 10 | Thanh tiến độ khi quét | nhìn ảnh chụp | ✅ "Đang đối chiếu 51.098/70.576 tệp" |
+| 11 | Đơn vị dung lượng | nhìn ảnh chụp | ❌ **tìm ra lỗi** — "17048.5 MB" thay vì "16.6 GB" |
+| 12 | Tiêu đề có trung thực không | nhìn ảnh chụp | ❌ **tìm ra lỗi** — trộn 500 nhóm đã tải với tổng của 6.780 nhóm |
+| 13 | Bấm lại lần hai | đo thời gian | ❌ **tìm ra lỗi** — quét lại 10 phút → sửa thành 3,5s |
+
+**Kết luận lượt test P7:** 10/13 pass, 3 mục tìm ra vấn đề — cả ba đều **chỉ lộ ra khi nhìn ảnh
+chụp màn hình**, không mục nào bị test bắt.
+
+**Mục 12 đáng ghi nhất.** Tiêu đề ghi *"500 nhóm trùng lặp · có thể thu hồi 533214.6 MB"*.
+Cả hai con số đều **đúng** — nhưng chúng mô tả hai tập khác nhau: 500 là số nhóm đã tải về giao
+diện, còn dung lượng là tổng của cả 6.780 nhóm. Ghép lại thành một câu, nó nói sai gấp hơn mười
+lần. Không assertion nào bắt được loại lỗi này, vì từng thành phần đều chính xác.

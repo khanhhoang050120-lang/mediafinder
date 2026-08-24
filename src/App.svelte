@@ -11,7 +11,10 @@
     requestScan,
     revealInExplorer,
     scanProgress,
+    dupeGroups,
+    dupeProgress,
     enrichStatus,
+    findDuplicates,
     formatBytes,
     formatDuration,
     formatResolution,
@@ -19,6 +22,8 @@
     thumbUrl,
     type IndexMeta,
     type MediaKind,
+    type DupeGroup,
+    type DupeProgress,
     type EnrichStatus,
     type Filters,
     type RelaxedInfo,
@@ -80,6 +85,29 @@
   let enrich = $state<EnrichStatus | null>(null);
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let enrichTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Duplicate mode replaces the result list entirely: it answers a different
+  // question from search, and mixing the two would make it unclear which one
+  // a row belongs to.
+  let dupeMode = $state(false);
+  let dupes = $state<DupeGroup[]>([]);
+  let dupeStat = $state<DupeProgress | null>(null);
+  let dupeTimer: ReturnType<typeof setInterval> | undefined;
+
+  /// Groups flattened into rows so the same virtualiser can draw them: a
+  /// header row per group, then its files.
+  type DupeRow =
+    | { head: true; group: DupeGroup; n: number }
+    | { head: false; hit: SearchHit; n: number };
+
+  const dupeRows = $derived.by<DupeRow[]>(() => {
+    const out: DupeRow[] = [];
+    for (const g of dupes) {
+      out.push({ head: true, group: g, n: g.files.length });
+      for (const f of g.files) out.push({ head: false, hit: f, n: g.files.length });
+    }
+    return out;
+  });
 
   const filters = $derived<Filters>({
     minHeight,
@@ -192,6 +220,53 @@
     minHeight = 0;
     durationChoice = -1;
     runSearch();
+  }
+
+  async function startDupes() {
+    error = null;
+    dupeMode = true;
+
+    // A finished scan is still held by the backend. Re-running it because the
+    // user came back to this view would throw away ten minutes of disk reading
+    // to arrive at the same answer.
+    try {
+      dupeStat = await dupeProgress();
+      if (!dupeStat.running && dupeStat.groups > 0) {
+        dupes = await dupeGroups();
+        return;
+      }
+    } catch {
+      // fall through and scan
+    }
+
+    dupes = [];
+    try {
+      await findDuplicates();
+    } catch (e) {
+      error = String(e);
+      return;
+    }
+    clearInterval(dupeTimer);
+    dupeTimer = setInterval(async () => {
+      try {
+        dupeStat = await dupeProgress();
+      } catch {
+        return;
+      }
+      if (!dupeStat.running) {
+        clearInterval(dupeTimer);
+        dupeTimer = undefined;
+        dupes = await dupeGroups();
+      }
+    }, 400);
+  }
+
+  function exitDupes() {
+    clearInterval(dupeTimer);
+    dupeTimer = undefined;
+    dupeMode = false;
+    dupes = [];
+    dupeStat = null;
   }
 
   function toggleKind(k: MediaKind) {
@@ -387,6 +462,12 @@
         onclick={() => (showFilters = !showFilters)}
         title="Lọc theo độ phân giải và thời lượng"
       >Lọc{filtersActive ? " ●" : ""}</button>
+      <button
+        class="chip"
+        class:on={dupeMode}
+        onclick={() => (dupeMode ? exitDupes() : startDupes())}
+        title="Tìm các tệp trùng lặp trong thư viện"
+      >Trùng lặp</button>
       <button class="chip rescan" onclick={startScan} disabled={scanning}>
         {scanning ? "Đang quét…" : "Quét lại"}
       </button>
@@ -462,8 +543,86 @@
     </div>
   {/if}
 
-  <div class="results" class:grid bind:clientWidth={resultsWidth}>
-    {#if hits.length}
+  {#if dupeMode}
+    <div class="dupebar">
+      {#if dupeStat?.running}
+        <span>
+          Đang đối chiếu {formatCount(dupeStat.hashed)}/{formatCount(dupeStat.candidates)} tệp
+          cùng dung lượng…
+        </span>
+        <div class="scan-bar"><div class="scan-fill"></div></div>
+      {:else if dupes.length}
+        <!--
+          The group count and the reclaimable total must describe the same set.
+          The first version paired the number of groups *fetched* with the
+          waste across *all* of them, which read as "500 groups are costing you
+          520 GB" — off by more than a factor of ten.
+        -->
+        <span>
+          <b>{formatCount(dupeStat?.groups ?? dupes.length)}</b> nhóm trùng lặp ·
+          có thể thu hồi <b>{formatBytes(dupeStat?.wasted ?? 0)}</b>
+          {#if (dupeStat?.groups ?? 0) > dupes.length}
+            <span class="dupenote">— đang hiện {formatCount(dupes.length)} nhóm lãng phí nhiều nhất</span>
+          {/if}
+        </span>
+        <!--
+          Said out loud because tier 2 compares the two ends of a file, not all
+          of it. That is right for finding candidates and wrong as a basis for
+          deleting something without looking.
+        -->
+        <span class="dupenote">Đối chiếu theo dung lượng và hai đầu tệp — hãy xem lại trước khi xoá</span>
+      {:else}
+        <span>Không tìm thấy tệp trùng lặp nào.</span>
+      {/if}
+    </div>
+  {/if}
+
+  <div class="results" class:grid={grid && !dupeMode} bind:clientWidth={resultsWidth}>
+    {#if dupeMode}
+      {#if dupeRows.length}
+        <VirtualList items={dupeRows} itemHeight={LIST_ROW} columns={1} overscan={4}>
+          {#snippet row(r: DupeRow)}
+            {#if r.head}
+              <div class="ghead">
+                <span class="gcount">{r.n} bản sao</span>
+                <span class="gsize">{formatBytes(r.group.size)} mỗi tệp</span>
+                <span class="gwaste">thừa {formatBytes(r.group.wasted)}</span>
+              </div>
+            {:else}
+              <div
+                class="row dupe"
+                role="option"
+                aria-selected="false"
+                tabindex="-1"
+                ondblclick={() => open(r.hit)}
+                oncontextmenu={(e) => {
+                  e.preventDefault();
+                  menu = { x: e.clientX, y: e.clientY, hit: r.hit };
+                }}
+                onkeydown={() => {}}
+              >
+                <img
+                  class="thumb"
+                  src={thumbUrl(epoch, r.hit.index, THUMB_LIST)}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  onerror={(e) => (e.currentTarget as HTMLImageElement).classList.add("failed")}
+                />
+                <span class="text">
+                  <span class="name">{r.hit.name}</span>
+                  <span class="dir">{r.hit.dir}</span>
+                </span>
+              </div>
+            {/if}
+          {/snippet}
+        </VirtualList>
+      {:else}
+        <p class="empty">
+          {dupeStat?.running ? "Đang đối chiếu…" : "Chưa có kết quả"}
+        </p>
+      {/if}
+    {:else if hits.length}
       <VirtualList
         bind:this={listRef}
         items={hits}
@@ -716,6 +875,36 @@
     color: var(--text-dim);
   }
   .fnote.working { color: #cfe0ff; }
+
+  .dupebar {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 9px 14px 11px;
+    font-size: 12.5px;
+    color: #cfe0ff;
+    background: #1e2836;
+    border: 1px solid #2f4260;
+    border-radius: 8px;
+  }
+  .dupebar b { color: #fff; }
+  .dupenote { color: var(--text-dim); font-size: 11.5px; }
+
+  .ghead {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    height: 100%;
+    padding: 0 12px;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: #20242c;
+    border-top: 1px solid var(--border);
+  }
+  .gcount { color: var(--text); font-weight: 600; }
+  .gwaste { margin-left: auto; color: #ffc978; }
+
+  .row.dupe { padding-left: 24px; }
 
   .facts {
     flex: 0 0 auto;

@@ -32,8 +32,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P4** | Cache trên đĩa + luồng elevate | ✅ **XONG** — 100/100 test, người dùng xác nhận chạy được |
 | **P5** | Thumbnail + lưới ảo hoá | ✅ **XONG** — 108 test, 5.000 kết quả = 118 node |
 | **P6** | Enrichment metadata + lọc | ✅ **XONG** — 118 test, lọc 1080p chạy 9,1 ms |
-| **P7** | Tìm file trùng | 🔵 **sẵn sàng** |
-| **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ⬜ chưa bắt đầu |
+| **P7** | Tìm file trùng | ✅ **XONG** — 124 test, tìm ra 520,7 GB trùng lặp |
+| **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | 🔵 **sẵn sàng** |
 
 ---
 
@@ -347,16 +347,36 @@ RAM index: 7,6 → **9,4 MB** (thêm dung lượng + ngày sửa cho 117k tệp)
 
 ---
 
-## P7 — Tìm file trùng ⬜
+## P7 — Tìm file trùng ✅
 
 **Tiêu chí nghiệm thu:** phát hiện đúng bản sao tạo thủ công; không có nút xoá hàng loạt không xác nhận.
 
-- [ ] Thêm crate `blake3`
-- [ ] Tầng 1 — nhóm theo `(size, ext)`
-- [ ] Tầng 2 — BLAKE3 64KB đầu + 64KB cuối + size
-- [ ] Tầng 3 — BLAKE3 toàn file, chỉ khi user xác nhận
-- [ ] UI riêng cho kết quả trùng
-- [ ] **Không tự động xoá bất cứ thứ gì**
+- [x] Thêm crate `blake3`
+- [x] Tầng 1 — nhóm theo dung lượng, **không đọc gì cả** (index đã có sẵn)
+- [x] Tầng 2 — BLAKE3 64KB đầu + 64KB cuối + size, chạy song song
+- [x] Tầng 3 — `full_hash()` đọc toàn tệp, chỉ gọi khi cần chắc chắn
+- [x] Bỏ qua tệp dưới 64 KB — icon và thumbnail trùng dung lượng hàng nghìn cái
+- [x] Xếp theo **lãng phí nhiều nhất trước** — thứ tự người dọn ổ đĩa cần
+- [x] UI riêng cho kết quả trùng, dùng lại lưới ảo hoá
+- [x] **Không tự động xoá bất cứ thứ gì** — chỉ báo cáo
+- [x] Nói rõ giới hạn của tầng 2 ngay trên giao diện
+- [x] Test thừa nhận giới hạn: hai tệp giống hai đầu khác ở giữa → tầng 2 không phân biệt được
+- [x] Dùng lại kết quả đã quét thay vì quét lại 10 phút khi quay lại chế độ này
+- [x] Sửa `formatBytes` — dừng ở MB nên hiện "17048.5 MB" thay vì "16.6 GB"
+- [x] Sửa tiêu đề trộn số nhóm bị cắt với tổng lãng phí đầy đủ
+
+### Kiểm chứng P7 trên thư viện 3 TB thật
+
+| Hạng mục | Kết quả |
+|---|---|
+| Tầng 1 (miễn phí) | **70.576/117.128 tệp** cùng dung lượng cần kiểm tra |
+| Tầng 2 (đọc 128 KB/tệp) | ~9 GB đọc đĩa, **584 giây** |
+| Kết quả | **6.780 nhóm · 520,7 GB có thể thu hồi** (17% thư viện) |
+| Nhóm lớn nhất | 3 bản sao × 16,6 GB — thừa **33,3 GB** |
+| Bấm lại lần hai | **3,5 giây** — dùng lại kết quả, không quét lại |
+
+Mẫu trùng lặp điển hình: CapCut nhân bản asset qua từng draft
+(`CapCut Drafts/DS1_106/subdraft/…` và `CapCut Drafts/DS1_063/…` cùng một tệp 16,6 GB).
 
 ---
 

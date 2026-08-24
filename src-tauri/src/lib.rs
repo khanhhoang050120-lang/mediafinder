@@ -56,6 +56,7 @@ pub fn run_gui() {
         .manage(app_state)
         .manage(media::thumbnail::ThumbnailService::new())
         .manage(enrich)
+        .manage(media::dupes::DupeService::new())
         .register_asynchronous_uri_scheme_protocol(
             ipc::protocol::SCHEME,
             |ctx, request, responder| ipc::protocol::handle(ctx.app_handle(), request, responder),
@@ -69,6 +70,9 @@ pub fn run_gui() {
             ipc::commands::scan_progress,
             ipc::commands::reload_index,
             ipc::commands::enrich_status,
+            ipc::commands::find_duplicates,
+            ipc::commands::dupe_progress,
+            ipc::commands::dupe_groups,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");

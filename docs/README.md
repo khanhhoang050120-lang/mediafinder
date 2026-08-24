@@ -49,6 +49,22 @@ Hai mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sử
 [BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`) và
 [CONF-004](./config.md#conf-004) (dọn tiến trình giữ port 1420 trước khi chạy dev).
 
+## Vì sao tìm trùng lặp không băm toàn bộ
+
+Thư viện này 3 TB. Băm hết là hàng giờ đọc đĩa liên tục. Ba tầng, mỗi tầng chỉ nhìn thứ sống sót từ tầng trước:
+
+| Tầng | Phép thử | Đọc | Còn lại |
+|---|---|---|---|
+| 1 | Cùng số byte | **không đọc gì** — index đã có sẵn | 60% (thư viện này) |
+| 2 | Cùng 64 KB đầu, 64 KB cuối, và dung lượng | 128 KB mỗi tệp | gần như chắc chắn trùng |
+| 3 | Cùng nội dung toàn bộ | tất cả | chắc chắn |
+
+Tầng 1 làm phần nặng nhất mà **miễn phí**: hai tệp khác dung lượng thì không thể giống nhau.
+
+Tầng 2 là nơi dừng lại trong thực tế. Hai tệp khác nhau mà trùng cả dung lượng, cả 64 KB đầu **và** 64 KB cuối thì gần như không xảy ra ngẫu nhiên — định dạng media đặt header ở đầu và bảng chỉ mục ở cuối, đúng hai chỗ này nhìn vào.
+
+**Nhưng đó vẫn là một giới hạn thật.** Hai tệp giống hai đầu mà khác ở giữa sẽ bị coi là trùng. Có test thừa nhận điều đó (`a_difference_in_the_middle_is_invisible_to_tier_two`), giao diện nói rõ điều đó, và **không có gì tự động xoá**. Tầng 3 tồn tại cho lúc cần chắc chắn trước khi xoá.
+
 ## Ba lỗi đáng nhớ nhất
 
 Không phải vì nặng nhất, mà vì mỗi lỗi dạy một cách tìm lỗi khác nhau.

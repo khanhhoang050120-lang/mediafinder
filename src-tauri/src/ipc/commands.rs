@@ -259,6 +259,81 @@ pub fn reload_index(
     }
 }
 
+/// A duplicate group, with the paths resolved for display.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupeGroupView {
+    pub size: u64,
+    pub wasted: u64,
+    pub files: Vec<SearchHit>,
+}
+
+/// Begin looking for duplicates.
+#[tauri::command]
+pub fn find_duplicates(
+    state: State<'_, AppState>,
+    dupes: State<'_, crate::media::dupes::DupeService>,
+) -> Result<(), String> {
+    if dupes.start(state.snapshot()) {
+        Ok(())
+    } else {
+        Err("Đang tìm trùng lặp rồi.".into())
+    }
+}
+
+#[tauri::command]
+pub fn dupe_progress(
+    dupes: State<'_, crate::media::dupes::DupeService>,
+) -> crate::media::dupes::DupeProgress {
+    dupes.progress()
+}
+
+/// The finished groups, with every path resolved.
+#[tauri::command]
+pub fn dupe_groups(
+    state: State<'_, AppState>,
+    enrich: State<'_, crate::media::enrich::EnrichService>,
+    dupes: State<'_, crate::media::dupes::DupeService>,
+    limit: usize,
+) -> Vec<DupeGroupView> {
+    let index = state.snapshot();
+    let props = enrich.props();
+
+    dupes
+        .groups()
+        .into_iter()
+        .take(limit.clamp(1, 2_000))
+        .map(|g| DupeGroupView {
+            size: g.size,
+            wasted: g.wasted,
+            files: g
+                .entries
+                .iter()
+                .filter_map(|&e| {
+                    let i = e as usize;
+                    if i >= index.len() {
+                        return None;
+                    }
+                    let p = props.get(i).copied().unwrap_or_default();
+                    Some(SearchHit {
+                        name: index.name(i).to_string(),
+                        path: index.full_path(i),
+                        dir: index.dir(i).to_string(),
+                        kind: index.kind(i).as_str(),
+                        score: 0,
+                        matched: 0,
+                        index: e,
+                        size: index.size(i),
+                        width: p.width,
+                        height: p.height,
+                        duration_ms: p.duration_ms,
+                    })
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 /// Open a file with whatever Windows uses for that type.
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), String> {

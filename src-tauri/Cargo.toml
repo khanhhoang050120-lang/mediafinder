@@ -36,6 +36,9 @@ bincode = "1.3"
 # thumbnail API, which already understands every codec installed on the machine.
 image = { version = "0.25", default-features = false, features = ["png"] }
 lru = "0.12"
+# Fast, and this is not defending against an adversary — only telling apart
+# files that a person put on their own disk.
+blake3 = "1"
 
 # --- Diagnostics ---
 thiserror = "2"
