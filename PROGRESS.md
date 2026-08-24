@@ -539,7 +539,12 @@ Mười nghìn thay đổi tốn đúng bằng một trăm. Chi phí nằm hết
 nghĩa là **gộp thay đổi lại rồi áp một lần là gần như miễn phí**, và không có lý do gì để áp từng
 cái một.
 
-Thư viện thật là 117.128 mục, tức khoảng **40 ms** một lần áp.
+Thư viện thật là 46.700 mục, tức khoảng **20 ms** một lần áp.
+
+> Con số 117.128 xuất hiện ở các mục P6–P8 phía trên là trạng thái đĩa **trước ngày 24/8/2026**.
+> Chiều hôm đó người dùng xoá thư mục `D:\Sounds Edit\HƯNG` (70.461 tệp media, ~265 GB) — đã xác
+> nhận, không phải mất dữ liệu. Xem [CHECK-006](docs/check.md#check-006). Các số đo cũ được giữ
+> nguyên chứ không sửa lại, vì chúng đúng tại thời điểm đo.
 
 Bench này cũng là thứ tìm ra [BUG-017](docs/bug.md#bug-017): `rebuild_with/0` mất 165 ms còn
 `rebuild_with/100` chỉ 21,9 ms — áp một trăm thay đổi mà nhanh hơn bảy lần so với áp không thay đổi

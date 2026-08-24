@@ -287,6 +287,10 @@ trên cả ba ổ NAS tới độ sâu 3 cấp: không có thư mục nào tên 
 **Kết luận.** Không phải hồi quy, không phải lỗi phần mềm, và MediaFinder không xoá gì. Đây là một
 thao tác xoá thư mục xảy ra lúc 15h ngày 24/8, trước cả lượt quét trùng lặp.
 
+**Người dùng xác nhận (2026-08-24):** *"tôi đã xóa folder HƯNG lúc chiều"*. Khớp chính xác với
+thời điểm 15h giờ địa phương mà journal ghi lại. Không có dữ liệu nào mất ngoài dự tính, và
+46.700 là con số đúng của máy.
+
 **Vì sao đáng giữ lại chế độ `--audit`.** Nó dựng lại được đường dẫn đầy đủ của những thư mục
 **đã bị xoá** — bằng cách đi ngược chuỗi cha qua chính các bản ghi xoá, cho tới khi gặp một thư mục
 còn tồn tại trong index. Không có nó thì câu trả lời dừng ở "70.000 tệp mất ở đâu đó"; có nó thì
