@@ -83,6 +83,12 @@ const WORKERS: usize = 4;
 /// them. Refusing is better — the UI simply asks again when the row settles.
 const QUEUE_DEPTH: usize = 64;
 
+// Checked at build time rather than in a test: the queue must hold more than
+// one screenful of rows, or fast scrolling would drop requests that are about
+// to become visible.
+const _: () = assert!(CACHE_ENTRIES > 0);
+const _: () = assert!(QUEUE_DEPTH > WORKERS * 4, "hàng đợi phải chứa hơn một màn hình");
+
 type CacheKey = (u64, u32);
 
 struct Job {
@@ -375,14 +381,6 @@ fn bitmap_to_rgba(bitmap: HBITMAP) -> Result<(u32, u32, Vec<u8>), ThumbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cache_and_pool_sizes_are_sane() {
-        assert!(CACHE_ENTRIES > 0);
-        // The queue must hold more than one screenful, or fast scrolling would
-        // drop requests that are about to become visible.
-        assert!(QUEUE_DEPTH > WORKERS * 4);
-    }
 
     #[test]
     fn a_missing_file_is_unavailable_not_a_panic() {

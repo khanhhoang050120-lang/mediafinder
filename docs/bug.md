@@ -7,7 +7,7 @@
 
 **Trạng thái:** `MỞ` · `ĐANG SỬA` · `ĐÃ SỬA` · `WORKAROUND` · `CẦN XÁC MINH` · `CẦN QUYẾT ĐỊNH` · `KHÔNG SỬA` · `KHÔNG PHẢI LỖI`
 
-**Cấp ID tiếp theo:** `BUG-012`
+**Cấp ID tiếp theo:** `BUG-014`
 
 ## Bảng tổng hợp
 
@@ -24,6 +24,8 @@
 | [BUG-009](#bug-009) | 🔴 | `convertFileSrc` mã hoá `/` thành `%2F` → mọi thumbnail 400 trong im lặng | P5 | ĐÃ SỬA |
 | [BUG-010](#bug-010) | 🔴 | Thumbnail video trả về ảnh full-res, 1,27 MB mỗi cái | P5 | ĐÃ SỬA |
 | [BUG-011](#bug-011) | 🟠 | Video hiện icon chung của Windows thay vì khung hình thật | P5 | ĐÃ SỬA |
+| [BUG-012](#bug-012) | 🟠 | `SCHEMA_VERSION` nằm trong chính khối dữ liệu nó bảo vệ | P6 | ĐÃ SỬA |
+| [BUG-013](#bug-013) | 🔴 | Hàng đợi enrichment sắp xếp ngược — đọc nhạc trước video | P6 | ĐÃ SỬA |
 
 ---
 
@@ -430,3 +432,98 @@ audio  KHÔNG DỰNG ĐƯỢC     ← tệp không có ảnh bìa, huy hiệu m�
 không?"* và câu trả lời là có — chỉ là **ảnh sai**. Cả ba lỗi của P5 (`BUG-009`, `BUG-010`,
 `BUG-011`) đều chỉ lộ ra khi **nhìn vào thứ hiện lên màn hình**, chứ không phải khi đọc kết quả
 test.
+
+---
+
+## BUG-012 🟠 — `SCHEMA_VERSION` nằm trong chính khối dữ liệu nó bảo vệ
+
+**Giai đoạn:** P6 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Thêm hai trường vào `Index` khiến cache cũ không đọc được — điều đó bình thường
+và đã được lường trước. Nhưng thông báo lại là:
+
+```
+không nạp được cache (cache hỏng, không giải mã được)
+```
+
+Sai bản chất. Cache **không hỏng** — nó chỉ thuộc phiên bản cũ. Hai chuyện khác hẳn nhau: một cái
+nghe như dữ liệu bị lỗi hoặc đĩa có vấn đề, cái kia chỉ cần bấm "Quét lại".
+
+**Nguyên nhân.** Cơ chế `SCHEMA_VERSION` vô dụng theo đúng định nghĩa của nó:
+
+```rust
+let cache: CacheFile = bincode::deserialize_from(&mut reader)?;   // ← chết ở đây
+if cache.schema_version != SCHEMA_VERSION { … }                   // ← không bao giờ tới
+```
+
+Số phiên bản là **một trường bên trong khối bincode**. Thời điểm cần đọc nó — khi layout đổi —
+cũng chính là thời điểm không giải mã được khối đó. Phép kiểm tra chưa từng chạy một lần nào.
+
+**Cách sửa.** Đưa magic và số phiên bản ra **ngoài** khối dữ liệu: 12 byte thuần ở đầu tệp, đọc
+bằng `read_exact` trước khi động tới bincode. Đọc được bất kể phía sau đổi thế nào.
+
+Áp dụng cùng cách cho `metadata.bin` của enrichment ngay từ đầu.
+
+**Thông báo cũng sửa theo.** Cache không có header (định dạng cũ) và tệp lạ đều dẫn tới cùng một
+việc người dùng cần làm, nên thông báo nói **việc cần làm** thay vì phân loại nguyên nhân:
+*"cache thuộc định dạng cũ và không đọc được — bấm Quét lại để dựng lại"*.
+
+**Bài học.** Một phép kiểm tra phiên bản chỉ có giá trị nếu nó đọc được **ở đúng lúc phiên bản
+sai**. Đặt nó bên trong thứ nó bảo vệ là tự vô hiệu hoá nó. Lỗi này chỉ lộ ở lần đổi schema **đầu
+tiên** — nếu không gặp bây giờ thì sẽ gặp ở P7 hoặc P8, lúc đó có thể là dữ liệu thật của người
+dùng và thông báo sai sẽ khiến họ nghĩ đĩa hỏng.
+
+---
+
+## BUG-013 🔴 — Hàng đợi enrichment sắp xếp ngược, đọc nhạc trước video
+
+**Giai đoạn:** P6 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Enrichment chạy nền, chỉ báo cho biết đã đọc **31.773/117.128 tệp**. Bấm bộ lọc
+`≥1080p` → **không tìm thấy kết quả nào**.
+
+Nhưng test tích hợp đã đọc được `1.mp4` là **1920×1080**. Dữ liệu tồn tại, bộ lọc lại không thấy.
+
+**Nguyên nhân.** Hàng đợi được sắp xếp để ưu tiên video:
+
+```rust
+queue.sort_by_key(|&i| match kind {
+    MediaKind::Video => 0,   // ý định: đọc trước
+    MediaKind::Image => 1,
+    MediaKind::Audio => 2,
+});
+```
+
+Sau khi sắp xếp, vector là `[Video…, Image…, Audio…]`. Nhưng worker lấy việc bằng **`Vec::pop()`**,
+mà `pop` lấy phần tử **cuối cùng**.
+
+Kết quả: **nhạc được đọc trước tiên**, ngược hoàn toàn với ý định. Sau 31.773 tệp, phần lớn là
+nhạc — mà nhạc thì `width` và `height` luôn bằng 0. Bộ lọc độ phân giải không có gì để khớp.
+
+**Vì sao im lặng.** Không có lỗi ở đâu cả:
+
+- Enrichment chạy đúng, đếm đúng, lưu đúng.
+- Chỉ báo hiện con số tăng đều, trông hoàn toàn khoẻ mạnh.
+- Bộ lọc trả về 0 kết quả — mà 0 kết quả là **câu trả lời hợp lệ** cho một bộ lọc.
+- Cả hai đều đúng theo cách nhìn riêng của chúng.
+
+Chỉ khi biết chắc `1.mp4` là 1080p thì con số 0 mới trở thành mâu thuẫn.
+
+**Cách sửa.** Tách phần sắp xếp thành hàm `order_queue` riêng và đảo thứ tự — **ưu tiên cao nhất
+phải nằm CUỐI**, vì đó là đầu mà `pop` lấy:
+
+```rust
+queue.sort_by_key(|&i| match kind_of(i) {
+    MediaKind::Audio => 0,
+    MediaKind::Image => 1,
+    MediaKind::Video => 2,   // pop() lấy cái này trước
+});
+```
+
+**Chống tái phát.** Test `video_is_read_before_anything_else` **rút việc ra đúng cách worker làm**
+(`pop` liên tiếp) rồi kiểm tra thứ tự nhận được. Kiểm tra thứ tự trong vector thôi là chưa đủ —
+chính chỗ đó là chỗ tôi nhầm.
+
+**Bài học.** `sort` rồi `pop` là một cặp dễ nhầm: thứ tự đọc **ngược** với thứ tự trong vector.
+Và cái giá của nhầm lẫn này không phải là lỗi mà là **im lặng** — hệ thống làm việc chăm chỉ hàng
+chục phút cho đúng thứ ít hữu ích nhất, trong khi mọi chỉ báo đều xanh.

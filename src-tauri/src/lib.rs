@@ -46,9 +46,16 @@ pub fn run_gui() {
         }
     }
 
+    // Start reading media properties for whatever the cache holds. This runs
+    // for tens of minutes on a large library, so it begins now rather than
+    // when the user first presses a filter.
+    let enrich = media::enrich::EnrichService::new();
+    enrich.start(app_state.snapshot());
+
     tauri::Builder::default()
         .manage(app_state)
         .manage(media::thumbnail::ThumbnailService::new())
+        .manage(enrich)
         .register_asynchronous_uri_scheme_protocol(
             ipc::protocol::SCHEME,
             |ctx, request, responder| ipc::protocol::handle(ctx.app_handle(), request, responder),
@@ -61,6 +68,7 @@ pub fn run_gui() {
             ipc::commands::request_scan,
             ipc::commands::scan_progress,
             ipc::commands::reload_index,
+            ipc::commands::enrich_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");
@@ -74,6 +82,7 @@ pub fn run_gui() {
 pub fn run_indexer() {
     use index::model::IndexBuilder;
     use ntfs::{tree, usn_enum, volume};
+    use rayon::prelude::*;
 
     let dry_run = std::env::args().any(|a| a == "--dry-run");
     tracing::info!(dry_run, "indexer starting");
@@ -287,7 +296,42 @@ pub fn run_indexer() {
         });
     }
 
-    let ix = builder.finish();
+    let mut ix = builder.finish();
+
+    // Fast metadata pass: size and modification time for every entry.
+    //
+    // `GetFileAttributesEx` reads the MFT record without opening the file, and
+    // the scan has just walked that same table, so the records are still warm
+    // in the cache. Parallel because the calls are independent and each is
+    // short enough that thread overhead would otherwise dominate.
+    if !ix.is_empty() {
+        if let Some(p) = progress.as_mut() {
+            let st = p.state_mut();
+            st.phase = "stats".into();
+            st.message = format!("Đang đọc dung lượng {} tệp…", ix.len());
+            p.flush();
+        }
+
+        let stats_started = std::time::Instant::now();
+        let paths: Vec<String> = (0..ix.len()).map(|i| ix.full_path(i)).collect();
+        let stats: Vec<media::metadata::FileStats> = paths
+            .par_iter()
+            .map(|p| media::metadata::file_stats(p).unwrap_or_default())
+            .collect();
+
+        let total_bytes: u64 = stats.iter().map(|s| s.size).sum();
+        ix.set_file_stats(
+            stats.iter().map(|s| s.size).collect(),
+            stats.iter().map(|s| s.mtime).collect(),
+        );
+        tracing::info!(
+            "đọc dung lượng: {} tệp, tổng {:.1} GB [{:.2}s]",
+            stats.len(),
+            total_bytes as f64 / 1024.0 / 1024.0 / 1024.0,
+            stats_started.elapsed().as_secs_f64()
+        );
+    }
+
     tracing::info!(
         "TỔNG: {grand_total} tệp media · index {} mục / {} thư mục · RAM ~{:.1} MB",
         ix.len(),
@@ -398,7 +442,7 @@ fn demo_searches(ix: &index::model::Index) {
     tracing::info!("--- thử tìm kiếm (gõ KHÔNG dấu, dữ liệu CÓ dấu) ---");
     for query in ["nhac nen", "nang dong", "bai", "hung", "screenshot"] {
         let started = std::time::Instant::now();
-        let outcome = search(ix, query, &opts, &cancel, 0);
+        let outcome = search(ix, query, &opts, &[], &cancel, 0);
         let elapsed = started.elapsed();
         let note = match outcome.relaxed {
             Some(r) => format!(" (khớp một phần {}/{} từ)", r.best_matched, r.total_tokens),

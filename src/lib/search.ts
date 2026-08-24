@@ -12,6 +12,11 @@ export interface SearchHit {
   matched: number;
   /** Position in the index, used to build the thumbnail URL. */
   index: number;
+  size: number;
+  /** Zero means the background reader has not reached this file yet. */
+  width: number;
+  height: number;
+  durationMs: number;
 }
 
 export interface RelaxedInfo {
@@ -43,6 +48,30 @@ export interface IndexMeta {
   problem: string | null;
 }
 
+export interface Filters {
+  /** Shortest side in pixels; 0 disables. */
+  minHeight: number;
+  minDurationMs: number;
+  maxDurationMs: number;
+}
+
+export const NO_FILTERS: Filters = {
+  minHeight: 0,
+  minDurationMs: 0,
+  maxDurationMs: 0,
+};
+
+export interface EnrichStatus {
+  running: boolean;
+  /** Entries whose media properties are known. */
+  done: number;
+  total: number;
+}
+
+export function enrichStatus(): Promise<EnrichStatus> {
+  return invoke<EnrichStatus>("enrich_status");
+}
+
 let nextId = 0;
 let latestId = 0;
 
@@ -58,12 +87,19 @@ let latestId = 0;
 export async function searchFiles(
   query: string,
   kinds: MediaKind[],
+  filters: Filters = NO_FILTERS,
   limit = 5000,
 ): Promise<SearchResponse | null> {
   const id = ++nextId;
   latestId = id;
 
-  const res = await invoke<SearchResponse>("search", { id, query, kinds, limit });
+  const res = await invoke<SearchResponse>("search", {
+    id,
+    query,
+    kinds,
+    limit,
+    filters,
+  });
   return res.id === latestId ? res : null;
 }
 
@@ -157,6 +193,34 @@ export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** `1:23` or `1:02:03` — the shape a media player uses. */
+export function formatDuration(ms: number): string {
+  if (!ms) return "";
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/**
+ * The label people actually use for a resolution.
+ *
+ * Keyed on the shorter side, so a 1080x1920 phone video reads as 1080p just
+ * like a 1920x1080 one — which is what the person who shot it would call it.
+ */
+export function formatResolution(w: number, h: number): string {
+  if (!w || !h) return "";
+  const short = Math.min(w, h);
+  if (short >= 2160) return "4K";
+  if (short >= 1440) return "1440p";
+  if (short >= 1080) return "1080p";
+  if (short >= 720) return "720p";
+  if (short >= 480) return "480p";
+  return `${w}×${h}`;
 }
 
 export function formatWhen(unix: number): string {

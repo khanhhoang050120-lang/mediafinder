@@ -9,7 +9,7 @@
 
 use std::sync::atomic::Ordering;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
 use crate::index::model::MediaKind;
@@ -30,6 +30,13 @@ pub struct SearchHit {
     pub matched: u16,
     /// Position in the index, used to build the thumbnail URL.
     pub index: u32,
+    pub size: u64,
+
+    // Zero means "not read yet" — the background enrichment has not reached
+    // this file. The UI shows nothing rather than inventing a value.
+    pub width: u32,
+    pub height: u32,
+    pub duration_ms: u64,
 }
 
 /// Present when nothing matched the whole query, so the UI can say plainly
@@ -56,6 +63,20 @@ pub struct SearchResponse {
     pub epoch: u64,
 }
 
+/// The property filters, grouped rather than passed as loose arguments.
+///
+/// Three more parameters on a command that already had six is the point at
+/// which the call site stops being readable — and where swapping two `u64`s
+/// by accident becomes silent.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Filters {
+    /// Shortest side in pixels; `0` disables.
+    pub min_height: u32,
+    pub min_duration_ms: u64,
+    pub max_duration_ms: u64,
+}
+
 fn parse_kinds(kinds: &[String]) -> Vec<MediaKind> {
     kinds
         .iter()
@@ -76,10 +97,12 @@ fn parse_kinds(kinds: &[String]) -> Vec<MediaKind> {
 #[tauri::command]
 pub async fn search(
     state: State<'_, AppState>,
+    state_enrich: State<'_, crate::media::enrich::EnrichService>,
     id: u64,
     query: String,
     kinds: Vec<String>,
     limit: usize,
+    filters: Filters,
 ) -> Result<SearchResponse, String> {
     state.begin_query(id);
 
@@ -88,13 +111,21 @@ pub async fn search(
     let opts = SearchOptions {
         limit: limit.clamp(1, 20_000),
         kinds: parse_kinds(&kinds),
+        min_height: filters.min_height,
+        min_duration_ms: filters.min_duration_ms,
+        max_duration_ms: filters.max_duration_ms,
     };
+
+    // Properties are kept parallel to the index and swapped in as enrichment
+    // progresses; taking a snapshot here means a search never blocks behind
+    // the background reader.
+    let enrich = state_enrich.props();
 
     // Run inline rather than on a blocking pool. The search itself already
     // fans out across every core through rayon, and at a few milliseconds for
     // half a million entries it is far too short to be worth another hop.
     let started = std::time::Instant::now();
-    let outcome = run_search(&index, &query, &opts, state.generation(), id);
+    let outcome = run_search(&index, &query, &opts, &enrich, state.generation(), id);
     let elapsed = started.elapsed();
 
     // A superseded search returns nothing; the frontend drops it by id anyway.
@@ -114,6 +145,7 @@ pub async fn search(
         .into_iter()
         .map(|h| {
             let i = h.index as usize;
+            let p = enrich.get(i).copied().unwrap_or_default();
             SearchHit {
                 name: index.name(i).to_string(),
                 path: index.full_path(i),
@@ -122,6 +154,10 @@ pub async fn search(
                 score: h.score,
                 matched: h.matched,
                 index: h.index,
+                size: index.size(i),
+                width: p.width,
+                height: p.height,
+                duration_ms: p.duration_ms,
             }
         })
         .collect();
@@ -142,6 +178,14 @@ pub async fn search(
 #[tauri::command]
 pub fn index_status(state: State<'_, AppState>) -> IndexMeta {
     state.meta()
+}
+
+/// How far the background property reader has got.
+#[tauri::command]
+pub fn enrich_status(
+    enrich: State<'_, crate::media::enrich::EnrichService>,
+) -> crate::media::enrich::EnrichStatus {
+    enrich.status()
 }
 
 /// Start a rescan in an elevated child process.
@@ -195,10 +239,17 @@ pub fn scan_progress(state: State<'_, AppState>) -> ScanStatus {
 /// the indexer writes the cache *before* setting that flag, so by the time the
 /// UI asks, the file is complete.
 #[tauri::command]
-pub fn reload_index(state: State<'_, AppState>) -> Result<IndexMeta, String> {
+pub fn reload_index(
+    state: State<'_, AppState>,
+    enrich: State<'_, crate::media::enrich::EnrichService>,
+) -> Result<IndexMeta, String> {
     match crate::index::persist::load() {
         Ok(cache) => {
             state.replace(cache.index, cache.built_at_unix);
+            // Point enrichment at the new index. Anything already known for a
+            // path whose size and time still match is reused, so a rescan does
+            // not throw away an hour of reading.
+            enrich.start(state.snapshot());
             Ok(state.meta())
         }
         Err(e) => {

@@ -116,6 +116,15 @@ pub struct Index {
     folded: Vec<Span>,
     dir_id: Vec<u32>,
     kind: Vec<MediaKind>,
+
+    /// Bytes on disk. Cheap to obtain — `GetFileAttributesEx` reads metadata
+    /// only, never opening the file — so it is collected during the scan for
+    /// every entry rather than enriched later.
+    size: Vec<u64>,
+    /// Last-write time, Unix seconds. Kept alongside `size` because together
+    /// they are what tells the slow enrichment pass whether its stored answer
+    /// for a file is still about the same file.
+    mtime: Vec<i64>,
 }
 
 impl Index {
@@ -153,6 +162,35 @@ impl Index {
 
     pub fn kind(&self, i: usize) -> MediaKind {
         self.kind[i]
+    }
+
+    pub fn size(&self, i: usize) -> u64 {
+        self.size.get(i).copied().unwrap_or(0)
+    }
+
+    pub fn mtime(&self, i: usize) -> i64 {
+        self.mtime.get(i).copied().unwrap_or(0)
+    }
+
+    pub fn sizes(&self) -> &[u64] {
+        &self.size
+    }
+
+    /// Fill in sizes and modification times collected after the entries were
+    /// added. Lengths must match; a mismatch is ignored rather than panicking
+    /// in the indexer, and simply leaves the values at zero.
+    pub fn set_file_stats(&mut self, sizes: Vec<u64>, mtimes: Vec<i64>) {
+        if sizes.len() == self.name.len() && mtimes.len() == self.name.len() {
+            self.size = sizes;
+            self.mtime = mtimes;
+        } else {
+            tracing::warn!(
+                "bỏ qua thống kê tệp: {} kích thước / {} thời gian cho {} mục",
+                sizes.len(),
+                mtimes.len(),
+                self.name.len()
+            );
+        }
     }
 
     /// The folded directory path for directory `dir_id`.
@@ -193,6 +231,8 @@ impl Index {
                 * std::mem::size_of::<Span>()
             + self.dir_id.len() * std::mem::size_of::<u32>()
             + self.kind.len()
+            + self.size.len() * std::mem::size_of::<u64>()
+            + self.mtime.len() * std::mem::size_of::<i64>()
     }
 
     fn str_at(&self, span: Span) -> &str {
@@ -278,6 +318,9 @@ impl IndexBuilder {
             folded: self.folded,
             dir_id: self.dir_id,
             kind: self.kind,
+            // Filled in by a separate pass; see `Index::set_file_stats`.
+            size: Vec::new(),
+            mtime: Vec::new(),
         }
     }
 

@@ -82,7 +82,7 @@ fn queries(c: &mut Criterion) {
 
     for (name, query) in cases {
         group.bench_with_input(BenchmarkId::from_parameter(name), query, |b, q| {
-            b.iter(|| search(black_box(&index), black_box(q), &opts, &cancel, 0));
+            b.iter(|| search(black_box(&index), black_box(q), &opts, &[], &cancel, 0));
         });
     }
     group.finish();
@@ -105,7 +105,7 @@ fn single_vs_parallel(c: &mut Criterion) {
             ..Default::default()
         };
         group.bench_with_input(BenchmarkId::from_parameter(limit), &opts, |b, o| {
-            b.iter(|| search(black_box(&index), "holiday", o, &cancel, 0));
+            b.iter(|| search(black_box(&index), "holiday", o, &[], &cancel, 0));
         });
     }
     group.finish();

@@ -11,10 +11,16 @@
     requestScan,
     revealInExplorer,
     scanProgress,
+    enrichStatus,
+    formatBytes,
+    formatDuration,
+    formatResolution,
     searchFiles,
     thumbUrl,
     type IndexMeta,
     type MediaKind,
+    type EnrichStatus,
+    type Filters,
     type RelaxedInfo,
     type ScanProgress,
     type SearchHit,
@@ -31,6 +37,19 @@
   const KIND_LABEL: Record<MediaKind, string> = Object.fromEntries(
     KINDS.map((k) => [k.key, k.label]),
   ) as Record<MediaKind, string>;
+
+  // Named the way people describe what they are looking for, not the way the
+  // numbers are stored.
+  const RESOLUTIONS: { label: string; minHeight: number }[] = [
+    { label: "≥720p", minHeight: 720 },
+    { label: "≥1080p", minHeight: 1080 },
+    { label: "4K", minHeight: 2160 },
+  ];
+  const DURATIONS: { label: string; min: number; max: number }[] = [
+    { label: "< 1 phút", min: 0, max: 60_000 },
+    { label: "1–10 phút", min: 60_000, max: 600_000 },
+    { label: "> 10 phút", min: 600_000, max: 0 },
+  ];
 
   // Rows are a fixed height so the virtualiser can find any index by
   // arithmetic instead of measuring; measuring would mean laying out every
@@ -55,7 +74,19 @@
   let scan = $state<ScanProgress | null>(null);
   let scanning = $state(false);
   let grid = $state(false);
+  let showFilters = $state(false);
+  let minHeight = $state(0);
+  let durationChoice = $state(-1);
+  let enrich = $state<EnrichStatus | null>(null);
   let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let enrichTimer: ReturnType<typeof setInterval> | undefined;
+
+  const filters = $derived<Filters>({
+    minHeight,
+    minDurationMs: durationChoice >= 0 ? DURATIONS[durationChoice].min : 0,
+    maxDurationMs: durationChoice >= 0 ? DURATIONS[durationChoice].max : 0,
+  });
+  const filtersActive = $derived(minHeight > 0 || durationChoice >= 0);
 
   let inputEl: HTMLInputElement | undefined = $state();
   let listRef = $state<ReturnType<typeof VirtualList> | undefined>();
@@ -67,6 +98,21 @@
   const rowHeight = $derived(grid ? GRID_CELL : LIST_ROW);
 
   indexStatus().then((m) => (meta = m));
+
+  // Enrichment runs for tens of minutes; poll slowly. It only ever moves in
+  // one direction, so there is nothing to miss by looking less often.
+  const refreshEnrich = () =>
+    enrichStatus()
+      .then((e) => {
+        enrich = e;
+        if (!e.running && enrichTimer) {
+          clearInterval(enrichTimer);
+          enrichTimer = undefined;
+        }
+      })
+      .catch(() => {});
+  refreshEnrich();
+  enrichTimer = setInterval(refreshEnrich, 3000);
   scanProgress().then((s) => {
     if (s.scanning) startPolling();
   });
@@ -132,6 +178,22 @@
     scan = null;
   }
 
+  function setResolution(h: number) {
+    minHeight = minHeight === h ? 0 : h;
+    runSearch();
+  }
+
+  function setDuration(i: number) {
+    durationChoice = durationChoice === i ? -1 : i;
+    runSearch();
+  }
+
+  function clearFilters() {
+    minHeight = 0;
+    durationChoice = -1;
+    runSearch();
+  }
+
   function toggleKind(k: MediaKind) {
     activeKinds = activeKinds.includes(k)
       ? activeKinds.filter((x) => x !== k)
@@ -148,7 +210,7 @@
       return;
     }
     searching = true;
-    searchFiles(q, activeKinds)
+    searchFiles(q, activeKinds, filters)
       .then((res) => {
         // `null` means a newer keystroke already superseded this one.
         if (!res) return;
@@ -319,11 +381,57 @@
           </svg>
         {/if}
       </button>
+      <button
+        class="chip"
+        class:on={showFilters || filtersActive}
+        onclick={() => (showFilters = !showFilters)}
+        title="Lọc theo độ phân giải và thời lượng"
+      >Lọc{filtersActive ? " ●" : ""}</button>
       <button class="chip rescan" onclick={startScan} disabled={scanning}>
         {scanning ? "Đang quét…" : "Quét lại"}
       </button>
     </div>
   </div>
+
+  {#if showFilters || filtersActive}
+    <div class="filters">
+      <span class="flabel">Độ phân giải</span>
+      {#each RESOLUTIONS as r (r.minHeight)}
+        <button
+          class="chip small"
+          class:on={minHeight === r.minHeight}
+          onclick={() => setResolution(r.minHeight)}
+        >{r.label}</button>
+      {/each}
+
+      <span class="fsep"></span>
+      <span class="flabel">Thời lượng</span>
+      {#each DURATIONS as d, i (d.label)}
+        <button
+          class="chip small"
+          class:on={durationChoice === i}
+          onclick={() => setDuration(i)}
+        >{d.label}</button>
+      {/each}
+
+      {#if filtersActive}
+        <button class="chip small clear" onclick={clearFilters}>Bỏ lọc</button>
+      {/if}
+
+      {#if enrich && enrich.total > 0 && enrich.done < enrich.total}
+        <!--
+          Said plainly rather than hidden. A resolution filter can only match a
+          file somebody has looked at, so a short result list here is a fact
+          about progress, not about the library — and the user has no way to
+          know that unless it is written down.
+        -->
+        <span class="fnote" class:working={enrich.running}>
+          Đã đọc thuộc tính {formatCount(enrich.done)}/{formatCount(enrich.total)} tệp
+          {enrich.running ? "· đang tiếp tục" : "· tạm dừng"}
+        </span>
+      {/if}
+    </div>
+  {/if}
 
   {#if error}
     <div class="error" role="alert">
@@ -417,6 +525,17 @@
             <span class="text">
               <span class="name">{hit.name}</span>
               <span class="dir">{hit.dir}</span>
+            </span>
+            <span class="facts">
+              {#if formatResolution(hit.width, hit.height)}
+                <span class="fact res">{formatResolution(hit.width, hit.height)}</span>
+              {/if}
+              {#if hit.durationMs}
+                <span class="fact">{formatDuration(hit.durationMs)}</span>
+              {/if}
+              {#if hit.size}
+                <span class="fact dim">{formatBytes(hit.size)}</span>
+              {/if}
             </span>
             {#if relaxed}
               <span class="matched" title="Số từ khớp trên tổng số từ trong truy vấn">
@@ -561,6 +680,60 @@
   }
   .partial b { color: #ffc978; }
 
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    padding: 9px 12px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .flabel {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-right: 2px;
+  }
+  .fsep {
+    width: 1px;
+    height: 18px;
+    margin: 0 6px;
+    background: var(--border);
+  }
+  .chip.small {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  .chip.small.clear {
+    margin-left: 6px;
+    color: #ffc978;
+    border-color: #5c4726;
+  }
+  .fnote {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+  .fnote.working { color: #cfe0ff; }
+
+  .facts {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 5px;
+    align-items: center;
+  }
+  .fact {
+    padding: 2px 6px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    background: #22262e;
+    border-radius: 4px;
+  }
+  .fact.res { color: #9fd3ff; }
+  .fact.dim { opacity: 0.7; }
+
   .error {
     display: flex;
     gap: 12px;
@@ -683,6 +856,8 @@
   .results.grid .name { font-size: 12px; white-space: normal; line-height: 1.3; max-height: 2.6em; }
   .results.grid .dir { display: none; }
   .results.grid .matched { position: absolute; top: 14px; right: 14px; }
+  /* In the grid the picture carries the meaning; the numbers would crowd it. */
+  .results.grid .facts { display: none; }
 
   .empty {
     flex: 1;

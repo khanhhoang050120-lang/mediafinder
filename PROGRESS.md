@@ -31,8 +31,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P3** | Nối Tauri + UI tối giản | ✅ **XONG** — 96/96 test, mở tệp + mở thư mục đã kiểm chứng |
 | **P4** | Cache trên đĩa + luồng elevate | ✅ **XONG** — 100/100 test, người dùng xác nhận chạy được |
 | **P5** | Thumbnail + lưới ảo hoá | ✅ **XONG** — 108 test, 5.000 kết quả = 118 node |
-| **P6** | Enrichment metadata + lọc | 🔵 **sẵn sàng** |
-| **P7** | Tìm file trùng | ⬜ chưa bắt đầu |
+| **P6** | Enrichment metadata + lọc | ✅ **XONG** — 118 test, lọc 1080p chạy 9,1 ms |
+| **P7** | Tìm file trùng | 🔵 **sẵn sàng** |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ⬜ chưa bắt đầu |
 
 ---
@@ -312,16 +312,38 @@ Cache 512 mục: ~18 MB thay vì 650 MB.
 
 ---
 
-## P6 — Enrichment metadata + lọc ⬜
+## P6 — Enrichment metadata + lọc ✅
 
 **Tiêu chí nghiệm thu:** lọc được `≥1080p` và `thời lượng > 10 phút`; metadata sống sót qua restart.
 
-- [ ] Lượt nhanh: `GetFileAttributesEx` → `size` + `mtime`
-- [ ] `media/metadata.rs` — `SHGetPropertyStoreFromParsingName` + `PKEY_*`
-- [ ] Lượt nền priority thấp, không chặn tìm kiếm, cho phép tắt
-- [ ] Store bền, key `(file_id, size, mtime)` để tự invalidate
-- [ ] UI: chip lọc độ phân giải / thời lượng + chỉ báo tiến độ
-- [ ] Đối chiếu chéo với thuộc tính file trong Explorer
+- [x] Lượt nhanh: `GetFileAttributesEx` → `size` + `mtime`, chạy song song trong indexer
+- [x] `media/metadata.rs` — `SHGetPropertyStoreFromParsingName` + `PKEY_*` viết tay
+- [x] `media/enrich.rs` — lượt nền 2 luồng, `THREAD_PRIORITY_BELOW_NORMAL`
+- [x] Ưu tiên **video trước** — độ phân giải/thời lượng là thứ người ta lọc video theo
+- [x] Store bền `metadata.bin`, key = hash đường dẫn viết thường
+- [x] Tự vô hiệu khi `(size, mtime)` đổi — tệp đã thay thì đọc lại
+- [x] Lưu mỗi 500 tệp — đóng app mất tối đa vài giây công việc
+- [x] Bộ lọc trong `search.rs` — kiểm tra trước cả phép so chuỗi (số nguyên rẻ hơn)
+- [x] UI: chip lọc độ phân giải / thời lượng + nút bỏ lọc
+- [x] UI: chỉ báo *"đã đọc thuộc tính X/Y tệp"* — nói rõ vì sao kết quả ít
+- [x] UI: hiện độ phân giải / thời lượng / dung lượng trên từng dòng
+- [x] Sửa `BUG-012` — `SCHEMA_VERSION` nằm trong chính khối nó bảo vệ
+- [x] Sửa `BUG-013` — hàng đợi sắp xếp ngược, `pop()` lấy từ cuối nên đọc nhạc trước video
+- [x] Kiểm chứng trên dữ liệu thật — xem bảng dưới
+
+### Kiểm chứng P6
+
+| Hạng mục | Kết quả |
+|---|---|
+| Lượt nhanh (dung lượng, ngày sửa) | 117.128 tệp, tổng **3.014,6 GB**, trong **13,1 giây** |
+| `IPropertyStore` trên tệp thật | video **1920×1080** + thời lượng · ảnh có kích thước · nhạc có thời lượng |
+| Tốc độ đọc thuộc tính | 4–80 ms/tệp, thực đo ~**5,7 ms** với 2 luồng |
+| Lưu bền | khởi động lại nạp ngay **50.947 mục có sẵn**, không đọc lại |
+| Bộ lọc `≥1080p` | **5.000 kết quả trong 9,1 ms** |
+| Hiển thị trên từng dòng | `4K · 0:04 · 3.2 MB` |
+| Chỉ báo tiến độ | *"Đã đọc thuộc tính 54.822/117.128 tệp · đang tiếp tục"* |
+
+RAM index: 7,6 → **9,4 MB** (thêm dung lượng + ngày sửa cho 117k tệp).
 
 ---
 

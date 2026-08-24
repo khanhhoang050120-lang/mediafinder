@@ -39,7 +39,7 @@ fn sample_paths(limit: usize) -> Vec<(String, &'static str)> {
             limit,
             ..Default::default()
         };
-        for hit in search(&cache.index, query, &opts, &cancel, 0).hits {
+        for hit in search(&cache.index, query, &opts, &[], &cancel, 0).hits {
             let path = cache.index.full_path(hit.index as usize);
             if std::path::Path::new(&path).exists() {
                 out.push((path, label));

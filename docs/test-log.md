@@ -220,3 +220,31 @@ test.**
 
 Bài học chung: **"có ảnh" không có nghĩa là "đúng ảnh".** Ba lỗi này đều lọt qua mọi assertion về
 kiểu dữ liệu và kích thước; chỉ có mắt người mới phân biệt được khung hình thật với icon chung.
+
+### 2026-08-24 — Lượt test sau P6
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **118/118 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch (4 assertion hằng số → chuyển sang `const _: () = assert!`) |
+| 3 | Type-check frontend | `npm run check` | ✅ 0 lỗi, 0 warning |
+| 4 | Lượt nhanh dung lượng | quét thật | ✅ 117.128 tệp / **3.014,6 GB** trong 13,1s |
+| 5 | `IPropertyStore` trên tệp thật | integration test in ra số đo | ✅ video 1920×1080 + thời lượng, 7/9 tệp đọc được |
+| 6 | Cache cũ sau khi đổi schema | nạp lại | ❌ **tìm ra `BUG-012`** — báo "hỏng" thay vì "phiên bản cũ" |
+| 7 | Enrichment lưu bền | khởi động lại app | ✅ nạp ngay **50.947 mục có sẵn** |
+| 8 | **Bộ lọc `≥1080p`** | bấm qua UIA | ❌ **tìm ra `BUG-013`** — 0 kết quả — đã sửa |
+| 9 | Bộ lọc sau khi sửa | bấm lại | ✅ **5.000 kết quả trong 9,1 ms** |
+| 10 | Hiển thị thuộc tính trên dòng | nhìn ảnh chụp | ✅ `4K · 0:04 · 3.2 MB` |
+| 11 | Chỉ báo tiến độ | nhìn ảnh chụp | ✅ *"Đã đọc thuộc tính 54.822/117.128 tệp"* |
+
+**Kết luận lượt test P6:** 9/11 pass, 2 mục tìm ra lỗi — cả hai đã sửa.
+
+**`BUG-013` là lỗi im lặng nhất từ đầu dự án.** Không có lỗi ở đâu cả: enrichment chạy đúng, đếm
+đúng, lưu đúng, chỉ báo tăng đều. Bộ lọc trả về 0 — mà 0 là **câu trả lời hợp lệ** cho một bộ lọc.
+Cả hai bên đều đúng theo cách nhìn riêng của chúng.
+
+Chỉ vì tôi **đã biết chắc** `1.mp4` là 1920×1080 từ lượt test trước nên con số 0 mới trở thành mâu
+thuẫn. Nếu không có phép đo độc lập đó, tôi đã kết luận "chưa enrich tới" và đi tiếp.
+
+**`BUG-012` chỉ lộ ở lần đổi schema đầu tiên.** Nếu không gặp bây giờ thì sẽ gặp ở P7 hoặc P8 —
+lúc đó là dữ liệu thật của người dùng, và thông báo "cache hỏng" sẽ khiến họ nghĩ đĩa có vấn đề.

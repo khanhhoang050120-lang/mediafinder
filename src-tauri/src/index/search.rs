@@ -26,6 +26,7 @@ use rayon::prelude::*;
 
 use super::fold::fold;
 use super::model::{Index, MediaKind};
+use crate::media::metadata::MediaProps;
 
 /// Scores, highest first. Absolute values do not matter, only the ordering.
 mod score {
@@ -85,6 +86,13 @@ pub fn tokenize(folded: &str) -> Vec<&str> {
 /// matching fewer, however good those fewer matches are.
 const MATCHED_TOKEN_WEIGHT: i32 = 100_000;
 
+/// Stand-in for an entry the enrichment pass has not reached yet.
+const EMPTY_PROPS: MediaProps = MediaProps {
+    width: 0,
+    height: 0,
+    duration_ms: 0,
+};
+
 /// One scored match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hit {
@@ -116,6 +124,16 @@ pub struct SearchOptions {
     pub limit: usize,
     /// Restrict to these kinds. Empty means no restriction.
     pub kinds: Vec<MediaKind>,
+    /// Shortest side, in pixels. `0` disables the filter.
+    ///
+    /// The *shortest* side, not the width: people say "1080p", and a 1920×1080
+    /// clip and a 1080×1920 phone video are both that. Comparing width alone
+    /// would call the portrait one 1080p-and-then-some, and the landscape one
+    /// too — the same number for two different things.
+    pub min_height: u32,
+    /// Milliseconds. `0` disables each bound.
+    pub min_duration_ms: u64,
+    pub max_duration_ms: u64,
 }
 
 impl Default for SearchOptions {
@@ -123,7 +141,42 @@ impl Default for SearchOptions {
         Self {
             limit: 5_000,
             kinds: Vec::new(),
+            min_height: 0,
+            min_duration_ms: 0,
+            max_duration_ms: 0,
         }
+    }
+}
+
+impl SearchOptions {
+    /// True when any property filter is on, so the scan only pays for the
+    /// lookup when it is actually filtering by one.
+    fn filters_on_properties(&self) -> bool {
+        self.min_height > 0 || self.min_duration_ms > 0 || self.max_duration_ms > 0
+    }
+
+    /// Does this entry's media properties pass?
+    ///
+    /// An entry whose properties have not been read yet **fails**. That is the
+    /// honest answer: the filter cannot claim a file is 1080p when nobody has
+    /// looked at it. The UI reports how much of the library has been read, so
+    /// a short result list is explained rather than mysterious.
+    fn accepts(&self, props: &MediaProps) -> bool {
+        if self.min_height > 0 {
+            let shortest = props.width.min(props.height);
+            if shortest == 0 || shortest < self.min_height {
+                return false;
+            }
+        }
+        if self.min_duration_ms > 0 && props.duration_ms < self.min_duration_ms {
+            return false;
+        }
+        if self.max_duration_ms > 0
+            && (props.duration_ms == 0 || props.duration_ms > self.max_duration_ms)
+        {
+            return false;
+        }
+        true
     }
 }
 
@@ -177,6 +230,7 @@ pub fn search(
     index: &Index,
     query: &str,
     opts: &SearchOptions,
+    props: &[MediaProps],
     cancel: &AtomicU64,
     generation: u64,
 ) -> SearchOutcome {
@@ -186,7 +240,7 @@ pub fn search(
         return SearchOutcome::default();
     }
 
-    let strict = run_pass(index, &tokens, opts, cancel, generation, 0);
+    let strict = run_pass(index, &tokens, opts, props, cancel, generation, 0);
     if !strict.is_empty() || tokens.len() < MIN_TOKENS_TO_RELAX {
         return SearchOutcome {
             hits: strict,
@@ -199,7 +253,7 @@ pub fn search(
     // The floor of half the query stops a nine-word search returning every
     // file containing the word "the".
     let min_matched = tokens.len().div_ceil(2);
-    let mut partial = run_pass(index, &tokens, opts, cancel, generation, min_matched);
+    let mut partial = run_pass(index, &tokens, opts, props, cancel, generation, min_matched);
     if partial.is_empty() {
         return SearchOutcome::default();
     }
@@ -238,6 +292,7 @@ fn run_pass(
     index: &Index,
     tokens: &[&str],
     opts: &SearchOptions,
+    props: &[MediaProps],
     cancel: &AtomicU64,
     generation: u64,
     // Fewest tokens an entry must match to count. `0` means "all of them".
@@ -263,6 +318,7 @@ fn run_pass(
     // testing each file's path individually.
     let dir_scores = score_directories(index, tokens, &finders);
 
+    let check_props = opts.filters_on_properties();
     let starts: Vec<usize> = (0..index.len()).step_by(CHUNK).collect();
 
     let partials: Vec<Vec<Hit>> = starts
@@ -285,6 +341,11 @@ fn run_pass(
 
             for i in start..end {
                 if !opts.kinds.is_empty() && !opts.kinds.contains(&kinds[i]) {
+                    continue;
+                }
+                // Checked before the text match: rejecting on a cheap integer
+                // comparison avoids running the substring finders at all.
+                if check_props && !opts.accepts(props.get(i).unwrap_or(&EMPTY_PROPS)) {
                     continue;
                 }
                 let dir_row = &dir_scores[dir_ids[i] as usize * tokens.len()..][..tokens.len()];
@@ -454,7 +515,7 @@ mod tests {
 
     fn run(index: &Index, query: &str) -> Vec<String> {
         let cancel = AtomicU64::new(0);
-        search(index, query, &SearchOptions::default(), &cancel, 0)
+        search(index, query, &SearchOptions::default(), &[], &cancel, 0)
             .hits
             .into_iter()
             .map(|h| index.name(h.index as usize).to_string())
@@ -661,6 +722,7 @@ mod tests {
             &ix,
             "The anglerfish: The original approach to deep-sea fishing",
             &SearchOptions::default(),
+            &[],
             &cancel,
             0,
         );
@@ -685,6 +747,7 @@ mod tests {
             &ix,
             "the anglerfish original approach missingword",
             &SearchOptions::default(),
+            &[],
             &cancel,
             0,
         );
@@ -711,6 +774,7 @@ mod tests {
             &ix,
             "the anglerfish original approach missingword",
             &SearchOptions::default(),
+            &[],
             &cancel,
             0,
         );
@@ -732,6 +796,7 @@ mod tests {
             &ix,
             "the anglerfish original approach missingword",
             &SearchOptions::default(),
+            &[],
             &cancel,
             0,
         );
@@ -747,7 +812,7 @@ mod tests {
         let ix = build(&["avatar 2024.mkv"]);
         let cancel = AtomicU64::new(0);
         for q in ["avatar 1999", "avatar nonexistent"] {
-            let out = search(&ix, q, &SearchOptions::default(), &cancel, 0);
+            let out = search(&ix, q, &SearchOptions::default(), &[], &cancel, 0);
             assert!(out.hits.is_empty(), "{q:?} should return nothing");
             assert!(out.relaxed.is_none());
         }
@@ -759,7 +824,7 @@ mod tests {
         // 2009` should not start dragging in every file containing `2009`.
         let ix = build(&["avatar 2009.mkv", "titanic 2009.mkv", "avatar 2022.mkv"]);
         let cancel = AtomicU64::new(0);
-        let out = search(&ix, "avatar 2009", &SearchOptions::default(), &cancel, 0);
+        let out = search(&ix, "avatar 2009", &SearchOptions::default(), &[], &cancel, 0);
 
         assert_eq!(out.hits.len(), 1);
         assert!(out.relaxed.is_none(), "strict results must not be marked partial");
@@ -771,7 +836,7 @@ mod tests {
         // would be meaningless.
         let ix = build(&["holiday.mp4"]);
         let cancel = AtomicU64::new(0);
-        let out = search(&ix, "zzzznothing", &SearchOptions::default(), &cancel, 0);
+        let out = search(&ix, "zzzznothing", &SearchOptions::default(), &[], &cancel, 0);
         assert!(out.hits.is_empty());
         assert!(out.relaxed.is_none());
     }
@@ -780,7 +845,7 @@ mod tests {
     fn relaxed_still_returns_nothing_when_no_token_matches_at_all() {
         let ix = build(&["holiday.mp4"]);
         let cancel = AtomicU64::new(0);
-        let out = search(&ix, "zzzz qqqq wwww", &SearchOptions::default(), &cancel, 0);
+        let out = search(&ix, "zzzz qqqq wwww", &SearchOptions::default(), &[], &cancel, 0);
         assert!(out.hits.is_empty());
         assert!(out.relaxed.is_none());
     }
@@ -795,6 +860,7 @@ mod tests {
             &ix,
             "anglerfish deep missingword",
             &SearchOptions::default(),
+            &[],
             &cancel,
             0,
         );
@@ -825,7 +891,7 @@ mod tests {
             kinds: vec![MediaKind::Image],
             ..Default::default()
         };
-        let hits = search(&ix, "holiday", &opts, &cancel, 0).hits;
+        let hits = search(&ix, "holiday", &opts, &[], &cancel, 0).hits;
         assert_eq!(hits.len(), 1);
         assert_eq!(ix.name(hits[0].index as usize), "holiday.jpg");
     }
@@ -841,14 +907,14 @@ mod tests {
             limit: 10,
             ..Default::default()
         };
-        assert_eq!(search(&ix, "clip", &opts, &cancel, 0).hits.len(), 10);
+        assert_eq!(search(&ix, "clip", &opts, &[], &cancel, 0).hits.len(), 10);
     }
 
     #[test]
     fn a_superseded_search_bails_out() {
         let ix = build(&["a.mp4", "b.mp4"]);
         let cancel = AtomicU64::new(7); // a newer keystroke already arrived
-        assert!(search(&ix, "mp4", &SearchOptions::default(), &cancel, 3).hits.is_empty());
+        assert!(search(&ix, "mp4", &SearchOptions::default(), &[], &cancel, 3).hits.is_empty());
     }
 
     #[test]
@@ -864,10 +930,10 @@ mod tests {
             limit: 50,
             ..Default::default()
         };
-        let first = search(&ix, "clip", &opts, &cancel, 0).hits;
+        let first = search(&ix, "clip", &opts, &[], &cancel, 0).hits;
         for _ in 0..12 {
             assert_eq!(
-                search(&ix, "clip", &opts, &cancel, 0).hits,
+                search(&ix, "clip", &opts, &[], &cancel, 0).hits,
                 first,
                 "search is not deterministic"
             );
@@ -889,7 +955,7 @@ mod tests {
         let ix = build(&refs);
 
         let cancel = AtomicU64::new(0);
-        let hits = search(&ix, "cat", &SearchOptions::default(), &cancel, 0).hits;
+        let hits = search(&ix, "cat", &SearchOptions::default(), &[], &cancel, 0).hits;
         assert!(hits.len() > 100);
         for w in hits.windows(2) {
             assert!(w[0].score >= w[1].score, "results are out of order");
@@ -912,7 +978,7 @@ mod tests {
             ..Default::default()
         };
         // Exactly one entry is named `file9999.mp4`.
-        let hits = search(&ix, "file9999.mp4", &opts, &cancel, 0).hits;
+        let hits = search(&ix, "file9999.mp4", &opts, &[], &cancel, 0).hits;
         assert_eq!(hits.len(), 1);
         assert_eq!(ix.name(hits[0].index as usize), "file9999.mp4");
     }
