@@ -7,13 +7,14 @@
 
 **Trạng thái:** `MỞ` · `ĐANG SỬA` · `ĐÃ SỬA` · `WORKAROUND` · `CẦN XÁC MINH` · `CẦN QUYẾT ĐỊNH` · `KHÔNG SỬA` · `KHÔNG PHẢI LỖI`
 
-**Cấp ID tiếp theo:** `ISSUE-002`
+**Cấp ID tiếp theo:** `ISSUE-003`
 
 ## Bảng tổng hợp
 
 | ID | Mức | Tiêu đề | GĐ | Trạng thái |
 |----|-----|---------|----|-----------|
 | [ISSUE-001](#issue-001) | 🟠 | Kết quả trên C: toàn tài nguyên công cụ, không phải media người dùng | P1 | **ĐÃ SỬA** (P2) |
+| [ISSUE-002](#issue-002) | 🟡 | Huy hiệu loại tệp dùng chữ cái tiếng Anh trong giao diện tiếng Việt | P5 | ĐÃ SỬA |
 
 ---
 
@@ -69,3 +70,41 @@ Bổ sung thêm 3 tên rõ nghĩa không bắt đầu bằng dấu chấm: `bowe
 cây mã nguồn, nhưng cũng là tên thư mục hoàn toàn bình thường mà người ta có thể để media trong
 đó. Rủi ro không cân xứng: **mất file của người dùng trong im lặng tệ hơn nhiều so với hiện thừa
 vài file.** Có test `ordinary_folder_names_are_never_excluded` khoá lại quyết định này.
+
+---
+
+## ISSUE-002 🟡 — Huy hiệu loại tệp dùng chữ cái tiếng Anh trong giao diện tiếng Việt
+
+**Giai đoạn:** P5 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
+
+**Cách phát hiện.** Người dùng gửi ảnh chụp màn hình và hỏi: *"I và V trong bức ảnh này là sao?"*
+
+Câu hỏi đó chính là câu trả lời.
+
+**Vấn đề.** Mỗi kết quả có một huy hiệu màu ghi chữ cái đầu của **tên tiếng Anh** loại tệp:
+`V` (Video), `I` (Image), `A` (Audio). Nhưng toàn bộ giao diện là tiếng Việt, và **ngay phía trên
+danh sách** là ba chip lọc ghi rõ **"Video / Ảnh / Nhạc"**.
+
+Nên người dùng nhìn thấy:
+
+| Chip lọc | Huy hiệu | Khớp? |
+|---|---|---|
+| Video | `V` | có |
+| **Ảnh** | **`I`** | **không** |
+| **Nhạc** | **`A`** | **không** |
+
+Hai trong ba nhãn không liên quan gì tới chữ cái bên cạnh chúng.
+
+**Vì sao là `ISSUE-` chứ không phải `BUG-`.** Code chạy đúng y những gì tôi viết. Chuỗi `"image"`
+lấy chữ cái đầu ra `I` — không sai chỗ nào. Chỉ là **thiết kế sai** cho người sẽ đọc nó.
+
+**Cách sửa.** Thay chữ cái bằng **biểu tượng**: nút play cho video, khung ảnh cho ảnh, nốt nhạc
+cho nhạc. Hình khối không cần dịch. Giữ nguyên mã màu, và thêm `title`/`aria-label` lấy đúng từ
+danh sách chip nên huy hiệu và chip bật/tắt nó không bao giờ lệch nhau.
+
+**Bài học.** Chuỗi hằng số trong code thì bằng tiếng Anh — đó là chuyện bình thường và đúng.
+Nhưng **bất cứ thứ gì lọt ra màn hình đều là giao diện**, kể cả một chữ cái. Tôi rút chữ cái đó
+thẳng từ định danh nội bộ mà không hỏi nó có nghĩa gì với người đọc.
+
+Đáng chú ý: tôi đã dịch mọi câu, mọi nhãn nút, mọi thông báo lỗi sang tiếng Việt — rồi để lọt
+đúng ba chữ cái. Chỗ dễ lọt nhất là chỗ trông không giống văn bản.

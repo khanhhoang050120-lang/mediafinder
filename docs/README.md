@@ -37,9 +37,9 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 | [risk.md](./risk.md) | 2 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 1 | 0 | Nghi ngờ đã kiểm chứng |
-| [issue.md](./issue.md) | 1 | 0 | Vấn đề sản phẩm |
+| [issue.md](./issue.md) | 2 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **23** | **0** | |
+| **Cộng** | **24** | **0** | |
 
 ### Mục còn mở
 

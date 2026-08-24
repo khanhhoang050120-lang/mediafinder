@@ -26,6 +26,12 @@
     { key: "audio", label: "Nhạc" },
   ];
 
+  /// The same words the filter chips use, so the badge and the chip that turns
+  /// it on and off never disagree.
+  const KIND_LABEL: Record<MediaKind, string> = Object.fromEntries(
+    KINDS.map((k) => [k.key, k.label]),
+  ) as Record<MediaKind, string>;
+
   // Rows are a fixed height so the virtualiser can find any index by
   // arithmetic instead of measuring; measuring would mean laying out every
   // result, which is the cost being avoided.
@@ -382,7 +388,32 @@
               decoding="async"
               onerror={(e) => (e.currentTarget as HTMLImageElement).classList.add("failed")}
             />
-            <span class="kind {hit.kind}">{hit.kind[0].toUpperCase()}</span>
+            <!--
+              An icon, not a letter. The first cut used the English initial —
+              V/I/A — in a Vietnamese interface whose own filter chips say
+              "Video / Ảnh / Nhạc". `I` for Ảnh and `A` for Nhạc meant nothing
+              to the person reading them, and the first thing the user asked
+              was what the letters stood for. A shape needs no translation.
+            -->
+            <span class="kind {hit.kind}" title={KIND_LABEL[hit.kind]} aria-label={KIND_LABEL[hit.kind]}>
+              {#if hit.kind === "video"}
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M6.2 4.6v6.8a.5.5 0 0 0 .77.42l5.2-3.4a.5.5 0 0 0 0-.84l-5.2-3.4a.5.5 0 0 0-.77.42Z" />
+                </svg>
+              {:else if hit.kind === "image"}
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                  <rect x="2.6" y="3.4" width="10.8" height="9.2" rx="1.4" />
+                  <circle cx="6" cy="6.6" r="1.05" fill="currentColor" stroke="none" />
+                  <path d="M3.2 11.4 6.4 8.6l2.2 1.9 2.1-2 2.1 2.1" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              {:else}
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                  <path d="M6.1 11.4V4.3l6-1.3v7" stroke-linecap="round" stroke-linejoin="round" />
+                  <circle cx="4.5" cy="11.6" r="1.7" fill="currentColor" stroke="none" />
+                  <circle cx="10.5" cy="10.2" r="1.7" fill="currentColor" stroke="none" />
+                </svg>
+              {/if}
+            </span>
             <span class="text">
               <span class="name">{hit.name}</span>
               <span class="dir">{hit.dir}</span>
@@ -592,10 +623,12 @@
     height: 22px;
     display: grid;
     place-items: center;
-    font-size: 11px;
-    font-weight: 600;
     color: #fff;
     border-radius: 5px;
+  }
+  .kind svg {
+    width: 14px;
+    height: 14px;
   }
   .kind.video { background: #5b6cff; }
   .kind.image { background: #23a06a; }
