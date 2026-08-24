@@ -14,13 +14,13 @@
 | ID | Mức | Tiêu đề | GĐ | Trạng thái |
 |----|-----|---------|----|-----------|
 | [RISK-001](#risk-001) | ⚪ | `panic = "abort"` khiến panic trong IPC giết cả app | P0 | **ĐÃ SỬA** (P3) |
-| [RISK-002](#risk-002) | ⚪ | Dự án chưa có version control | P0 | MỞ |
+| [RISK-002](#risk-002) | ⚪ | Dự án chưa có version control | P0 | **ĐÃ SỬA** (P0) |
 
 ---
 
 ## RISK-001 ⚪ — `panic = "abort"` khiến panic trong IPC giết cả app
 
-**Giai đoạn:** P0 · **Trạng thái:** MỞ · **Ngày:** 2026-08-24
+**Giai đoạn:** P0 (đã xử lý ở P3) · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
 
 **Mô tả.** `src-tauri/Cargo.toml` đặt `panic = "abort"` trong `[profile.release]` để binary nhỏ và
 nhanh hơn. Hệ quả: không có stack unwinding, nên `catch_unwind` vô hiệu.
@@ -64,7 +64,7 @@ Cần kiểm chứng lại bằng test khi có command thật.
 
 ## RISK-002 ⚪ — Dự án chưa có version control
 
-**Giai đoạn:** P0 · **Trạng thái:** MỞ · **Ngày:** 2026-08-24
+**Giai đoạn:** P0 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
 
 **Mô tả.** `d:\tool_finding` **không phải git repository**. File `.gitignore` đã được tạo nhưng hiện
 không có tác dụng gì.
@@ -75,4 +75,6 @@ không có tác dụng gì.
 - Không có điểm khôi phục an toàn để thử nghiệm.
 
 **Đề xuất.** `git init` + commit một mốc sau mỗi giai đoạn hoàn thành.
-**Chưa thực hiện** vì khởi tạo repo là quyết định của người dùng, cần được đồng ý trước.
+
+**→ Đã thực hiện (2026-08-24).** Người dùng đồng ý. Repo đã khởi tạo, `.gitattributes` chuẩn hoá
+kết thúc dòng, và mỗi giai đoạn hoàn thành được commit thành một mốc riêng.

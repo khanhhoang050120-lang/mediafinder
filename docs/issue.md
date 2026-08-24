@@ -13,13 +13,13 @@
 
 | ID | Mức | Tiêu đề | GĐ | Trạng thái |
 |----|-----|---------|----|-----------|
-| [ISSUE-001](#issue-001) | 🟠 | Kết quả trên C: toàn tài nguyên công cụ, không phải media người dùng | P1 | CẦN QUYẾT ĐỊNH |
+| [ISSUE-001](#issue-001) | 🟠 | Kết quả trên C: toàn tài nguyên công cụ, không phải media người dùng | P1 | **ĐÃ SỬA** (P2) |
 
 ---
 
 ## ISSUE-001 🟠 — Kết quả trên C: toàn tài nguyên công cụ, không phải media người dùng
 
-**Giai đoạn:** P1 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+**Giai đoạn:** P1 (đã xử lý ở P2) · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
 
 **Hiện tượng.** Trong 20 đường dẫn mẫu lấy trải đều trên ổ C:, phần lớn là tài nguyên của công cụ
 lập trình chứ không phải media người dùng:

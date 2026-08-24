@@ -28,7 +28,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P0** | Scaffold + kiểm tra toolchain | ✅ **XONG** — 27/27, test 8/8 pass |
 | **P1** | Enumerator NTFS (USN) | ✅ **XONG** — 29/29 test, quét thật 4,1 triệu bản ghi |
 | **P2** | Index + fold + search + bench | ✅ **XONG** — 72/72 test, bench 3,01 ms worst case |
-| **P3** | Nối Tauri + UI tối giản | ✅ **XONG** — 85/85 test, mở tệp + mở thư mục đã kiểm chứng |
+| **P3** | Nối Tauri + UI tối giản | ✅ **XONG** — 96/96 test, mở tệp + mở thư mục đã kiểm chứng |
 | **P4** | Cache trên đĩa + luồng elevate | 🔵 **sẵn sàng** — phần cache đã xong ở P3, còn luồng elevate |
 | **P5** | Thumbnail + lưới ảo hoá | ⬜ chưa bắt đầu |
 | **P6** | Enrichment metadata + lọc | ⬜ chưa bắt đầu |

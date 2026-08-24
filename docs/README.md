@@ -34,19 +34,22 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 |---|---|---|---|
 | [bug.md](./bug.md) | 7 | 1 | Lỗi làm phần mềm chạy sai |
 | [config.md](./config.md) | 4 | 0 | Xung đột cấu hình / phiên bản |
-| [risk.md](./risk.md) | 2 | 1 | Rủi ro chưa xảy ra |
+| [risk.md](./risk.md) | 2 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 1 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 1 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
 | **Cộng** | **19** | **1** | |
 
-### Hai mục còn mở
+### Mục còn mở
 
 | ID | Mức | Tiêu đề | Chờ gì |
 |---|---|---|---|
-| [BUG-002](./bug.md#bug-002) | 🟠 | Cửa sổ mở ở trạng thái minimize | **Người dùng xác minh** — chạy `npm run tauri dev` từ terminal thường, xem cửa sổ có tự hiện lên không |
-| [RISK-001](./risk.md#risk-001) | ⚪ | `panic = "abort"` khiến panic trong IPC giết cả app | **Quyết định ở P3**, khi có Tauri command thật |
+| [BUG-002](./bug.md#bug-002) | 🟠 | Cửa sổ mở ở trạng thái minimize | **Người dùng xác minh** — chạy `npm run tauri dev` từ terminal của mình, xem cửa sổ có tự hiện lên trước mặt không |
+
+Ngoài ra hai mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
+[BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`) và
+[CONF-004](./config.md#conf-004) (dọn tiến trình giữ port 1420 trước khi chạy dev).
 
 ## Ba lỗi đáng nhớ nhất
 
