@@ -690,3 +690,54 @@ tổng hợp mang một FRN riêng.
 nào cả** — chỉ bằng một con số vô lý. Test kiểm tra thứ tôi nghĩ ra để kiểm tra; số đo thì phơi ra
 thứ tôi không nghĩ tới. Cùng họ với [BUG-010](#bug-010) (thumbnail 1,27 MB — test pass, chỉ số byte
 in ra là sai) và [BUG-013](#bug-013) (hàng đợi sắp xếp ngược — mọi chỉ báo đều xanh).
+
+---
+
+## BUG-018 🔴 — Ổ mạng bị bỏ qua hoàn toàn im lặng, 37,9 TB không có trong kết quả
+
+**Giai đoạn:** P9 · **Trạng thái:** ĐÃ SỬA (phần thông báo) · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Người dùng hỏi vì sao phải quét lại. Kiểm tra ổ đĩa trên máy thì thấy:
+
+| Ổ | Loại | Dung lượng | Tình trạng trước khi sửa |
+|---|---|---|---|
+| C:, D: | local NTFS | 4,2 TB | được index |
+| G: | local FAT32 | 3,7 TB | bỏ qua — **có báo** |
+| F: | mạng → `\192.168.1.214\f` | 9,3 TB | **im lặng** |
+| Y: | mạng → `\192.168.1.213\padoma 8` | 14,3 TB | **im lặng** |
+| Z: | mạng → `\192.168.1.213\padoma 1` | 14,3 TB | **im lặng** |
+
+Gần **38 TB** không có mặt trong kết quả tìm kiếm, và không một dòng thông báo nào ở đâu cả.
+
+**Nguyên nhân.** `list_volumes()` lọc `GetDriveTypeW` chỉ lấy `DRIVE_FIXED` và `DRIVE_REMOVABLE`.
+Ổ mạng là `DRIVE_REMOTE`, nên chúng bị loại **trước** cả vòng lặp báo cáo "volume bị bỏ qua" — vòng
+đó chỉ duyệt những ổ đã lọt vào danh sách. G: (FAT32) lọt vào nên được báo; F:, Y:, Z: thì không.
+
+Vi phạm thẳng [bất biến số 9](../README.md#bất-biến-kiến-trúc): *"được phát hiện và báo rõ cho
+người dùng, không im lặng bỏ qua"*. Bất biến đó được viết khi nghĩ tới USB FAT32 — không ai nghĩ
+tới ổ mạng, nên nó không bao giờ được áp dụng ở đó.
+
+**Một chi tiết khiến chuyện này dễ sai hơn nữa.** Cả ba ổ mạng đều khai filesystem là **`NTFS`**:
+
+```
+F: NTFS   Network [\192.168.1.214\f]
+Y: NTFS   Network [\192.168.1.213\padoma 8]
+Z: NTFS   Network [\192.168.1.213\padoma 1]
+```
+
+SMB báo lại filesystem của **máy chủ**. Nên kiểm tra `is_ntfs()` sẽ **chấp nhận** cả ba, rồi hỏng ở
+bước `open_volume` với một thông báo nói về NTFS — trong khi vấn đề chẳng liên quan gì tới NTFS.
+
+**Cách sửa.** Thêm `VolumeKind { Local, Removable, Network }` — hỏi *cách ổ đĩa được gắn*, không
+hỏi tên filesystem. `is_scannable()` = NTFS **và** không phải ổ mạng. `skip_reason()` trả về lý do
+bằng lời của người dùng, và với ổ mạng thì nêu luôn địa chỉ máy chủ (`WNetGetConnectionW`): khi có
+ba ổ mạng thì "bỏ qua Z:" là vô dụng, còn "bỏ qua Z: (`\192.168.1.213\padoma 1`)" chỉ đúng máy
+cần đi xem.
+
+**Phần chưa sửa.** Đây mới chỉ là **nói ra sự thật**, chưa phải hỗ trợ ổ mạng. Kiến trúc MFT/USN
+không thể đọc được NAS — xem [ISSUE-003](./issue.md#issue-003).
+
+**Bài học.** Bất biến số 9 nói "không im lặng bỏ qua" và tôi tin là đã làm đúng, vì đã có sẵn vòng
+lặp báo cáo. Nhưng vòng lặp đó chỉ báo cáo những thứ **đã lọt qua bộ lọc trước nó**. Thứ bị loại ở
+bộ lọc sớm hơn thì không có gì báo cáo cả — và không có cách nào biết, vì thiếu vắng không tạo ra
+dấu vết.

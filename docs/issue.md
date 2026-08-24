@@ -108,3 +108,56 @@ thẳng từ định danh nội bộ mà không hỏi nó có nghĩa gì với n
 
 Đáng chú ý: tôi đã dịch mọi câu, mọi nhãn nút, mọi thông báo lỗi sang tiếng Việt — rồi để lọt
 đúng ba chữ cái. Chỗ dễ lọt nhất là chỗ trông không giống văn bản.
+
+---
+
+## ISSUE-003 🔴 — Kiến trúc MFT/USN không đọc được NAS, mà thư viện lớn nhất lại nằm ở đó
+
+**Giai đoạn:** P9 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+
+**Vấn đề.** Máy người dùng có ba ổ mạng tổng ~37,9 TB, so với 4,2 TB đĩa cục bộ đang được index.
+Toàn bộ nền tảng kỹ thuật của dự án — đọc MFT qua `FSCTL_ENUM_USN_DATA` — **không áp dụng được**
+cho chúng, và không phải vì thiếu tính năng mà vì bản chất:
+
+`\.\Z:` mở một **volume**. Ổ mạng không phải volume trên máy này — nó là một phiên SMB. Máy khách
+nói chuyện với máy chủ bằng giao thức tệp, không thấy đĩa, không thấy MFT, không thấy USN journal.
+Máy chủ có chạy NTFS hay không cũng không đổi được điều đó.
+
+Nói cách khác: mọi thứ khiến MediaFinder nhanh đều là thứ **chỉ tồn tại với đĩa gắn trực tiếp**.
+
+**Đã đo.** Duyệt thư mục theo chiều rộng, một luồng, 20 giây mỗi ổ:
+
+| Ổ | Mục/giây | Tệp thấy được | Trong đó là media |
+|---|---|---|---|
+| Z: (mạng) | 1.584 | 29.865 | 18.941 |
+| Y: (mạng) | 1.308 | 24.210 | 21.400 |
+| F: (mạng) | 1.530 | 26.792 | 22.237 |
+| **D: (cục bộ)** | **3.219** | 48.770 | 9.147 |
+
+Hai điều đáng chú ý:
+
+1. **Qua mạng chỉ chậm hơn cục bộ khoảng 2 lần** khi dùng cùng một phương pháp duyệt. Con số này
+   nhỏ hơn nhiều so với dự đoán thông thường về SMB.
+2. Nút cổ chai là **độ trễ vòng lặp yêu cầu**, không phải băng thông — nên chạy song song nhiều
+   luồng sẽ ăn thẳng vào phần chờ. Đây là loại việc song song hoá rất tốt.
+
+Cũng đáng chú ý: trên NAS, **63–88% tệp là media**, so với 19% trên ổ D:. Đúng như dự đoán — NAS là
+nơi để chứa thư viện, còn ổ cục bộ chứa lẫn cả phần mềm và mã nguồn.
+
+**Hướng giải quyết.** Một **bộ quét thứ hai** phía sau **cùng một index**: duyệt thư mục song song
+cho ổ mạng, thay vì đọc MFT. Phần còn lại của hệ thống không cần biết:
+
+- `ResolvedSet { dirs, dir_frns, files }` chính là đường nối. Bộ duyệt sinh ra đúng hình dạng đó.
+- Tìm kiếm, xếp hạng, fold tiếng Việt, thumbnail, lọc metadata, tìm trùng lặp — không sửa gì.
+- `rebuild_with` vừa viết ở P9 nhận `Change` từ **bất kỳ** nguồn nào, không chỉ từ USN journal.
+
+**Ba điều phải quyết trước khi làm.**
+
+| Vấn đề | Chi tiết |
+|---|---|
+| **Định danh** | Tệp qua SMB **không có FRN**. `rebuild_with` đang khoá theo `(ổ, FRN)`. Ổ mạng buộc phải khoá theo **đường dẫn**. Nghĩa là `Index` cần một khái niệm định danh rộng hơn, và đó là một lần đổi schema nữa |
+| **Cập nhật** | `ReadDirectoryChangesW` **có** hoạt động qua SMB nếu máy chủ hỗ trợ change notify. Cần thử thật trên chính hai NAS này, không được tin vào tài liệu |
+| **Tốc độ của các tính năng khác** | Thumbnail và tìm trùng lặp phải **đọc nội dung tệp qua mạng**. Tìm trùng lặp đọc 64 KB đầu + 64 KB cuối mỗi ứng viên — trên 38 TB qua mạng thì đây là việc hoàn toàn khác về quy mô so với 584 giây đã đo trên đĩa cục bộ |
+
+**Chưa làm gì cả** ngoài việc [nói ra sự thật](./bug.md#bug-018): ứng dụng giờ báo rõ ba ổ mạng bị
+bỏ qua và vì sao. Bước tiếp theo cần chủ dự án quyết định.

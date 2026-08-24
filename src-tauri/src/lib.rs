@@ -212,7 +212,7 @@ pub fn run_watch(args: &[String]) {
 
     let volumes: Vec<_> = volume::list_volumes()
         .into_iter()
-        .filter(|v| v.is_ntfs())
+        .filter(|v| v.is_scannable())
         .filter(|v| only.map_or(true, |c| v.letter.to_ascii_uppercase() == c))
         .collect();
 
@@ -334,15 +334,13 @@ pub fn run_indexer() {
 
     // Non-NTFS volumes are reported rather than silently skipped, so a user
     // whose USB stick is missing from the results knows why.
-    for v in volumes.iter().filter(|v| !v.is_ntfs()) {
-        tracing::warn!(
-            "bỏ qua ổ {}: ({}) — không phải NTFS nên không có MFT/USN",
-            v.letter,
-            v.filesystem
-        );
+    for v in &volumes {
+        if let Some(why) = v.skip_reason() {
+            tracing::warn!("bỏ qua ổ {}: {}", v.letter, why);
+        }
     }
 
-    let ntfs_volumes: Vec<_> = volumes.iter().filter(|v| v.is_ntfs()).collect();
+    let ntfs_volumes: Vec<_> = volumes.iter().filter(|v| v.is_scannable()).collect();
     if ntfs_volumes.is_empty() {
         tracing::error!("không có ổ NTFS nào để quét");
         if let Some(p) = progress.as_mut() {
