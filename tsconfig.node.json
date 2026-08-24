@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    // `composite` requires declaration output, so emit declarations only into a
+    // throwaway dir rather than setting `noEmit` (which conflicts with composite).
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.tmp/tsconfig-node"
+  },
+  "include": ["vite.config.ts", "svelte.config.js"]
+}

@@ -1,0 +1,26 @@
+:root {
+  --bg: #16181d;
+  --bg-raised: #1e2128;
+  --border: #2c3038;
+  --text: #e6e8ec;
+  --text-dim: #8b919c;
+  --accent: #4c8dff;
+
+  color-scheme: dark;
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+/* The result list is the only scroll container; the page itself never scrolls. */
+body { user-select: none; }
