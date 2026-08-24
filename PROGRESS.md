@@ -29,8 +29,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P1** | Enumerator NTFS (USN) | ✅ **XONG** — 29/29 test, quét thật 4,1 triệu bản ghi |
 | **P2** | Index + fold + search + bench | ✅ **XONG** — 72/72 test, bench 3,01 ms worst case |
 | **P3** | Nối Tauri + UI tối giản | ✅ **XONG** — 96/96 test, mở tệp + mở thư mục đã kiểm chứng |
-| **P4** | Cache trên đĩa + luồng elevate | 🔵 **sẵn sàng** — phần cache đã xong ở P3, còn luồng elevate |
-| **P5** | Thumbnail + lưới ảo hoá | ⬜ chưa bắt đầu |
+| **P4** | Cache trên đĩa + luồng elevate | ✅ **XONG** — 100/100 test, người dùng xác nhận chạy được |
+| **P5** | Thumbnail + lưới ảo hoá | 🔵 **đang làm** |
 | **P6** | Enrichment metadata + lọc | ⬜ chưa bắt đầu |
 | **P7** | Tìm file trùng | ⬜ chưa bắt đầu |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ⬜ chưa bắt đầu |
@@ -246,7 +246,7 @@ sự kiện `input` của Svelte nên kiểm chứng được cả luồng mà k
 
 ---
 
-## P4 — Cache trên đĩa + luồng elevate ⬜
+## P4 — Cache trên đĩa + luồng elevate ✅
 
 **Tiêu chí nghiệm thu:** mở app lần 2 **không có UAC**, kết quả < 500ms;
 nút "Quét lại" đẩy UAC đúng một lần.
@@ -261,9 +261,9 @@ nút "Quét lại" đẩy UAC đúng một lần.
 - [x] Cờ `scanning` trong `AppState` — chặn hai lượt quét chồng nhau, nút tự khoá
 - [x] Luồng theo dõi tiến trình con — quét sập vẫn gỡ được cờ, nút không kẹt vĩnh viễn
 - [x] Thứ tự an toàn: **ghi cache xong mới đặt `finished`** — GUI không thể đọc file dở
-- [ ] Xác minh lần mở thứ 2 không có UAC
-- [ ] Xác minh bấm "Quét lại" → UAC → thanh tiến độ chạy → index tự cập nhật
-- [ ] Xác minh bấm **No** trên UAC → báo rõ, dữ liệu cũ nguyên vẹn
+- [x] Xác minh lần mở thứ 2 không có UAC
+- [x] Xác minh bấm "Quét lại" → UAC → thanh tiến độ chạy → index tự cập nhật — **người dùng xác nhận**
+- [x] Xác minh bấm **No** trên UAC → báo rõ, dữ liệu cũ nguyên vẹn
 
 ---
 

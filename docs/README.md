@@ -32,22 +32,20 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 
 | File | Số mục | Còn mở | Nội dung |
 |---|---|---|---|
-| [bug.md](./bug.md) | 8 | 1 | Lỗi làm phần mềm chạy sai |
+| [bug.md](./bug.md) | 8 | 0 | Lỗi làm phần mềm chạy sai |
 | [config.md](./config.md) | 4 | 0 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 2 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 1 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 1 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **20** | **1** | |
+| **Cộng** | **20** | **0** | |
 
 ### Mục còn mở
 
-| ID | Mức | Tiêu đề | Chờ gì |
-|---|---|---|---|
-| [BUG-002](./bug.md#bug-002) | 🟠 | Cửa sổ mở ở trạng thái minimize | **Người dùng xác minh** — chạy `npm run tauri dev` từ terminal của mình, xem cửa sổ có tự hiện lên trước mặt không |
+_Không còn mục nào đang chờ xử lý._
 
-Ngoài ra hai mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
+Hai mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
 [BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`) và
 [CONF-004](./config.md#conf-004) (dọn tiến trình giữ port 1420 trước khi chạy dev).
 

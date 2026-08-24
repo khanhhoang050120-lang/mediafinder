@@ -14,7 +14,7 @@
 | ID | Mức | Tiêu đề | GĐ | Trạng thái |
 |----|-----|---------|----|-----------|
 | [BUG-001](#bug-001) | 🟡 | `MainWindowHandle` bắt nhầm cửa sổ event-loop của tao | P0 | WORKAROUND |
-| [BUG-002](#bug-002) | 🟠 | Cửa sổ mở ở trạng thái minimize | P0 | CẦN XÁC MINH |
+| [BUG-002](#bug-002) | 🟡 | Cửa sổ mở ở trạng thái minimize | P0 | **KHÔNG SỬA** (do môi trường) |
 | [BUG-003](#bug-003) | 🟡 | `SetForegroundWindow` bị chặn → chụp nhầm màn hình | P0 | ĐÃ SỬA |
 | [BUG-004](#bug-004) | 🔴 | `.ts` (TypeScript) bị phân loại thành video | P1 | ĐÃ SỬA |
 | [BUG-005](#bug-005) | 🟡 | Tiến độ quét báo trùng bản ghi cuối | P1 | ĐÃ SỬA |
@@ -51,9 +51,9 @@ sẽ đo nhầm đối tượng** nếu dùng `MainWindowHandle`.
 
 ---
 
-## BUG-002 🟠 — Cửa sổ mở ở trạng thái minimize
+## BUG-002 🟡 — Cửa sổ mở ở trạng thái minimize
 
-**Giai đoạn:** P0 · **Trạng thái:** CẦN XÁC MINH · **Ngày:** 2026-08-24
+**Giai đoạn:** P0 · **Trạng thái:** KHÔNG SỬA (không phải lỗi ứng dụng) · **Ngày:** 2026-08-24
 
 **Hiện tượng.** Ngay sau khi `npm run tauri dev` khởi động xong, cửa sổ `Tauri Window` có
 `IsIconic = True`, `GetWindowRect` trả `160x28` tại `(-32000,-32000)` — chữ ký kinh điển của
@@ -88,8 +88,15 @@ Lần này cửa sổ mở ra **không** bị thu nhỏ — khác hẳn lần đ
 thu nhỏ về sau, sau khi mất focus.
 
 Điều này **củng cố** giả thuyết ban đầu: đây là hệ quả của việc tiến trình nền không giữ được
-foreground, chứ không phải ứng dụng tự thu nhỏ lúc khởi động. Nhưng vẫn chưa đủ để đóng bug —
-cần chính người dùng chạy từ terminal của mình và quan sát.
+foreground, chứ không phải ứng dụng tự thu nhỏ lúc khởi động.
+
+**→ Đã xác minh và đóng (2026-08-24, P4).** Người dùng chạy `npm run tauri dev` từ terminal của
+mình: **cửa sổ tự hiện lên bình thường.** Không phải lỗi ứng dụng — chỉ là hệ quả của việc tôi
+khởi chạy từ tiến trình nền không có quyền foreground.
+
+**Giữ lại mục này** thay vì xoá, vì nó ghi lại một giới hạn của môi trường kiểm thử: bất cứ khi
+nào tôi tự chạy app để kiểm chứng, trạng thái cửa sổ đo được **không phản ánh** thứ người dùng
+thấy. Đo nội dung thì tin được (dùng `PrintWindow`), đo trạng thái cửa sổ thì không.
 
 ---
 
