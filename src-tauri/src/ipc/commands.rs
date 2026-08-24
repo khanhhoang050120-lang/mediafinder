@@ -25,6 +25,18 @@ pub struct SearchHit {
     pub dir: String,
     pub kind: &'static str,
     pub score: i32,
+    /// How many of the query's words this file actually contains.
+    pub matched: u16,
+}
+
+/// Present when nothing matched the whole query, so the UI can say plainly
+/// that these are partial matches rather than letting the user assume the
+/// results are exact.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelaxedInfo {
+    pub total_tokens: usize,
+    pub best_matched: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,6 +47,7 @@ pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
     pub elapsed_ms: f64,
     pub searched: usize,
+    pub relaxed: Option<RelaxedInfo>,
 }
 
 fn parse_kinds(kinds: &[String]) -> Vec<MediaKind> {
@@ -75,7 +88,7 @@ pub async fn search(
     // fans out across every core through rayon, and at a few milliseconds for
     // half a million entries it is far too short to be worth another hop.
     let started = std::time::Instant::now();
-    let hits = run_search(&index, &query, &opts, state.generation(), id);
+    let outcome = run_search(&index, &query, &opts, state.generation(), id);
     let elapsed = started.elapsed();
 
     // A superseded search returns nothing; the frontend drops it by id anyway.
@@ -85,10 +98,12 @@ pub async fn search(
             hits: Vec::new(),
             elapsed_ms: elapsed.as_secs_f64() * 1000.0,
             searched: index.len(),
+            relaxed: None,
         });
     }
 
-    let hits = hits
+    let hits = outcome
+        .hits
         .into_iter()
         .map(|h| {
             let i = h.index as usize;
@@ -98,6 +113,7 @@ pub async fn search(
                 dir: index.dir(i).to_string(),
                 kind: index.kind(i).as_str(),
                 score: h.score,
+                matched: h.matched,
             }
         })
         .collect();
@@ -107,6 +123,10 @@ pub async fn search(
         hits,
         elapsed_ms: elapsed.as_secs_f64() * 1000.0,
         searched: index.len(),
+        relaxed: outcome.relaxed.map(|r| RelaxedInfo {
+            total_tokens: r.total_tokens,
+            best_matched: r.best_matched,
+        }),
     })
 }
 

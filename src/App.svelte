@@ -10,6 +10,7 @@
     searchFiles,
     type IndexMeta,
     type MediaKind,
+    type RelaxedInfo,
     type SearchHit,
   } from "./lib/search";
 
@@ -27,6 +28,7 @@
   let activeKinds = $state<MediaKind[]>([]);
   let meta = $state<IndexMeta | null>(null);
   let error = $state<string | null>(null);
+  let relaxed = $state<RelaxedInfo | null>(null);
   let menu = $state<{ x: number; y: number; hit: SearchHit } | null>(null);
 
   let inputEl: HTMLInputElement | undefined = $state();
@@ -45,6 +47,7 @@
     const q = query.trim();
     if (!q) {
       hits = [];
+      relaxed = null;
       elapsedMs = 0;
       return;
     }
@@ -54,6 +57,7 @@
         // `null` means a newer keystroke already superseded this one.
         if (!res) return;
         hits = res.hits;
+        relaxed = res.relaxed;
         elapsedMs = res.elapsedMs;
         selected = 0;
         listEl?.scrollTo({ top: 0 });
@@ -144,6 +148,7 @@
         else if (query) {
           query = "";
           hits = [];
+          relaxed = null;
         }
         inputEl?.focus();
         break;
@@ -198,6 +203,13 @@
     </div>
   {/if}
 
+  {#if relaxed}
+    <div class="partial">
+      Không có tệp nào khớp đủ <b>{relaxed.totalTokens}</b> từ.
+      Đang hiện các tệp khớp nhiều nhất — <b>{relaxed.bestMatched}/{relaxed.totalTokens}</b> từ.
+    </div>
+  {/if}
+
   <div class="results" bind:this={listEl} role="listbox" tabindex="-1" aria-label="Kết quả tìm kiếm">
     {#if hits.length}
       {#each hits as hit, i}
@@ -218,6 +230,11 @@
             <span class="name">{hit.name}</span>
             <span class="dir">{hit.dir}</span>
           </span>
+          {#if relaxed}
+            <span class="matched" title="Số từ khớp trên tổng số từ trong truy vấn">
+              {hit.matched}/{relaxed.totalTokens}
+            </span>
+          {/if}
         </div>
       {/each}
     {:else}
@@ -320,6 +337,28 @@
     border-radius: 5px;
     padding: 3px 9px;
     cursor: default;
+  }
+
+  /* Amber rather than red: this is not an error, it is the search telling the
+     user what it did. Red would suggest something went wrong. */
+  .partial {
+    padding: 9px 14px;
+    font-size: 12.5px;
+    color: #ffe0b0;
+    background: #3d3020;
+    border: 1px solid #5c4726;
+    border-radius: 8px;
+  }
+  .partial b { color: #ffc978; }
+
+  .matched {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    background: #2c313b;
+    border-radius: 999px;
   }
 
   .results {

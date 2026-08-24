@@ -8,6 +8,13 @@ export interface SearchHit {
   dir: string;
   kind: MediaKind;
   score: number;
+  /** How many of the query's words this file actually contains. */
+  matched: number;
+}
+
+export interface RelaxedInfo {
+  totalTokens: number;
+  bestMatched: number;
 }
 
 export interface SearchResponse {
@@ -15,6 +22,12 @@ export interface SearchResponse {
   hits: SearchHit[];
   elapsedMs: number;
   searched: number;
+  /**
+   * Set when nothing matched the whole query and these are the closest partial
+   * matches. Must be surfaced: partial results that look exact are worse than
+   * no results, because the user stops looking.
+   */
+  relaxed: RelaxedInfo | null;
 }
 
 export interface IndexMeta {

@@ -58,11 +58,40 @@ fn is_word_boundary(b: u8) -> bool {
     )
 }
 
+/// Split a folded query into search tokens.
+///
+/// Splits on **every** non-alphanumeric character, not just whitespace.
+///
+/// Whitespace alone is not enough, and the failure is quiet. Pasting a real
+/// title — `The anglerfish: The original approach to deep-sea fishing` — used
+/// to yield the token `anglerfish:` with the colon still attached, which
+/// matches nothing, because the file on disk is called `...The-anglerfish-...`.
+/// The single most distinctive word in the query was lost to one punctuation
+/// mark. Splitting `deep-sea` into `deep` and `sea` likewise lets it match
+/// `deep_sea`, `deep sea` and `Deep-Sea` alike.
+///
+/// Matching is still substring-based, so a token never has to sit at a word
+/// boundary in the filename — only in the query.
+pub fn tokenize(folded: &str) -> Vec<&str> {
+    folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// How much one matched token outweighs any quality-of-match difference.
+///
+/// Large enough that a file matching more of the query always outranks one
+/// matching fewer, however good those fewer matches are.
+const MATCHED_TOKEN_WEIGHT: i32 = 100_000;
+
 /// One scored match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hit {
     pub index: u32,
     pub score: i32,
+    /// How many of the query's tokens this entry actually contains.
+    pub matched: u16,
 }
 
 // Ordered so a `BinaryHeap<Reverse<Hit>>` keeps the *worst* hit at the top and
@@ -104,25 +133,116 @@ impl Default for SearchOptions {
 /// itself, small enough that work still spreads evenly across cores.
 const CHUNK: usize = 16_384;
 
+/// Why the results are what they are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Relaxed {
+    pub total_tokens: usize,
+    /// The most tokens any single result managed to match.
+    pub best_matched: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct SearchOutcome {
+    pub hits: Vec<Hit>,
+    /// `Some` when nothing matched the whole query and these are the closest
+    /// partial matches instead.
+    pub relaxed: Option<Relaxed>,
+}
+
 /// Search `index` for `query`.
 ///
+/// Runs in two passes:
+///
+/// 1. **Strict** — every token must appear. Precise, and what a short query
+///    wants: `avatar 2009` should not drag in every file containing `2009`.
+///
+/// 2. **Relaxed**, only if strict found nothing and the query has more than
+///    one token. Results are ranked by how many tokens they matched.
+///
+/// The fallback exists because filenames are rarely the thing they describe.
+/// Pasting a real video title finds nothing when the downloader truncated it:
+/// `The anglerfish: The original approach to deep-sea fishing` is on disk as
+/// `...The-anglerfish-The-original-approach-to-_Media_VqPMP9X-89o_001_1080p.mp4`,
+/// where `deep`, `sea` and `fishing` simply do not exist. Demanding all nine
+/// tokens returns nothing at all, which reads as "you don't have this file" —
+/// the worst possible answer, because the file is right there. Six of nine
+/// tokens is a very good answer, and the caller is told the results are
+/// partial so the UI can say so.
+///
 /// `cancel` and `generation` let a search abandon its work the moment a newer
-/// keystroke supersedes it: the caller bumps `cancel`, and every chunk checks
-/// whether its own `generation` is still current before doing any work. This
-/// is what replaces an input debounce — the search starts immediately and the
-/// stale one gets out of the way, instead of every query waiting out a timer.
+/// keystroke supersedes it. This is what replaces an input debounce — the
+/// search starts immediately and the stale one gets out of the way, instead of
+/// every query waiting out a timer.
 pub fn search(
     index: &Index,
     query: &str,
     opts: &SearchOptions,
     cancel: &AtomicU64,
     generation: u64,
-) -> Vec<Hit> {
+) -> SearchOutcome {
     let folded = fold(query);
-    let tokens: Vec<&str> = folded.split_whitespace().collect();
+    let tokens = tokenize(&folded);
     if tokens.is_empty() || index.is_empty() || opts.limit == 0 {
-        return Vec::new();
+        return SearchOutcome::default();
     }
+
+    let strict = run_pass(index, &tokens, opts, cancel, generation, 0);
+    if !strict.is_empty() || tokens.len() < MIN_TOKENS_TO_RELAX {
+        return SearchOutcome {
+            hits: strict,
+            relaxed: None,
+        };
+    }
+
+    // Nothing contained the whole query. Take the closest matches instead.
+    //
+    // The floor of half the query stops a nine-word search returning every
+    // file containing the word "the".
+    let min_matched = tokens.len().div_ceil(2);
+    let mut partial = run_pass(index, &tokens, opts, cancel, generation, min_matched);
+    if partial.is_empty() {
+        return SearchOutcome::default();
+    }
+
+    // Then keep only the *best* — the closest matches, not merely close ones.
+    //
+    // Measured on the real library, the query that prompted this returned two
+    // files at 6 of 9 tokens followed by 171 at 5 of 9, all of them unrelated
+    // files that merely happen to mention "deep sea". The two good answers
+    // were correct and first, but burying them under a hundredfold of noise
+    // makes the result list useless to look at. Hits are already ordered by
+    // matched count, so this is a truncation, not another scan.
+    let best_matched = partial[0].matched;
+    if let Some(cut) = partial.iter().position(|h| h.matched < best_matched) {
+        partial.truncate(cut);
+    }
+
+    SearchOutcome {
+        hits: partial,
+        relaxed: Some(Relaxed {
+            total_tokens: tokens.len(),
+            best_matched: best_matched as usize,
+        }),
+    }
+}
+
+/// Below this many tokens, a query that matches nothing simply matches nothing.
+///
+/// One or two words is a deliberate query — the user knows exactly what they
+/// typed, and quietly widening it would return noise instead of an honest
+/// empty result. Longer queries are usually a pasted title, and a filename is
+/// rarely a faithful copy of the title it came from.
+const MIN_TOKENS_TO_RELAX: usize = 3;
+
+fn run_pass(
+    index: &Index,
+    tokens: &[&str],
+    opts: &SearchOptions,
+    cancel: &AtomicU64,
+    generation: u64,
+    // Fewest tokens an entry must match to count. `0` means "all of them".
+    min_matched: usize,
+) -> Vec<Hit> {
 
     // Built once and shared: constructing a Finder compiles a skip table, and
     // doing that per candidate rather than per token would dominate the scan.
@@ -141,7 +261,7 @@ pub fn search(
     // Doing it per directory rather than per file is what keeps it cheap:
     // 116k files share 4k directories, so this is roughly 28x less work than
     // testing each file's path individually.
-    let dir_scores = score_directories(index, &tokens, &finders);
+    let dir_scores = score_directories(index, tokens, &finders);
 
     let starts: Vec<usize> = (0..index.len()).step_by(CHUNK).collect();
 
@@ -168,13 +288,19 @@ pub fn search(
                     continue;
                 }
                 let dir_row = &dir_scores[dir_ids[i] as usize * tokens.len()..][..tokens.len()];
-                let Some(score) = score_entry(index.folded(i), &tokens, &finders, dir_row)
+                let Some((matched, score)) =
+                    score_entry(index.folded(i), tokens, &finders, dir_row, min_matched)
                 else {
                     continue;
                 };
                 let hit = Hit {
                     index: i as u32,
-                    score,
+                    // Token count dominates so a file matching more of the
+                    // query always wins. In the strict pass every hit matched
+                    // every token, so this is a constant offset there and
+                    // leaves the ordering untouched.
+                    score: matched as i32 * MATCHED_TOKEN_WEIGHT + score,
+                    matched,
                 };
                 if heap.len() < opts.limit {
                     heap.push(Reverse(hit));
@@ -239,8 +365,12 @@ fn score_directories(index: &Index, tokens: &[&str], finders: &[Finder]) -> Vec<
 /// Sentinel for "this token is not in this directory path".
 const NO_MATCH: i32 = -1;
 
-/// Score one entry, or `None` if any token is missing from both the filename
-/// and the folder path.
+/// Score one entry, returning `(tokens matched, score)`.
+///
+/// `min_matched` of `0` means every token is required, and a missing one bails
+/// out immediately — that early exit is what keeps the common strict pass
+/// cheap on long queries. Any other value keeps the entry as long as it
+/// reaches that many tokens.
 ///
 /// `dir_row` is this entry's slice of the pre-computed directory table.
 fn score_entry(
@@ -248,20 +378,36 @@ fn score_entry(
     tokens: &[&str],
     finders: &[Finder],
     dir_row: &[i32],
-) -> Option<i32> {
+    min_matched: usize,
+) -> Option<(u16, i32)> {
+    let require_all = min_matched == 0;
     let mut total = 0i32;
+    let mut matched = 0u16;
+
     for ((token, finder), &dir_score) in tokens.iter().zip(finders).zip(dir_row) {
         // The filename is always preferred; the folder path is the fallback.
         // Every directory score sits below every filename score, so a file
         // actually named for the query can never be pushed down by one that
         // merely lives in a folder named for it.
         match score_token(folded, token.as_bytes(), finder) {
-            Some(s) => total += s,
-            None if dir_score != NO_MATCH => total += dir_score,
-            None => return None,
+            Some(s) => {
+                total += s;
+                matched += 1;
+            }
+            None if dir_score != NO_MATCH => {
+                total += dir_score;
+                matched += 1;
+            }
+            None if require_all => return None,
+            None => {}
         }
     }
-    Some(total + length_bonus(folded.len()))
+
+    let floor = if require_all { tokens.len() } else { min_matched };
+    if (matched as usize) < floor.max(1) {
+        return None;
+    }
+    Some((matched, total + length_bonus(folded.len())))
 }
 
 fn score_token(folded: &[u8], token: &[u8], finder: &Finder) -> Option<i32> {
@@ -309,6 +455,7 @@ mod tests {
     fn run(index: &Index, query: &str) -> Vec<String> {
         let cancel = AtomicU64::new(0);
         search(index, query, &SearchOptions::default(), &cancel, 0)
+            .hits
             .into_iter()
             .map(|h| index.name(h.index as usize).to_string())
             .collect()
@@ -475,6 +622,188 @@ mod tests {
         assert!(run(&ix, "avatar nonexistent").is_empty());
     }
 
+    /// The exact filename reported from the user's D: volume.
+    const ANGLERFISH: &str =
+        "YTSave_YouTube_The-anglerfish-The-original-approach-to-_Media_VqPMP9X-89o_001_1080p.mp4";
+
+    #[test]
+    fn punctuation_never_swallows_a_word() {
+        // `anglerfish:` used to stay glued to its colon and match nothing,
+        // silently discarding the most distinctive word in the query.
+        assert_eq!(
+            tokenize("the anglerfish: the original approach"),
+            vec!["the", "anglerfish", "the", "original", "approach"]
+        );
+        // A hyphenated pair becomes two tokens, so it matches `deep_sea`,
+        // `deep sea` and `Deep-Sea` alike.
+        assert_eq!(tokenize("deep-sea fishing"), vec!["deep", "sea", "fishing"]);
+        assert_eq!(tokenize("s01e02 (1080p) [x265]"), vec!["s01e02", "1080p", "x265"]);
+        assert!(tokenize("   ...   ").is_empty());
+    }
+
+    #[test]
+    fn tokenizer_keeps_non_latin_words_whole() {
+        // `is_alphanumeric` is Unicode-aware, so scripts without spaces or
+        // case are not shredded into single characters.
+        assert_eq!(tokenize("日本語 の 動画"), vec!["日本語", "の", "動画"]);
+        assert_eq!(tokenize("tieng viet"), vec!["tieng", "viet"]);
+    }
+
+    #[test]
+    fn a_pasted_title_finds_the_truncated_file() {
+        // The reported failure, end to end. The downloader cut the title at
+        // `to-`, so `deep`, `sea` and `fishing` are not in the filename at
+        // all; demanding every token returns nothing while the file sits
+        // right there.
+        let ix = build(&[ANGLERFISH, "unrelated clip.mp4"]);
+        let cancel = AtomicU64::new(0);
+        let out = search(
+            &ix,
+            "The anglerfish: The original approach to deep-sea fishing",
+            &SearchOptions::default(),
+            &cancel,
+            0,
+        );
+
+        assert_eq!(out.hits.len(), 1, "the file must be found");
+        assert_eq!(ix.name(out.hits[0].index as usize), ANGLERFISH);
+
+        let relaxed = out.relaxed.expect("results are partial and must say so");
+        assert_eq!(relaxed.total_tokens, 9);
+        assert_eq!(relaxed.best_matched, 6, "the, anglerfish, the, original, approach, to");
+    }
+
+    #[test]
+    fn relaxed_results_are_ranked_by_how_much_of_the_query_they_match() {
+        let ix = build(&[
+            "anglerfish only.mp4",                  // 1 of 5 tokens
+            "the anglerfish original approach.mp4", // 4 of 5
+            "the anglerfish original.mp4",          // 3 of 5
+        ]);
+        let cancel = AtomicU64::new(0);
+        let out = search(
+            &ix,
+            "the anglerfish original approach missingword",
+            &SearchOptions::default(),
+            &cancel,
+            0,
+        );
+
+        let names: Vec<&str> = out.hits.iter().map(|h| ix.name(h.index as usize)).collect();
+        assert_eq!(
+            names,
+            vec!["the anglerfish original approach.mp4"],
+            "only the closest match survives, not merely close ones"
+        );
+        assert_eq!(out.hits[0].matched, 4);
+        assert_eq!(out.relaxed.unwrap().best_matched, 4);
+    }
+
+    #[test]
+    fn every_file_tied_for_the_best_match_is_kept() {
+        let ix = build(&[
+            "the anglerfish original A.mp4", // the/anglerfish/original = 3 of 5
+            "the anglerfish original B.mp4", // 3 of 5
+            "the anglerfish.mp4",            // 2 of 5 — below the floor, dropped
+        ]);
+        let cancel = AtomicU64::new(0);
+        let out = search(
+            &ix,
+            "the anglerfish original approach missingword",
+            &SearchOptions::default(),
+            &cancel,
+            0,
+        );
+        assert_eq!(out.hits.len(), 2, "ties at the best count are all kept");
+        assert!(out.hits.iter().all(|h| h.matched == 3));
+    }
+
+    #[test]
+    fn relaxing_still_requires_half_the_query() {
+        // Without a floor, a nine-word query would return every file that
+        // happens to contain the word "the" — thousands of results, all
+        // useless, burying the one good answer.
+        let ix = build(&[
+            "the.mp4",                              // 1 of 5 — must be dropped
+            "the anglerfish original.mp4",          // 3 of 5 — must be kept
+        ]);
+        let cancel = AtomicU64::new(0);
+        let out = search(
+            &ix,
+            "the anglerfish original approach missingword",
+            &SearchOptions::default(),
+            &cancel,
+            0,
+        );
+
+        assert_eq!(out.hits.len(), 1, "the 1-of-5 match must not survive");
+        assert_eq!(ix.name(out.hits[0].index as usize), "the anglerfish original.mp4");
+    }
+
+    #[test]
+    fn short_queries_are_never_relaxed() {
+        // Two words is a deliberate query. Quietly widening it would answer a
+        // question the user did not ask; an honest empty result is better.
+        let ix = build(&["avatar 2024.mkv"]);
+        let cancel = AtomicU64::new(0);
+        for q in ["avatar 1999", "avatar nonexistent"] {
+            let out = search(&ix, q, &SearchOptions::default(), &cancel, 0);
+            assert!(out.hits.is_empty(), "{q:?} should return nothing");
+            assert!(out.relaxed.is_none());
+        }
+    }
+
+    #[test]
+    fn a_query_that_fully_matches_never_falls_back() {
+        // The fallback must not loosen a query that already works — `avatar
+        // 2009` should not start dragging in every file containing `2009`.
+        let ix = build(&["avatar 2009.mkv", "titanic 2009.mkv", "avatar 2022.mkv"]);
+        let cancel = AtomicU64::new(0);
+        let out = search(&ix, "avatar 2009", &SearchOptions::default(), &cancel, 0);
+
+        assert_eq!(out.hits.len(), 1);
+        assert!(out.relaxed.is_none(), "strict results must not be marked partial");
+    }
+
+    #[test]
+    fn a_single_token_that_matches_nothing_stays_empty() {
+        // With one token there is nothing to relax: reporting a partial match
+        // would be meaningless.
+        let ix = build(&["holiday.mp4"]);
+        let cancel = AtomicU64::new(0);
+        let out = search(&ix, "zzzznothing", &SearchOptions::default(), &cancel, 0);
+        assert!(out.hits.is_empty());
+        assert!(out.relaxed.is_none());
+    }
+
+    #[test]
+    fn relaxed_still_returns_nothing_when_no_token_matches_at_all() {
+        let ix = build(&["holiday.mp4"]);
+        let cancel = AtomicU64::new(0);
+        let out = search(&ix, "zzzz qqqq wwww", &SearchOptions::default(), &cancel, 0);
+        assert!(out.hits.is_empty());
+        assert!(out.relaxed.is_none());
+    }
+
+    #[test]
+    fn matched_count_outranks_a_better_quality_match() {
+        // An exact match on one token must still lose to a file containing two
+        // of them, otherwise a lucky filename hijacks the top of the list.
+        let ix = build(&["anglerfish.mp4", "the anglerfish deep clip.mp4"]);
+        let cancel = AtomicU64::new(0);
+        let out = search(
+            &ix,
+            "anglerfish deep missingword",
+            &SearchOptions::default(),
+            &cancel,
+            0,
+        );
+        assert_eq!(
+            ix.name(out.hits[0].index as usize),
+            "the anglerfish deep clip.mp4"
+        );
+    }
+
     #[test]
     fn empty_or_whitespace_query_returns_nothing() {
         let ix = build(&["a.mp4"]);
@@ -496,7 +825,7 @@ mod tests {
             kinds: vec![MediaKind::Image],
             ..Default::default()
         };
-        let hits = search(&ix, "holiday", &opts, &cancel, 0);
+        let hits = search(&ix, "holiday", &opts, &cancel, 0).hits;
         assert_eq!(hits.len(), 1);
         assert_eq!(ix.name(hits[0].index as usize), "holiday.jpg");
     }
@@ -512,14 +841,14 @@ mod tests {
             limit: 10,
             ..Default::default()
         };
-        assert_eq!(search(&ix, "clip", &opts, &cancel, 0).len(), 10);
+        assert_eq!(search(&ix, "clip", &opts, &cancel, 0).hits.len(), 10);
     }
 
     #[test]
     fn a_superseded_search_bails_out() {
         let ix = build(&["a.mp4", "b.mp4"]);
         let cancel = AtomicU64::new(7); // a newer keystroke already arrived
-        assert!(search(&ix, "mp4", &SearchOptions::default(), &cancel, 3).is_empty());
+        assert!(search(&ix, "mp4", &SearchOptions::default(), &cancel, 3).hits.is_empty());
     }
 
     #[test]
@@ -535,10 +864,10 @@ mod tests {
             limit: 50,
             ..Default::default()
         };
-        let first = search(&ix, "clip", &opts, &cancel, 0);
+        let first = search(&ix, "clip", &opts, &cancel, 0).hits;
         for _ in 0..12 {
             assert_eq!(
-                search(&ix, "clip", &opts, &cancel, 0),
+                search(&ix, "clip", &opts, &cancel, 0).hits,
                 first,
                 "search is not deterministic"
             );
@@ -560,7 +889,7 @@ mod tests {
         let ix = build(&refs);
 
         let cancel = AtomicU64::new(0);
-        let hits = search(&ix, "cat", &SearchOptions::default(), &cancel, 0);
+        let hits = search(&ix, "cat", &SearchOptions::default(), &cancel, 0).hits;
         assert!(hits.len() > 100);
         for w in hits.windows(2) {
             assert!(w[0].score >= w[1].score, "results are out of order");
@@ -583,7 +912,7 @@ mod tests {
             ..Default::default()
         };
         // Exactly one entry is named `file9999.mp4`.
-        let hits = search(&ix, "file9999.mp4", &opts, &cancel, 0);
+        let hits = search(&ix, "file9999.mp4", &opts, &cancel, 0).hits;
         assert_eq!(hits.len(), 1);
         assert_eq!(ix.name(hits[0].index as usize), "file9999.mp4");
     }

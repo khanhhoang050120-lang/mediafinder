@@ -38,8 +38,8 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 1 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 1 | 0 | Vấn đề sản phẩm |
-| [spec.md](./spec.md) | 1 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **18** | **1** | |
+| [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
+| **Cộng** | **19** | **1** | |
 
 ### Hai mục còn mở
 

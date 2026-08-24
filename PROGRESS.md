@@ -228,6 +228,18 @@ cache trên đĩa. Chỉ kéo phần **lưu/nạp**; luồng elevate + `progress
 | **Tệp được bôi đen** | `Shell.Application` xác nhận `SelectedItems()` đúng tệp |
 | Tên tệp có dấu phẩy | hoạt động — ca làm hỏng `explorer.exe /select` |
 
+### Sửa sau khi người dùng thử nghiệm (2026-08-24)
+
+Người dùng báo: dán nguyên tiêu đề video thì 0 kết quả, dù gõ ngắn hơn lại tìm ra.
+Xem [`SPEC-002`](./docs/spec.md#spec-002).
+
+- [x] Tách token theo **mọi ký tự không phải chữ-số**, không chỉ khoảng trắng
+- [x] Tự lùi về khớp một phần khi không tệp nào khớp đủ, xếp hạng theo số từ khớp
+- [x] Chỉ giữ nhóm **khớp nhiều nhất** — thử lần đầu ra 173 kết quả, 171 là rác
+- [x] Ba ranh giới chống nới lỏng quá tay: tối thiểu 3 từ mới nới · sàn một nửa · chỉ nhóm tốt nhất
+- [x] Giao diện báo rõ khớp một phần: băng thông báo + huy hiệu `6/9` mỗi dòng
+- [x] Hồi quy: `nhac nen` 55 kết quả, `The anglerfish` 10 kết quả — không đổi
+
 Cách kiểm chứng giao diện: UI Automation không thấy nội dung WebView2 từ cửa sổ gốc, phải tìm
 cửa sổ con class `WRY_WEBVIEW` rồi `FromHandle` trên đó. `ValuePattern.SetValue` kích hoạt đúng
 sự kiện `input` của Svelte nên kiểm chứng được cả luồng mà không cần chuột.

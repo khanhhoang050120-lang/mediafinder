@@ -250,15 +250,20 @@ fn demo_searches(ix: &index::model::Index) {
     tracing::info!("--- thử tìm kiếm (gõ KHÔNG dấu, dữ liệu CÓ dấu) ---");
     for query in ["nhac nen", "nang dong", "bai", "hung", "screenshot"] {
         let started = std::time::Instant::now();
-        let hits = search(ix, query, &opts, &cancel, 0);
+        let outcome = search(ix, query, &opts, &cancel, 0);
         let elapsed = started.elapsed();
+        let note = match outcome.relaxed {
+            Some(r) => format!(" (khớp một phần {}/{} từ)", r.best_matched, r.total_tokens),
+            None => String::new(),
+        };
         tracing::info!(
-            "  \"{}\" → {} kết quả trong {:.2}ms",
+            "  \"{}\" → {} kết quả trong {:.2}ms{}",
             query,
-            hits.len(),
-            elapsed.as_secs_f64() * 1000.0
+            outcome.hits.len(),
+            elapsed.as_secs_f64() * 1000.0,
+            note
         );
-        for h in hits.iter().take(3) {
+        for h in outcome.hits.iter().take(3) {
             tracing::info!(
                 "      [{}] {}",
                 h.score,
