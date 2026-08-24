@@ -7,6 +7,7 @@
 
 pub mod tree;
 pub mod usn_enum;
+pub mod usn_journal;
 pub mod volume;
 
 use crate::index::model::MediaKind;

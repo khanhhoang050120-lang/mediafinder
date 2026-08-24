@@ -84,3 +84,42 @@ test không lường: bấm phím trong lúc foreground thuộc về cửa sổ 
 **Chi phí thật.** Đo cả ba câu hỏi mất khoảng bốn phút. Bốn phút này đổi lấy việc **không** đi sửa
 một lỗi không tồn tại trong `register_hotkey` — nơi mà mọi thay đổi đều có thể làm hỏng nhánh đang
 chạy đúng.
+
+---
+
+## CHECK-003 ⚪ — Bộ đọc journal chưa chạy trên ổ NTFS thật
+
+**Giai đoạn:** P9 · **Trạng thái:** CẦN XÁC MINH · **Ngày:** 2026-08-24
+
+**Tình trạng.** `ntfs/usn_journal.rs` có 17 test, trong đó có một test đi hết chặng: byte thô của
+journal vào → `Change` → `rebuild_with` → index mới, kiểm tra đúng đường dẫn. Tất cả đều pass.
+
+Nhưng **mọi test đều chạy trên bản ghi tôi tự dựng bằng tay**, theo layout `USN_RECORD_V2` đọc từ
+tài liệu. Chúng chứng minh mã đọc đúng cái tôi *nghĩ* là đúng — không chứng minh Windows thật sự
+sinh ra những bản ghi như thế.
+
+Đây chính là điều đã sai ở [BUG-013](./bug.md#bug-013): mã đúng theo cách nhìn của nó, dữ liệu đúng
+theo cách nhìn của nó, và cả hai không gặp nhau ở đâu cả.
+
+**Vì sao chưa đo được.** `FSCTL_READ_USN_JOURNAL` cần quyền Administrator. Đã bật lời nhắc UAC để
+chạy `--watch`, nhưng lời nhắc không được chấp nhận (`The operation was canceled by the user`) —
+nhiều khả năng không có ai ở máy lúc đó.
+
+**Cách đo, khi có người ở máy.**
+
+```powershell
+# terminal chạy với quyền Administrator
+D:\tool_finding\src-tauri\target\debug\mediafinder.exe --watch C
+```
+
+Rồi tạo / đổi tên / xoá một tệp `.mp4`. Bốn thứ cần nhìn tận mắt:
+
+1. Đổi tên có thật sự sinh ra **cặp** `RENAME_OLD_NAME` + `RENAME_NEW_NAME` không, và theo thứ tự nào.
+2. Xoá có sinh `FILE_DELETE`, và bản ghi đó có tới **sau** mọi bản ghi khác của cùng tệp không —
+   quy tắc "bản ghi cuối thắng" dựa hoàn toàn vào điều này.
+3. `next_usn` trả về có thật sự tiến lên không. Vòng lặp đọc dừng dựa vào nó; nếu nó đứng yên mà
+   vẫn trả về bản ghi thì vòng lặp sẽ quay mãi.
+4. Ghi một tệp lớn sinh ra bao nhiêu bản ghi — quyết định có cần chặn trần kích thước lô hay không.
+
+**Cho tới lúc đó**, hai ô tương ứng trong `PROGRESS.md` giữ dấu `[~]` (đã viết, chưa kiểm chứng)
+chứ không phải `[x]`.

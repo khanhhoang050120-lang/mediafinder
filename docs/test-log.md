@@ -356,3 +356,44 @@ nó chỉ in ra một con số, và con số đó vô lý.
 
 **Việc còn lại của giai đoạn 1:** bộ đọc `FSCTL_READ_USN_JOURNAL` để dịch bản ghi thô thành
 `Change`, cùng với phát hiện journal bị tạo lại và journal cuộn vòng.
+
+---
+
+### 2026-08-24 — Lượt test P9 bước 3 (bộ đọc USN journal)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **168/168 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Tệp được tạo | bản ghi tự dựng | ✅ thành `Present` |
+| 4 | Tệp bị xoá | như trên | ✅ thành `Gone` |
+| 5 | Đổi tên: chỉ nửa "tên mới" được dùng | như trên | ✅ nửa "tên cũ" bị bỏ, đếm vào `rename_halves` |
+| 6 | Lô kết thúc giữa hai nửa của một lần đổi tên | như trên | ✅ không phát gì — không đổi tên ngược |
+| 7 | `FILE_DELETE` cộng `CLOSE` trong cùng bản ghi | như trên | ✅ xoá thắng |
+| 8 | Thư mục được đánh dấu đúng | như trên | ✅ `is_dir: true` |
+| 9 | Đổi `.mp4` thành `.txt` | như trên | ✅ vẫn báo lên, `rebuild_with` gỡ mục cũ |
+| 10 | Nhiều bản ghi trong một buffer | như trên | ✅ đọc hết |
+| 11 | Bản ghi khai độ dài bằng 0 | như trên | ✅ dừng, không lặp vô hạn |
+| 12 | Tên chạy quá cuối bản ghi | như trên | ✅ từ chối, không đọc tràn |
+| 13 | Bản ghi phiên bản 3 | như trên | ✅ bỏ qua, không đoán |
+| 14 | Đi hết chặng: byte journal → index mới | bản ghi tự dựng + `rebuild_with` | ✅ đổi tên và thêm tệp đều đúng |
+| 15 | Journal cuộn vòng (`ERROR_JOURNAL_ENTRY_DELETED`) | dựng lỗi Win32 thật | ✅ hiểu là "cần quét lại", không phải lỗi |
+| 16 | Journal tắt / đang bị xoá | như trên | ✅ nhận diện đúng |
+| 17 | `journal_id` sai (`ERROR_INVALID_PARAMETER`) | như trên | ✅ hiểu là journal đã bị tạo lại |
+| 18 | Lỗi thật (`ERROR_ACCESS_DENIED`) | như trên | ✅ **không** bị nuốt thành "quét lại" |
+| 19 | Thông báo có nói người dùng cần làm gì không | như trên | ✅ cả ba đều nêu tên ổ và hành động |
+| 20 | **Chạy trên ổ NTFS thật** | `--watch C` với quyền Admin | ⚠️ **chưa chạy được** — UAC không được chấp nhận ([CHECK-003](./check.md#check-003)) |
+
+**Kết luận:** 19/20 pass, 1 mục **chưa đo được** chứ không phải hỏng.
+
+**Mục 20 là mục quan trọng nhất và nó chưa chạy.** Mười chín test kia chứng minh mã đọc đúng cái
+tôi *nghĩ* là layout của `USN_RECORD_V2` — vì chính tôi dựng ra những bản ghi đó theo tài liệu.
+Chúng không chứng minh Windows sinh ra bản ghi như thế. Đúng khoảng cách đã tạo ra
+[BUG-013](./bug.md#bug-013): mã đúng theo cách nhìn của nó, dữ liệu đúng theo cách nhìn của nó, và
+hai bên không gặp nhau ở đâu cả.
+
+Vì vậy hai ô trong `PROGRESS.md` giữ dấu `[~]` — đã viết, chưa kiểm chứng — chứ không phải `[x]`.
+
+**Mục 18 nhỏ nhưng đáng giữ.** Ba mã lỗi được dịch thành "cần quét lại". Nếu `ERROR_ACCESS_DENIED`
+lọt vào nhóm đó thì một tiến trình thiếu quyền sẽ được bảo đi quét lại — mà quét lại cũng cần đúng
+quyền ấy. Người dùng rơi vào vòng lặp không có lối ra, và không có thông báo nào nói vì sao.

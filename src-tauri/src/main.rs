@@ -8,8 +8,16 @@ fn main() {
     // One binary, two modes (see the architecture note in build.rs):
     //   mediafinder.exe            -> GUI, runs as invoker, never elevated
     //   mediafinder.exe --index    -> short-lived indexer, launched elevated
-    if std::env::args().skip(1).any(|arg| arg == "--index") {
+    //   mediafinder.exe --watch    -> follow the change journal and print what
+    //                                 it says; needs Administrator, and exists
+    //                                 so the journal reader can be checked
+    //                                 against a real volume rather than only
+    //                                 against hand-built records
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--index") {
         mediafinder::run_indexer();
+    } else if args.iter().any(|a| a == "--watch") {
+        mediafinder::run_watch(&args);
     } else {
         mediafinder::run_gui();
     }

@@ -504,9 +504,10 @@ xong.
 - [x] `frn` cho tệp và `dir_frn` cho thư mục, xuyên suốt `tree.rs` → `IndexBuilder` → `Index` → cache
 - [x] Nâng `SCHEMA_VERSION` — cache cũ báo "phiên bản 2, phần mềm cần 3", đã kiểm chứng
 - [x] `rebuild_with(&Index, &[Change]) -> Index` — tạo, xoá, đổi tên, di chuyển tệp và thư mục
-- [ ] Đọc `FSCTL_READ_USN_JOURNAL`, dịch bản ghi thô thành `Change`
-- [ ] Phát hiện journal bị xoá rồi tạo lại, và journal cuộn vòng
-- [ ] Gộp thay đổi rồi dựng lại một lần, thay vì dựng lại theo từng thay đổi
+- [~] Đọc `FSCTL_READ_USN_JOURNAL`, dịch bản ghi thô thành `Change` — **chưa chạy trên ổ thật**
+- [~] Phát hiện journal bị xoá rồi tạo lại, và journal cuộn vòng — **chưa chạy trên ổ thật**
+- [x] Gộp thay đổi rồi dựng lại một lần, thay vì dựng lại theo từng thay đổi
+- [x] Chế độ `--watch` để kiểm chứng bộ đọc journal trên volume thật
 
 **Giai đoạn 2 — cần quyền và cần cài đặt, làm sau:**
 
@@ -542,6 +543,34 @@ Bench này cũng là thứ tìm ra [BUG-017](docs/bug.md#bug-017): `rebuild_with
 `rebuild_with/100` chỉ 21,9 ms — áp một trăm thay đổi mà nhanh hơn bảy lần so với áp không thay đổi
 nào. Nguyên nhân là số `0` đang được coi là một định danh hợp lệ, nên một thay đổi xoá sạch cả
 index. 149 test không bắt được; một con số vô lý thì bắt được ngay.
+
+### Hai ô `[~]`: viết xong nhưng chưa chạy trên ổ thật
+
+Bộ đọc journal có 17 test, gồm cả một test đi hết chặng — byte thô của journal vào, index mới ra.
+Nhưng tất cả đều chạy trên **bản ghi tự dựng bằng tay**. Chúng chứng minh mã đọc đúng cái layout
+tôi *nghĩ* là layout của `USN_RECORD_V2`, không chứng minh một ổ NTFS thật hành xử đúng như tài
+liệu mô tả.
+
+`FSCTL_READ_USN_JOURNAL` cần quyền Administrator. Lời nhắc UAC đã bật lên nhưng không được chấp
+nhận, nên phép thử thật chưa chạy. Cách chạy:
+
+```powershell
+# trong một terminal chạy với quyền Administrator
+D:\tool_finding\src-tauri\target\debug\mediafinder.exe --watch C
+```
+
+Rồi tạo, đổi tên, xoá một tệp `.mp4` ở bất kỳ đâu trên ổ đó. Mỗi thao tác phải in ra một dòng.
+Những thứ cần nhìn tận mắt, vì test bằng dữ liệu tự dựng không thể trả lời:
+
+| Cần xác nhận | Vì sao test tổng hợp không đủ |
+|---|---|
+| Đổi tên thật sự sinh ra **cặp** `RENAME_OLD_NAME` + `RENAME_NEW_NAME` | Tôi tự dựng cặp đó theo tài liệu; chưa thấy Windows tự sinh ra |
+| Xoá sinh ra `FILE_DELETE`, và nó tới **sau** các bản ghi khác của cùng tệp | Thứ tự trong journal thật là thứ quyết định "bản ghi cuối thắng" có đúng không |
+| `next_usn` trả về thực sự tiến lên, không lặp vô hạn | Vòng lặp đọc dừng dựa vào điều này |
+| Ghi một tệp lớn sinh ra bao nhiêu bản ghi | Quyết định một lô lớn cỡ nào, và có cần chặn trần hay không |
+
+Cho tới khi chạy được, hai ô trên giữ dấu `[~]` — theo đúng quy ước ở đầu tài liệu này: đã viết,
+chưa kiểm chứng. Đánh `[x]` bây giờ sẽ là nói dối chính mình ở phiên sau.
 
 ### Giao tiếp giữa service và GUI — chọn đường ít quyền nhất trước
 

@@ -187,6 +187,121 @@ fn toggle(app: &tauri::AppHandle) {
 ///
 /// `--dry-run` stops after reporting statistics and sample paths, which is how
 /// the scan is validated without needing the rest of the pipeline.
+/// Follow the change journal and print what it says.
+///
+/// A developer path, not a feature: the journal reader is unit-tested against
+/// hand-built records, which proves it parses the layout but says nothing
+/// about whether a real volume behaves the way the documentation claims.
+/// Needs Administrator, like every other direct volume read.
+///
+/// ```text
+/// mediafinder.exe --watch          # every NTFS volume
+/// mediafinder.exe --watch D        # just one
+/// ```
+pub fn run_watch(args: &[String]) {
+    use ntfs::usn_journal::{self, Batch, Cursor};
+    use ntfs::volume;
+
+    // A bare letter after --watch, if given.
+    let only: Option<char> = args
+        .iter()
+        .skip_while(|a| *a != "--watch")
+        .nth(1)
+        .and_then(|a| a.chars().next())
+        .map(|c| c.to_ascii_uppercase());
+
+    let volumes: Vec<_> = volume::list_volumes()
+        .into_iter()
+        .filter(|v| v.is_ntfs())
+        .filter(|v| only.map_or(true, |c| v.letter.to_ascii_uppercase() == c))
+        .collect();
+
+    if volumes.is_empty() {
+        tracing::error!("không có ổ NTFS nào để theo dõi");
+        return;
+    }
+
+    // Start from where each volume is *now*, not from the stored cursor: this
+    // is for watching changes happen, so anything already in the journal is
+    // history and would only bury what the user is about to do.
+    let mut watched = Vec::new();
+    for v in volumes {
+        let handle = match volume::open_volume(&v) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("{e}");
+                continue;
+            }
+        };
+        match volume::query_journal(&handle) {
+            Ok(j) => {
+                tracing::info!(
+                    "theo dõi ổ {}: journal_id={:#x} bắt đầu từ usn={}",
+                    v.letter,
+                    j.journal_id,
+                    j.next_usn
+                );
+                watched.push((
+                    v.letter,
+                    handle,
+                    Cursor {
+                        journal_id: j.journal_id,
+                        next_usn: j.next_usn,
+                    },
+                ));
+            }
+            Err(e) => tracing::error!("{e}"),
+        }
+    }
+    if watched.is_empty() {
+        return;
+    }
+
+    tracing::info!("Ctrl+C để dừng. Hãy thử tạo, đổi tên, xoá một tệp media.");
+
+    loop {
+        for (letter, handle, cursor) in watched.iter_mut() {
+            match usn_journal::read_batch(handle, *letter, *cursor) {
+                Ok(Batch::Changes { changes, next }) => {
+                    *cursor = next;
+                    for c in &changes {
+                        tracing::info!("{}", describe(c));
+                    }
+                }
+                Ok(Batch::Restart(r)) => {
+                    tracing::warn!("{}", r.message(*letter));
+                    return;
+                }
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+fn describe(c: &index::update::Change) -> String {
+    use index::update::Change;
+    match c {
+        Change::Gone { volume, frn } => {
+            format!("{}: XOÁ      frn={frn}", *volume as char)
+        }
+        Change::Present {
+            volume,
+            frn,
+            parent_frn,
+            name,
+            is_dir,
+        } => format!(
+            "{}: {} frn={frn} cha={parent_frn} {name}",
+            *volume as char,
+            if *is_dir { "THƯ MỤC " } else { "CÓ MẶT  " }
+        ),
+    }
+}
+
 pub fn run_indexer() {
     use index::model::IndexBuilder;
     use ntfs::{tree, usn_enum, volume};
