@@ -13,7 +13,7 @@
 
 | ID | Mức | Tiêu đề | GĐ | Trạng thái |
 |----|-----|---------|----|-----------|
-| [RISK-001](#risk-001) | ⚪ | `panic = "abort"` khiến panic trong IPC giết cả app | P0 | MỞ |
+| [RISK-001](#risk-001) | ⚪ | `panic = "abort"` khiến panic trong IPC giết cả app | P0 | **ĐÃ SỬA** (P3) |
 | [RISK-002](#risk-002) | ⚪ | Dự án chưa có version control | P0 | MỞ |
 
 ---
@@ -31,6 +31,25 @@ người dùng cuối, app sẽ biến mất không thông báo.
 
 **Chưa gây hại vì.** P0 chưa có command nào; hiện chỉ chạy bản debug (`panic = unwind`).
 
+**→ Đã quyết định ở P3 (2026-08-24): BỎ `panic = "abort"`.**
+
+Cân nhắc thực tế: `abort` giúp binary nhỏ hơn một chút, nhưng đổi lại là **một panic ở bất kỳ
+đâu — kể cả trong một Tauri command gặp phải cái tên tệp không ai lường trước — sẽ kéo sập cả
+ứng dụng mà không báo gì.** Với một công cụ để mở suốt ngày thì đánh đổi đó sai.
+
+Đã làm **cả hai** phương án chứ không chọn một:
+
+1. Bỏ `panic = "abort"` khỏi `[profile.release]`.
+2. Mọi command trả `Result<_, String>` và không `unwrap()` bất cứ thứ gì đến từ frontend hay
+   hệ thống tệp. Một đường dẫn biến mất giữa lúc quét và lúc bấm sẽ thành **thông báo trên màn
+   hình**, không phải panic.
+
+Có test khoá lại điều 2: `opening_a_missing_file_is_an_error_not_a_panic` và
+`revealing_a_missing_file_under_a_missing_folder_is_an_error`.
+
+<details>
+<summary>Phân tích lúc chưa quyết định (giữ lại để tham khảo)</summary>
+
 **Việc cần làm ở P3.** Quyết định một trong hai:
 1. Bỏ `panic = "abort"`, chấp nhận binary lớn hơn, đổi lấy khả năng phục hồi.
 2. Giữ `abort`, nhưng **cấm tuyệt đối `unwrap()` / `expect()` / index trực tiếp trong mọi command
@@ -38,6 +57,8 @@ người dùng cuối, app sẽ biến mất không thông báo.
 
 Khuyến nghị hiện tại: **phương án 2**, vì code index/search đằng nào cũng nên trả `Result`.
 Cần kiểm chứng lại bằng test khi có command thật.
+
+</details>
 
 ---
 

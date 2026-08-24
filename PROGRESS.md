@@ -28,8 +28,8 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P0** | Scaffold + kiểm tra toolchain | ✅ **XONG** — 27/27, test 8/8 pass |
 | **P1** | Enumerator NTFS (USN) | ✅ **XONG** — 29/29 test, quét thật 4,1 triệu bản ghi |
 | **P2** | Index + fold + search + bench | ✅ **XONG** — 72/72 test, bench 3,01 ms worst case |
-| **P3** | Nối Tauri + UI tối giản | 🔵 **sẵn sàng bắt đầu** |
-| **P4** | Cache trên đĩa + luồng elevate | ⬜ chưa bắt đầu |
+| **P3** | Nối Tauri + UI tối giản | ✅ **XONG** — 85/85 test, mở tệp + mở thư mục đã kiểm chứng |
+| **P4** | Cache trên đĩa + luồng elevate | 🔵 **sẵn sàng** — phần cache đã xong ở P3, còn luồng elevate |
 | **P5** | Thumbnail + lưới ảo hoá | ⬜ chưa bắt đầu |
 | **P6** | Enrichment metadata + lọc | ⬜ chưa bắt đầu |
 | **P7** | Tìm file trùng | ⬜ chưa bắt đầu |
@@ -173,18 +173,64 @@ xem [`SPEC-001`](./docs/spec.md#spec-001). Đã đổi sang tìm cả đường 
 
 ---
 
-## P3 — Nối Tauri + UI tối giản ⬜
+## P3 — Nối Tauri + UI tối giản ✅
 
 **Tiêu chí nghiệm thu:** gõ phím → thấy kết quả; Enter mở file; Ctrl+Enter mở Explorer highlight.
 
-- [ ] `state.rs` — `ArcSwap<Index>` + `AtomicU64` generation
-- [ ] `ipc/commands.rs` — `search(query, filters)` → kết quả đã xếp hạng
-- [ ] `ipc/commands.rs` — `open_file(path)` qua `ShellExecuteW`
-- [ ] `ipc/commands.rs` — `reveal_in_explorer(path)` qua `SHOpenFolderAndSelectItems`
-- [ ] `ipc/commands.rs` — `index_status()`
-- [ ] `src/lib/search.ts` — coalesce 30ms + bỏ response cũ theo id
-- [ ] `src/App.svelte` — nối IPC, hiện danh sách kết quả
-- [ ] Xác minh **không giữ lock** khi search (đọc lại code + thử tay lúc đang scan)
+- [x] `state.rs` — `ArcSwap<Index>` + `AtomicU64` generation
+- [x] `ipc/commands.rs` — `search(query, filters)` → kết quả đã xếp hạng
+- [x] `ipc/commands.rs` — `open_file(path)` qua `ShellExecuteW`
+- [x] `ipc/commands.rs` — `reveal_in_explorer(path)` qua `SHOpenFolderAndSelectItems`
+- [x] `ipc/commands.rs` — `index_status()`
+- [x] `src/lib/search.ts` — coalesce 30ms + bỏ response cũ theo id
+- [x] `src/App.svelte` — nối IPC, hiện danh sách kết quả
+- [x] Xác minh **không giữ lock** khi search — `ArcSwap::load_full()` clone `Arc` rồi nhả ngay;
+      có test `a_snapshot_survives_the_index_being_replaced_underneath_it`
+
+### Bổ sung theo yêu cầu người dùng (2026-08-24)
+
+Kế hoạch gốc chỉ có phím tắt `Ctrl+Enter` để mở thư mục chứa tệp. Đó là thiết kế tồi cho một
+thao tác dùng thường xuyên — bắt người dùng phải nhớ phím tắt. Bổ sung menu chuột phải:
+
+- [x] `src/lib/ContextMenu.svelte` — menu chuột phải, dựng theo phong cách Windows 11
+- [x] Mục **"Mở tệp"** — mở bằng ứng dụng mặc định
+- [x] Mục **"Mở thư mục chứa tệp"** — mở Explorer và **bôi đen đúng tệp**
+- [x] Mục **"Sao chép đường dẫn"**
+- [x] Chặn menu ngữ cảnh mặc định của trình duyệt
+- [x] Đóng menu khi bấm ra ngoài / nhấn `Esc`; menu không tràn khỏi cửa sổ
+- [x] Nháy đúp vào kết quả → mở tệp (song song với `Enter`)
+- [x] Điều hướng bàn phím `↑ ↓ Enter Esc` (kéo sớm từ P8 vì nếu không thì không dùng được)
+
+### Xử lý `RISK-001` (đến hạn ở giai đoạn này)
+
+- [x] Quyết định về `panic = "abort"` → **BỎ** (xem `RISK-001`) — khi đã có Tauri command thật
+- [x] Mọi command trả `Result<_, String>`, không `unwrap()` trên dữ liệu từ frontend
+
+### Kéo sớm từ P4 (bắt buộc, nếu không P3 không kiểm chứng được)
+
+`index/persist.rs` phải làm sớm: GUI không có cách nào lấy được index để tìm kiếm nếu chưa có
+cache trên đĩa. Chỉ kéo phần **lưu/nạp**; luồng elevate + `progress.json` vẫn ở P4.
+
+- [x] `index/persist.rs` — bincode lưu/nạp, ghi nguyên tử qua .tmp + rename `%LOCALAPPDATA%\MediaFinder\`
+- [x] Indexer ghi cache khi chạy không có `--dry-run`
+- [x] GUI nạp cache lúc khởi động, báo rõ khi chưa có cache
+
+### Kiểm chứng P3 trên dữ liệu thật
+
+| Hạng mục | Bằng chứng |
+|---|---|
+| Cache ghi được | `index.bin` 8.331.574 byte, 117.124 tệp |
+| GUI nạp cache **không UAC** | ~300ms, log `nạp cache: 117124 tệp, 4196 thư mục` |
+| Gõ phím → ra kết quả | `nhac nen` → **55 kết quả trong 4,6 ms** |
+| Tìm không dấu qua toàn bộ luồng | ra `nhạc nền.mp3`, `nhac nen tho.MP3`, `nhạc nền hàn.MP3` |
+| Xếp hạng hiển thị | khớp tên tệp lên đầu, khớp tên thư mục `NHẠC NỀN` xếp dưới |
+| **Mở thư mục chứa tệp** | Explorer mở đúng thư mục |
+| **Tệp được bôi đen** | `Shell.Application` xác nhận `SelectedItems()` đúng tệp |
+| Tên tệp có dấu phẩy | hoạt động — ca làm hỏng `explorer.exe /select` |
+
+Cách kiểm chứng giao diện: UI Automation không thấy nội dung WebView2 từ cửa sổ gốc, phải tìm
+cửa sổ con class `WRY_WEBVIEW` rồi `FromHandle` trên đó. `ValuePattern.SetValue` kích hoạt đúng
+sự kiện `input` của Svelte nên kiểm chứng được cả luồng mà không cần chuột.
 
 ---
 
@@ -251,7 +297,7 @@ nút "Quét lại" đẩy UAC đúng một lần.
 ## P8 — Hoàn thiện ⬜
 
 - [ ] Hotkey toàn cục gọi cửa sổ
-- [ ] Điều hướng bàn phím: `↑ ↓ Enter Esc`
+- [x] Điều hướng bàn phím: `↑ ↓ Enter Esc`
 - [ ] Cập nhật realtime qua `FSCTL_READ_USN_JOURNAL`
 - [ ] Thông báo rõ cho volume non-NTFS bị bỏ qua
 - [ ] `cargo tauri build` → chạy exe release, xác nhận toàn bộ vẫn hoạt động

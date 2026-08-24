@@ -7,7 +7,7 @@
 
 **Trạng thái:** `MỞ` · `ĐANG SỬA` · `ĐÃ SỬA` · `WORKAROUND` · `CẦN XÁC MINH` · `CẦN QUYẾT ĐỊNH` · `KHÔNG SỬA` · `KHÔNG PHẢI LỖI`
 
-**Cấp ID tiếp theo:** `CONF-004`
+**Cấp ID tiếp theo:** `CONF-005`
 
 ## Bảng tổng hợp
 
@@ -16,6 +16,7 @@
 | [CONF-001](#conf-001) | 🟠 | Xung đột phiên bản crate `windows` | P0 | ĐÃ SỬA |
 | [CONF-002](#conf-002) | 🟡 | `tsconfig.node.json`: `composite` xung đột `noEmit` | P0 | ĐÃ SỬA |
 | [CONF-003](#conf-003) | 🟡 | Terminal mở trước khi cài Rust không thấy `cargo` | P2 | ĐÃ SỬA |
+| [CONF-004](#conf-004) | 🟡 | Tiến trình vite còn sót giữ port 1420 sau khi dừng dev | P3 | WORKAROUND |
 
 ---
 
@@ -99,3 +100,40 @@ Phải **đóng hẳn VS Code rồi mở lại**.
 **Ghi chú.** Phiên làm việc của Claude không dính lỗi này vì mọi lệnh đều thêm `.cargo/bin` vào
 `PATH` ngay đầu lệnh. Đó cũng là lý do lỗi chỉ lộ ra khi người dùng tự chạy — một nhắc nhở rằng
 "chạy được ở đây" không có nghĩa là "chạy được ở đó".
+
+---
+
+## CONF-004 🟡 — Tiến trình vite còn sót giữ port 1420 sau khi dừng dev
+
+**Giai đoạn:** P3 · **Trạng thái:** WORKAROUND · **Ngày:** 2026-08-24
+
+**Hiện tượng.** Chạy `npm run tauri dev` thất bại ngay:
+
+```
+Error: Port 1420 is already in use
+    The "beforeDevCommand" terminated with a non-zero status code.
+```
+
+**Nguyên nhân.** Lần chạy dev trước đó đã bị dừng ở mức shell, nhưng **tiến trình con không bị
+dọn theo**. `npm run tauri dev` sinh ra một cây tiến trình — npm → vite (node) → cargo →
+mediafinder.exe — và dừng tiến trình cha không giết các tiến trình con. Node vẫn ôm port 1420.
+
+Kiểm chứng: `Get-NetTCPConnection -LocalPort 1420` chỉ ra `PID=2104 node` khởi động lúc 09:17,
+tức là từ lượt chạy ở giai đoạn P0.
+
+**Vì sao `strictPort: true` khiến nó thành lỗi cứng.** `vite.config.ts` đặt `strictPort: true`
+để vite không tự nhảy sang port khác. Đó là **chủ ý**: `tauri.conf.json` trỏ cứng
+`devUrl: http://localhost:1420`, nên nếu vite âm thầm chuyển sang 1421 thì cửa sổ app sẽ mở ra
+trắng trơn — một lỗi khó hiểu hơn nhiều so với thông báo "port đang bận".
+
+**Cách xử lý.** Trước khi chạy lại dev, dọn tiến trình còn sót:
+
+```powershell
+Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+Get-Process mediafinder -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+**Vì sao để `WORKAROUND` chứ không phải `ĐÃ SỬA`.** Đây là hành vi của công cụ dev, không phải
+lỗi của sản phẩm. Sửa triệt để thì phải dùng job object hoặc `taskkill /T` mỗi lần dừng — chưa
+đáng ở giai đoạn này, nhưng ghi lại để lần sau nhận ra ngay thay vì đi tìm nguyên nhân.

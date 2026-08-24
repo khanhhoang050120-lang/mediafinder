@@ -76,6 +76,20 @@ trước mặt** không, hay nằm im dưới thanh taskbar?
 - Nếu **vẫn minimize** → là bug thật; sửa bằng cách gọi `window.set_focus()` / `unminimize()` trong
   `setup()` của Tauri, hoặc đặt lại thuộc tính cửa sổ trong `tauri.conf.json`.
 
+**Quan sát bổ sung ở P3 (2026-08-24).** Chạy lại nhiều lần, vẫn từ tiến trình nền:
+
+| Thời điểm đo | `IsIconic` |
+|---|---|
+| Ngay sau khi cửa sổ mở | **False** |
+| Sau vài thao tác UI Automation | **True** |
+
+Lần này cửa sổ mở ra **không** bị thu nhỏ — khác hẳn lần đo ở P0. Nó chỉ chuyển sang trạng thái
+thu nhỏ về sau, sau khi mất focus.
+
+Điều này **củng cố** giả thuyết ban đầu: đây là hệ quả của việc tiến trình nền không giữ được
+foreground, chứ không phải ứng dụng tự thu nhỏ lúc khởi động. Nhưng vẫn chưa đủ để đóng bug —
+cần chính người dùng chạy từ terminal của mình và quan sát.
+
 ---
 
 ## BUG-003 🟡 — `SetForegroundWindow` bị chặn → chụp nhầm màn hình

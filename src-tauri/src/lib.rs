@@ -23,8 +23,37 @@ pub fn init_tracing() {
 
 /// GUI mode. Runs unelevated; loads the index from the on-disk cache.
 pub fn run_gui() {
+    use state::AppState;
+
     tracing::info!("starting GUI");
+    let app_state = AppState::new();
+
+    // Load whatever the last scan left behind. Failing to find a cache is an
+    // ordinary first-run condition, not an error — the UI says so and offers
+    // to scan, rather than the window refusing to open.
+    match index::persist::load() {
+        Ok(cache) => {
+            tracing::info!(
+                "nạp cache: {} tệp, {} thư mục",
+                cache.index.len(),
+                cache.index.dir_count()
+            );
+            app_state.replace(cache.index, cache.built_at_unix);
+        }
+        Err(e) => {
+            tracing::warn!("không nạp được cache: {e}");
+            app_state.set_problem(e.to_string());
+        }
+    }
+
     tauri::Builder::default()
+        .manage(app_state)
+        .invoke_handler(tauri::generate_handler![
+            ipc::commands::search,
+            ipc::commands::index_status,
+            ipc::commands::open_file,
+            ipc::commands::reveal_in_explorer,
+        ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");
 }
@@ -67,6 +96,7 @@ pub fn run_indexer() {
 
     let opts = tree::ResolveOptions::default();
     let mut grand_total = 0usize;
+    let mut stamps: Vec<index::persist::VolumeStamp> = Vec::new();
 
     for v in ntfs_volumes {
         let started = std::time::Instant::now();
@@ -83,10 +113,16 @@ pub fn run_indexer() {
         // Informational only: the full scan uses FSCTL_ENUM_USN_DATA, which
         // walks the MFT directly and works with the journal disabled. The USN
         // is recorded so P8 can pick up incremental changes from here.
-        match volume::query_journal(&handle) {
-            Ok(j) => tracing::info!("USN journal id={:#x} next_usn={}", j.journal_id, j.next_usn),
-            Err(e) => tracing::warn!("{e}"),
-        }
+        let journal = match volume::query_journal(&handle) {
+            Ok(j) => {
+                tracing::info!("USN journal id={:#x} next_usn={}", j.journal_id, j.next_usn);
+                Some(j)
+            }
+            Err(e) => {
+                tracing::warn!("{e}");
+                None
+            }
+        };
 
         let scan_started = std::time::Instant::now();
         let (records, scan_stats) = match usn_enum::enumerate(&handle, |n| {
@@ -160,6 +196,14 @@ pub fn run_indexer() {
             "nạp vào index: {:.2}s",
             build_started.elapsed().as_secs_f64()
         );
+
+        stamps.push(index::persist::VolumeStamp {
+            letter: v.letter,
+            serial: v.serial,
+            journal_id: journal.map(|j| j.journal_id).unwrap_or(0),
+            next_usn: journal.map(|j| j.next_usn).unwrap_or(0),
+            file_count: set.files.len(),
+        });
     }
 
     let ix = builder.finish();
@@ -172,7 +216,13 @@ pub fn run_indexer() {
 
     if dry_run {
         demo_searches(&ix);
-        tracing::info!("--dry-run: không ghi cache (ghi cache thuộc giai đoạn P4)");
+        tracing::info!("--dry-run: không ghi cache");
+        return;
+    }
+
+    match index::persist::save(&ix, stamps) {
+        Ok(path) => tracing::info!("đã ghi cache: {}", path.display()),
+        Err(e) => tracing::error!("không ghi được cache: {e}"),
     }
 }
 

@@ -57,14 +57,20 @@ windows = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
 strip = true
+# `panic = "abort"` deliberately absent (RISK-001). It shrinks the binary, but
+# it also means a panic anywhere — including inside a Tauri command handling a
+# filename nobody anticipated — takes the whole application down with no
+# warning. For a tool meant to sit open all day that trade is wrong. Commands
+# additionally return `Result` rather than unwrapping, so the usual causes turn
+# into an error message instead of a panic at all.
 
 # Indexing 200k+ records through a debug-mode parser is painfully slow, so keep
 # dependencies optimised even in dev builds.
