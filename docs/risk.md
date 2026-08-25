@@ -173,3 +173,47 @@ cập nhật nhanh xong: 46701 mục [0.60s]
 
 Đúng một lần hỏi, tệp vào index đúng đường dẫn và đúng dung lượng. Trước khi sửa, chính tệp đó bị
 đếm vào `unresolved` và biến mất cho tới lần quét đầy đủ kế tiếp.
+
+---
+
+## RISK-004 ⚪ — Chỉ mục nằm chung thư mục với chương trình đã cài
+
+**Giai đoạn:** P10 · **Trạng thái:** ĐÃ ĐO, CHẤP NHẬN · **Ngày:** 2026-08-25
+
+**Tình huống.** Bộ cài NSIS của Tauri cài theo từng người dùng vào `%LOCALAPPDATA%\MediaFinder` —
+**đúng thư mục** mà `persist::cache_dir()` đã dùng để chứa dữ liệu:
+
+```
+C:\Users\<user>\AppData\Local\MediaFinder\
+    index.bin        47 MB   ← dữ liệu, 4,5 phút quét NAS mới có
+    metadata.bin              ← dữ liệu
+    progress.json             ← dữ liệu
+    mediafinder.exe           ← chương trình
+    uninstall.exe             ← chương trình
+```
+
+Nếu trình gỡ cài đặt xoá cả thư mục thì gỡ phần mềm sẽ lấy theo luôn chỉ mục.
+
+**Đã đo, không suy đoán.** Đọc `installer.nsi` do Tauri sinh ra (`target/release/nsis/x64/`), mục
+`Section Uninstall`:
+
+```nsis
+Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+Delete "$INSTDIR\uninstall.exe"
+RMDir "$INSTDIR"
+```
+
+`RMDir` **không có `/r`**, nên nó chỉ xoá thư mục khi thư mục rỗng. Còn `index.bin` ở đó thì lệnh
+này thất bại một cách vô hại. **Dữ liệu sống sót qua gỡ cài đặt.**
+
+**Vì sao vẫn ghi lại.** Điều đó đúng vì *mẫu NSIS của Tauri hiện nay* viết như vậy — không phải vì
+thiết kế của dự án này bảo vệ được nó. Một bản Tauri sau đổi thành `RMDir /r` là mất sạch, và mất
+im lặng.
+
+**Chưa đổi chỗ chứa cache**, vì đổi đường dẫn dữ liệu đồng nghĩa phải viết mã di chuyển tệp — mà
+mỗi dòng mã chạm vào chỗ chứa chỉ mục lại là một cơ hội làm mất nó. Rủi ro hiện tại bằng 0; rủi ro
+của việc sửa thì không.
+
+**Việc cần làm khi nâng cấp Tauri:** đọc lại `Section Uninstall` trong `installer.nsi` mới sinh và
+kiểm tra `RMDir` có mọc thêm `/r` không. Nếu có thì phải chuyển cache sang thư mục khác trước khi
+phát hành.

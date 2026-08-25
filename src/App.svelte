@@ -139,6 +139,25 @@
   let hotkey = $state<HotkeyStatus | null>(null);
   hotkeyStatus().then((h) => (hotkey = h));
 
+  // The index was replaced underneath us — a scheduled task refreshed the
+  // cache while this window was open. Without acting on it the window would go
+  // on showing yesterday's results, and the update nobody saw might as well
+  // not have happened.
+  $effect(() => {
+    const stop = listen("index-reloaded", async () => {
+      meta = await indexStatus();
+      // Entry numbers are positions in the index, so every hit on screen now
+      // points at a different file. Re-running is the only honest response;
+      // keeping the old list would show right names against wrong paths.
+      if (query.trim()) runSearch();
+      else hits = [];
+      refreshEnrich();
+    });
+    return () => {
+      stop.then((off) => off());
+    };
+  });
+
   // The backend fires this whenever it brings the window forward on purpose —
   // the global hotkey, or a second launch reaching the copy already running.
   // Selecting rather than just focusing follows what every launcher does: the

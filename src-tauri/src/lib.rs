@@ -66,7 +66,24 @@ pub fn run_gui() {
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            use tauri::Manager;
+
+            // The window is declared invisible in `tauri.conf.json` and shown
+            // here instead. Declaring it visible and hiding it afterwards
+            // would flash a window on the screen at every login, which is
+            // exactly what starting minimised is meant to avoid.
+            let quiet = std::env::args().any(|a| a == "--minimized");
+            if let Some(window) = app.get_webview_window("main") {
+                if quiet {
+                    tracing::info!("khởi động ẩn: bấm {HOTKEY} để gọi cửa sổ");
+                } else {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+
             register_hotkey(app.handle());
+            watch_cache(app.handle());
             Ok(())
         })
         .manage(app_state)
@@ -96,6 +113,66 @@ pub fn run_gui() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");
+}
+
+/// Reload the index when something else rewrites the cache.
+///
+/// Without this the automatic update is nearly useless. A scheduled task
+/// refreshes the cache at login, and the window — which may have loaded it
+/// seconds earlier, or may have been open for days — would go on searching
+/// yesterday's index until it was restarted. The update would happen and
+/// nobody would see it.
+///
+/// Watches the file's modification time rather than its contents: the cache is
+/// written to a temporary file and renamed into place, so the timestamp only
+/// ever moves when a complete new one has landed.
+fn watch_cache(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+
+    let Ok(path) = index::persist::cache_path() else {
+        return;
+    };
+    let handle = app.clone();
+
+    // Five seconds. The cache changes a handful of times a day at most, so
+    // anything faster would be a timer that does nothing several million times
+    // for every time it does something.
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+    std::thread::spawn(move || {
+        let mut seen = modified_at(&path);
+        loop {
+            std::thread::sleep(EVERY);
+            let now = modified_at(&path);
+            if now == seen || now.is_none() {
+                continue;
+            }
+            seen = now;
+
+            match index::persist::load() {
+                Ok(cache) => {
+                    tracing::info!(
+                        "cache đã thay đổi bên ngoài — nạp lại: {} tệp",
+                        cache.index.len()
+                    );
+                    use tauri::Manager;
+                    handle
+                        .state::<state::AppState>()
+                        .replace(cache.index, cache.built_at_unix);
+                    // Tell the window, so it refreshes what it is showing
+                    // instead of waiting for the user to type again.
+                    let _ = handle.emit("index-reloaded", ());
+                }
+                // Half-written, or being replaced right now. The next tick
+                // will find it settled.
+                Err(e) => tracing::debug!("chưa nạp lại được cache: {e}"),
+            }
+        }
+    });
+}
+
+fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 /// The hotkey that brings the window forward from anywhere.

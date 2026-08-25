@@ -559,3 +559,38 @@ nhau ở GUID nào và chỉ số nào, và điều đó chỉ nhìn ra được
 
 Điều này chỉ thấy được bằng cách **đọc từng hunk lớn**. `cargo fmt --check` không phân biệt "khác"
 với "tệ hơn"; nó chỉ nói là khác.
+
+---
+
+### 2026-08-25 — Cài đặt, tự khởi động, tự cập nhật
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ 186 pass, sạch cả bốn |
+| 2 | Bộ cài chạy được | `/S` (im lặng), không quyền Admin | ✅ cài vào `%LOCALAPPDATA%\MediaFinder` |
+| 3 | Có mục trong Start Menu | đọc thư mục Programs | ✅ `MediaFinder.lnk` |
+| 4 | Mở thường vẫn hiện cửa sổ | `IsWindowVisible` | ✅ `visible=True` |
+| 5 | `--minimized` thì ẩn | như trên | ✅ `visible=False`, log ghi *"khởi động ẩn"* |
+| 6 | Bấm phím tắt khi đang ẩn | `keybd_event` + đọc lại | ✅ `visible=True` |
+| 7 | **Bộ theo dõi cache** | đổi `mtime` của `index.bin` | ✅ tự nạp lại sau **4 giây** |
+| 8 | Trình gỡ cài đặt có xoá dữ liệu không | đọc `installer.nsi` do Tauri sinh | ✅ `RMDir` **không** `/r` → dữ liệu sống sót ([RISK-004](./risk.md#risk-004)) |
+| 9 | Tạo Scheduled Task | `Register-ScheduledTask` elevated | ⚠️ **chưa làm được** — UAC bị từ chối |
+
+**Kết luận:** 8/9 pass, 1 mục chưa chạy được vì cần một lần UAC.
+
+**Mục 7 là mắt xích không có thì cả tính năng vô nghĩa.** Tác vụ nền ghi cache lúc đăng nhập, còn
+cửa sổ có thể đã nạp cache từ trước đó vài giây — hoặc đã mở suốt mấy ngày. Không có bộ theo dõi
+thì bản cập nhật vẫn diễn ra nhưng **không ai nhìn thấy**, cho tới lần khởi động lại. Theo dõi
+`mtime` chứ không theo dõi nội dung: cache được ghi ra tệp tạm rồi đổi tên vào chỗ, nên dấu thời
+gian chỉ nhích khi đã có một bản hoàn chỉnh nằm đó.
+
+**Mục 4 đáng giữ vì nó suýt thành lỗi nặng.** Để `--minimized` không nháy cửa sổ mỗi lần đăng nhập,
+`visible` trong `tauri.conf.json` đổi thành `false` và cửa sổ được hiện bằng mã. Nếu nhánh hiện ấy
+sai thì ứng dụng **vĩnh viễn vô hình** — mở lên không thấy gì, không có cửa sổ để mà đóng. Nên nó
+được thử riêng, trước khi thử `--minimized`.
+
+**Một điểm chưa giải thích được.** Cache hiện tại được dựng lúc **09:06:44** với 360.649 mục
+(313.946 ổ mạng + 46.703 ổ cục bộ), trong khi lượt hợp nhất tôi chủ động chạy kết thúc ở 360.646.
+`progress.json` cho thấy một lượt quét ổ mạng đã hoàn tất đúng thời điểm đó, nhưng **tôi không quy
+được nó về lệnh nào mình đã chạy**. Dữ liệu đã kiểm chứng là nhất quán và tìm kiếm được; ghi lại
+đây vì một chỉ mục tự thay đổi là thứ không nên bỏ qua, kể cả khi kết quả trông đúng.
