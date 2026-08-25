@@ -944,18 +944,22 @@ thứ tôi đã tuyên bố sửa xong ở lượt test P14.
 **Vì sao lượt P14 tưởng là hết.** Tôi chạy 3 lần trên truy vấn trả về **2 kết quả**, đều sạch. Lỗi
 này chỉ lộ dưới tải: truy vấn **5.000 kết quả** với video 1080p thì hiện lại ngay, **2/5 lần**.
 
-**Ba lần sửa, hai lần đầu đều bị đo bác bỏ:**
+**Hai lần sửa, và một lượt kiểm chứng hỏng nằm giữa:**
 
 | Cách sửa | Kết quả đo |
 |---|---|
 | Chặn `dblclick` trên `<video>` | ❌ 2/5 vẫn bung |
-| `pointer-events: none` + chặn `dblclick` ở tầng cửa sổ | ❌ 2/5 vẫn bung |
-| Theo dõi `fullscreenchange` rồi hoàn tác | ✅ 0/3, đo ở 5 mốc thời gian |
+| `pointer-events: none` + chặn `dblclick` ở **pha capture trên `window`** | ✅ **5/5 sạch** |
 
-Điều xoay chuyển cách nghĩ là một phép đo: `GetWindowRect` ở 5 mốc cho thấy nó **tất định** — bung
-trong 300 ms sau nháy đúp, lần nào cũng vậy — chứ không bất định như tôi tưởng. Tất định mà cả hai
-lớp chặn đều không thấy, nghĩa là **sự kiện gọi toàn màn hình không phải thứ tôi đang chặn**. Đến
-giờ tôi vẫn chưa biết nó là gì, và chú thích trong mã nói thẳng như vậy.
+Trình điều khiển media của Chromium xử lý cú nháy đúp trước khi sự kiện nổi lên tới thẻ `<video>`,
+nên trình xử lý ở tầng phần tử luôn tới muộn; ở pha capture thì thấy trước tất cả.
 
-**Bài học:** ba lần chạy sạch trên dữ liệu nhẹ không chứng minh được gì về dữ liệu nặng. Và khi đã
-hai lần chặn trượt nguyên nhân thì nên chặn ở kết quả — thứ quan sát và kiểm chứng được.
+**Nhưng tôi suýt kết luận ngược lại.** Sau lần sửa thứ hai, phép đo vẫn báo "2/5 vẫn bung", nên tôi
+đã chuyển sang chặn ở *kết quả* và ghi lời giải thích ấy vào mã. Hoá ra lệnh cài của tôi chạy trên
+**bộ cài cũ** — lệch 16 phút so với bản vừa dựng. Cài đúng bản rồi đo lại: **5/5 sạch**. Tắt riêng
+lớp chặn kết quả rồi đo lại lần nữa, đối chiếu mã băm: **vẫn 5/5 sạch** → lớp chặn ở tầng cửa sổ tự
+nó đã đủ, và lớp kia đã bị gỡ. Chi tiết: [CHECK-008](./check.md#check-008).
+
+**Hai bài học.** Một: ba lần chạy sạch trên dữ liệu nhẹ không chứng minh được gì về dữ liệu nặng.
+Hai, và nặng hơn: **một phép đo trên nhị phân sai còn tệ hơn không đo** — nó không chỉ bỏ sót lỗi
+mà còn dựng lên một lý thuyết nhân quả sai, rồi lý thuyết ấy được ghi vào tài liệu như tri thức.

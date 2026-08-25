@@ -336,3 +336,67 @@ biết ổ đó là mạng hay là USB vừa rút ra — nếu không quét thì
 **Nếu đã tin vào linh cảm thay vì đo.** Tôi đã định đặt bộ quét NAS vào tiến trình `--index`. Nó sẽ
 chạy, không báo lỗi, và im lặng không tìm thấy ổ mạng nào — đúng loại hỏng mà dự án này đã gặp
 nhiều lần.
+
+## CHECK-008 ✅ — Bản tôi đang đo có đúng là bản tôi vừa dựng không?
+
+**Giai đoạn:** P14 · **Ngày:** 2026-08-25 · **Kết luận:** KHÔNG — và nó đã đẻ ra một lý thuyết sai
+
+**Vì sao phải kiểm.** Sau khi sửa [BUG-021](./bug.md#bug-021) lần hai, phép đo vẫn báo "2/5 lần vẫn
+bung". Tôi kết luận rằng chặn theo nguyên nhân là bất khả, chuyển sang chặn ở kết quả, và **ghi lời
+giải thích đó vào mã lẫn tài liệu**.
+
+**Nghi ngờ đến từ một con số lẻ.** Đối chiếu dấu thời gian:
+
+```
+installer vừa dựng : 17:52:22
+exe đang cài       : 17:36:40
+```
+
+Lệch **16 phút**. Bản tôi đo không phải bản tôi vừa sửa.
+
+**Nguyên nhân.** Vòng chờ của tôi là `until ! tasklist cargo`. Nhưng `tauri build` chạy **`vite`
+trước**, nên tại thời điểm bắt đầu chờ thì `cargo` còn chưa khởi động — điều kiện đúng ngay lập
+tức, vòng chờ thoát, và lệnh cài chạy trên bộ cài của lần dựng **trước**.
+
+**Đã đo lại cho đúng.** Đối chiếu **mã băm SHA-256** thay vì dấu thời gian, và chạy thẳng exe vừa
+dựng thay vì qua bộ cài:
+
+| Bản chạy | Xác nhận | Kết quả 5 lần |
+|---|---|---|
+| Có cả hai lớp chặn | băm khớp | **5/5 sạch** |
+| **Tắt riêng lớp chặn kết quả** | băm `8EE678CC…` khớp bản dựng | **5/5 sạch** |
+
+Lần đo thứ hai mới là lần trả lời được câu hỏi: lớp chặn ở tầng cửa sổ **tự nó đã đủ**. Lớp chặn
+kết quả đã bị gỡ, và lời giải thích sai trong mã đã được viết lại.
+
+**Bài học.** Một phép đo trên nhị phân sai còn tệ hơn không đo. Nó không chỉ bỏ sót lỗi — nó **dựng
+lên một lý thuyết nhân quả sai**, rồi dẫn tới một cách sửa nhân danh lý thuyết ấy, và cách sửa đó
+được ghi vào tài liệu như tri thức. Ba thứ sai chồng lên nhau, tất cả từ một vòng `until` sai.
+
+**Đã thành quy trình:** [`cai-dat.sh`](../src-tauri/) trong thư mục làm việc dừng hẳn nếu bản đang
+chạy không khớp bản vừa dựng; và với các phép đo quan trọng thì chạy thẳng
+`target/release/mediafinder.exe`, bỏ bộ cài ra khỏi vòng kiểm chứng.
+
+### Hai cái bẫy nữa, tìm ra khi đang sửa chính quy trình này
+
+**Bẫy 1 — đang chạy exe thì không dựng đè lên nó được, và bản dựng *không* báo lỗi.**
+Tôi chạy thẳng `target/release/mediafinder.exe` để bỏ bộ cài ra khỏi vòng kiểm chứng. Nhưng khi
+tiến trình đó còn sống, trình liên kết không ghi đè được tệp — `npm run tauri build` **thoát với mã
+0** và exe vẫn nguyên bản cũ. Hai lần dựng liên tiếp cho ra **đúng cùng một mã băm**, kể cả sau khi
+`touch` vào `lib.rs` để ép liên kết lại. Từ đó: **tắt ứng dụng trước khi dựng**, và luôn kiểm mã
+băm có đổi không.
+
+**Bẫy 2 — mã băm giữa bản dựng và bản cài *luôn* khác nhau một cách chính đáng.**
+Sau khi đóng gói, Tauri "vá thông tin loại gói" vào exe trong `target/release`, nên bản trên đĩa và
+bản nằm trong bộ cài lệch nhau vài byte:
+
+```
+10.654.208 byte  18:29:31  target/release/mediafinder.exe   (đã vá)
+10.654.208 byte  18:29:28  ...\MediaFinder\mediafinder.exe  (bản đóng gói)
+```
+
+Phép kiểm bằng mã băm vì thế báo "KHÁC NHAU" cho một lần cài hoàn toàn đúng. Tiêu chí đúng là
+**cùng kích thước và lệch thời gian dưới một phút**.
+
+**Kết quả cuối, trên bản đã xác minh:** 5/5 lần mở đều giữ cửa sổ 880×620, và video 1080p nằm gọn
+trong khung.

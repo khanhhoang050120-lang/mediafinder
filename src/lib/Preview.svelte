@@ -40,19 +40,23 @@
   /// not always the one being suppressed. Refusing pointer input outright for
   /// a moment does not depend on guessing which event it is.
   ///
-  /// 250 ms was not enough, and the measurement that showed it is worth
-  /// keeping: on a query returning 5.000 rows the window still went fullscreen
-  /// in **2 of 5 opens**. A wall-clock timer races the input queue, and under
-  /// that load the queue was the slower of the two — the timer disarmed the
-  /// guard before the leaked event was ever processed.
+  /// 250 ms was not enough, and the measurement that showed it matters: on a
+  /// query returning 5.000 rows the window still went fullscreen in 2 of 5
+  /// opens. The guard is now two things at once — no pointer input on the
+  /// stage, **and** a capture-phase `dblclick` listener on `window` that
+  /// swallows the event outright.
   ///
-  /// So the guard is now two things at once: no pointer input on the stage,
-  /// **and** a window-level capture listener that swallows `dblclick`
-  /// outright. Capture runs before every other handler, including whatever
-  /// Chromium wires inside the media controls — which is why the earlier
-  /// attempt at an `ondblclick` on the `<video>` itself only worked sometimes.
-  /// 800 ms because the cost of guessing high is nil and guessing low is a
-  /// window that fullscreens itself.
+  /// Capture is the part that works. A handler on the `<video>` element runs
+  /// too late: Chromium's media controls act on the double-click before it
+  /// ever bubbles up to element-level handlers, which is why the first attempt
+  /// — `ondblclick` on the video — stopped it only sometimes. A capture
+  /// listener on `window` sees the event before anything else does.
+  ///
+  /// Verified by removing the other guard and measuring: with only this one in
+  /// place, 5 of 5 opens on the heavy query stayed 880x620.
+  ///
+  /// 800 ms because guessing high costs nothing and guessing low is a window
+  /// that fullscreens itself.
   let armed = $state(false);
 
   /// Refuse the tail of the gesture that opened this overlay.
@@ -64,45 +68,6 @@
     e.preventDefault();
     e.stopPropagation();
   }
-
-  /// Undo a fullscreen nobody asked for.
-  ///
-  /// This guards the **outcome**, not the cause, and that is a deliberate
-  /// retreat: two attempts at the cause both failed a measurement.
-  ///
-  /// - `ondblclick` on the `<video>` — the window still went fullscreen in
-  ///   2 of 5 opens.
-  /// - `pointer-events: none` on the stage *plus* a capture-phase `dblclick`
-  ///   swallow on `window` — still 2 of 5.
-  ///
-  /// With timing instrumentation it turned out to be deterministic rather than
-  /// flaky: the window is 1920x1080 within 300 ms of the double-click, every
-  /// single time, and `Esc` restores it. So something asks for fullscreen and
-  /// it is **not** an event either guard can see. Rather than keep guessing
-  /// which one, this watches the only thing that matters — the document going
-  /// fullscreen while the overlay is still too young for anyone to have asked
-  /// — and reverses it.
-  ///
-  /// A deliberate fullscreen still works: press the control, and by then the
-  /// overlay is armed.
-  function undoUnaskedFullscreen() {
-    if (armed || !document.fullscreenElement) return;
-    document.exitFullscreen().catch(() => {
-      // Nothing to do about it, and nothing worth breaking the preview over.
-    });
-  }
-
-  $effect(() => {
-    // Depend on the URL so this re-runs on every step.
-    void src;
-    failed = false;
-    loading = true;
-  });
-
-  $effect(() => {
-    const t = setTimeout(() => (armed = true), 800);
-    return () => clearTimeout(t);
-  });
 
   function onKeydown(e: KeyboardEvent) {
     // The overlay owns the keyboard while it is up. Without stopping
@@ -140,7 +105,6 @@
   on:keydown|capture={onKeydown}
   on:dblclick|capture={swallowStrayDoubleClick}
 />
-<svelte:document on:fullscreenchange={undoUnaskedFullscreen} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->

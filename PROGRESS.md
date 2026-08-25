@@ -943,11 +943,14 @@ giữ nguyên vai trò. Thao tác nhanh và không rời ứng dụng là thứ 
 ### Hai lỗi tìm được khi tự kiểm chứng
 
 **[BUG-021](docs/bug.md#bug-021) 🟠 — nháy đúp mở xem trước làm cửa sổ bung toàn màn hình.** Đo
-được: mở bằng bàn phím thì cửa sổ 880×620, mở bằng nháy đúp thì 1920×1080. **Phải sửa ba lần** —
-hai cách đầu (chặn `dblclick` trên thẻ video; rồi chặn chuột trên khung + chặn `dblclick` ở tầng
-cửa sổ) đều còn bung 2/5 lần dưới tải nặng. Cách thứ ba chặn ở *kết quả*: theo dõi
-`fullscreenchange` và hoàn tác khi không ai hỏi. Nguyên nhân thật vẫn chưa xác định, và chú thích
-trong mã nói thẳng điều đó.
+được: mở bằng bàn phím thì cửa sổ 880×620, mở bằng nháy đúp thì 1920×1080. Cử chỉ mở lớp phủ rơi
+luôn vào thẻ `<video>` vừa hiện ra dưới con trỏ. Chặn `dblclick` **trên chính thẻ video** thì tới
+muộn — trình điều khiển media của Chromium đã xử lý xong trước khi sự kiện nổi lên. Chặn ở **pha
+capture trên `window`** thì sạch 5/5.
+
+Giữa hai lần sửa có một lượt kiểm chứng hỏng đáng ghi hơn cả lỗi: lệnh cài của tôi chạy trên bộ cài
+cũ, nên tôi đo một bản không chứa bản vá, kết luận sai về nguyên nhân, và suýt để lời giải thích
+sai đó nằm lại trong mã — [CHECK-008](docs/check.md#check-008).
 
 **[BUG-022](docs/bug.md#bug-022) 🟡 — `D:\` hiện thành `:D`.** Mẹo `direction: rtl` của tôi để cắt
 đầu đường dẫn dài đã bị thuật toán bidi chuyển dấu câu lên trước. Chỉ lộ ra với tệp nằm ngay gốc ổ.

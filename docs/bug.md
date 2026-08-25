@@ -864,37 +864,40 @@ phần đuôi của cử chỉ đó như cử chỉ của riêng nó — nháy �
 nghĩa là sự kiện tới được trình phát **không phải lúc nào cũng là sự kiện đang bị chặn**. Đoán xem
 đó là sự kiện gì rồi chặn đúng cái đó là cách sửa dựa trên phỏng đoán.
 
-**Ba lần sửa, hai lần đầu đều bị phép đo bác bỏ.** Ghi lại cả ba vì trình tự này mới là phần đáng
-đọc:
+**Hai lần sửa, và một lượt kiểm chứng hỏng nằm giữa.**
 
 | # | Cách sửa | Kết quả đo |
 |---|---|---|
-| 1 | Chặn `dblclick` ngay trên thẻ `<video>` | ❌ **2/5 lần vẫn bung** |
-| 2 | Thêm `pointer-events: none` trên khung + chặn `dblclick` ở tầng cửa sổ (capture) | ❌ **2/5 lần vẫn bung** |
-| 3 | Theo dõi `fullscreenchange` và **hoàn tác** nếu lớp phủ còn quá non | ✅ **0/3 lần**, đo ở 5 mốc thời gian |
+| 1 | Chặn `dblclick` ngay trên thẻ `<video>` | ❌ vẫn bung **2/5 lần** |
+| 2 | `pointer-events: none` trên khung + chặn `dblclick` ở **tầng cửa sổ, pha capture** | ✅ **5/5 sạch** |
+
+**Vì sao lần 1 trượt còn lần 2 được.** Trình điều khiển media của Chromium xử lý cú nháy đúp
+**trước khi** sự kiện kịp nổi lên tới trình xử lý gắn trên chính thẻ `<video>` — nên trình xử lý ở
+tầng phần tử luôn tới muộn. Một trình lắng nghe ở **pha capture trên `window`** thì thấy sự kiện
+trước tất cả. Đó là toàn bộ khác biệt.
 
 **Tôi đã tuyên bố sửa xong ở lần 1 — và sai.** Ba lần chạy đầu đều sạch nên tôi kết luận là hết.
 Chỉ khi người dùng báo một lỗi khác (video tràn khỏi khung, [BUG-023](#bug-023)) và tôi tái hiện
-bằng một truy vấn nặng hơn — 5.000 kết quả, video 1080p — thì nó mới hiện lại. **Truy vấn nhẹ
-không đủ tải để lộ ra một cuộc đua.**
+bằng truy vấn nặng hơn — 5.000 kết quả, video 1080p — thì nó mới hiện lại. **Truy vấn nhẹ không đủ
+tải để lộ ra lỗi này.**
 
-**Vì sao lần 1 và 2 đều trượt.** Ban đầu tôi tưởng là bất định và đổ cho hàng đợi sự kiện bị nghẽn.
-Đo bằng `GetWindowRect` ở 5 mốc thì hoá ra **hoàn toàn tất định**: cửa sổ thành 1920×1080 trong
-vòng 300 ms sau nháy đúp, lần nào cũng vậy, và `Esc` trả lại như cũ. Tất định mà cả hai lớp chặn
-đều không thấy → **sự kiện gọi toàn màn hình không phải thứ tôi đang chặn.** Tôi vẫn chưa biết nó
-là gì.
+**Rồi tôi suýt ghi một lời giải thích sai vào chính tệp này.** Sau lần sửa 2 tôi vẫn đo ra "2/5 vẫn
+bung", nên kết luận rằng chặn theo nguyên nhân là bất khả và chuyển sang **chặn ở kết quả** — nghe
+`fullscreenchange` rồi hoàn tác. Kết luận ấy dựa trên một phép đo hỏng: lệnh cài của tôi đã chạy
+trên **bộ cài cũ**, nên tôi đo một bản không hề chứa bản vá mình đang muốn kiểm chứng. Chi tiết:
+[CHECK-008](./check.md#check-008).
 
-**Nên lần 3 chặn ở *kết quả*, không ở nguyên nhân.** Nghe `fullscreenchange`; nếu tài liệu vào
-toàn màn hình trong lúc lớp phủ còn chưa "vũ trang" thì thoát ra ngay. Không cần biết ai đã hỏi.
-Người dùng chủ động bấm nút toàn màn hình thì vẫn được, vì lúc đó lớp phủ đã vũ trang.
+Khi cài đúng bản và đo lại thì lần sửa 2 sạch **5/5**. Kiểm chứng chéo bằng cách **tắt riêng lớp
+chặn kết quả** rồi đo lại: vẫn **5/5 sạch** — chứng minh lớp chặn ở tầng cửa sổ tự nó đã đủ. Lớp
+chặn kết quả đã được **gỡ bỏ**: giữ lại một lớp phòng thủ không bao giờ kích hoạt, kèm chú thích
+nói rằng nguyên nhân chưa rõ, là để lại một lời giải thích sai trong mã.
 
-**Bài học.** Chặn theo nguyên nhân chỉ đúng khi **biết** nguyên nhân. Hai lần đầu tôi chặn thứ
-mình *đoán* là nguyên nhân, và cả hai lần phép đo đều nói không phải. Khi đã hai lần trượt thì
-chặn ở kết quả — thứ quan sát được và kiểm chứng được — là lựa chọn đúng, kèm chú thích nói thẳng
-rằng nguyên nhân vẫn chưa rõ.
+**Bài học 1 — về cách test.** Lỗi đua chỉ lộ ra dưới tải. Ba lần chạy sạch trên truy vấn 2 kết quả
+không chứng minh được gì về truy vấn 5.000 kết quả.
 
-**Bài học thứ hai, về cách test.** Một lỗi đua chỉ lộ ra dưới tải. Ba lần chạy sạch trên truy vấn
-2 kết quả không chứng minh được gì về truy vấn 5.000 kết quả.
+**Bài học 2 — về việc đo cái gì.** Một phép đo trên nhị phân sai còn tệ hơn không đo: nó không chỉ
+bỏ sót lỗi, nó **dựng lên một lý thuyết sai về nguyên nhân** rồi dẫn tới một cách sửa nhân danh lý
+thuyết ấy. Từ nay mọi lượt kiểm chứng phải đối chiếu mã băm giữa bản vừa dựng và bản đang chạy.
 
 ## BUG-022 🟡 — Đường dẫn thư mục gốc hiện ngược thành `:D`
 
