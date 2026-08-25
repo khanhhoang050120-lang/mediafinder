@@ -400,3 +400,47 @@ Phép kiểm bằng mã băm vì thế báo "KHÁC NHAU" cho một lần cài ho
 
 **Kết quả cuối, trên bản đã xác minh:** 5/5 lần mở đều giữ cửa sổ 880×620, và video 1080p nằm gọn
 trong khung.
+
+## CHECK-009 ✅ — Phần mềm này thật sự cần cài thêm thư viện nào?
+
+**Giai đoạn:** P15 · **Ngày:** 2026-08-25 · **Kết luận:** đúng **một** thứ, và bộ cài đã mang sẵn
+
+**Vì sao phải kiểm.** Người dùng muốn bộ cài "quét xem máy có thư viện chưa, thiếu thì cài, cũ thì
+nâng lên". Xây một cơ chế như vậy mà không biết **danh sách thư viện thật** thì sẽ đi cài thứ không
+cần và bỏ sót thứ cần.
+
+**Cách đo.** Đọc thẳng **bảng nhập PE** của tệp exe đã dựng — không phải đoán từ danh sách phụ
+thuộc trong `Cargo.toml`. Ra 22 DLL:
+
+| Nhóm | Kết luận |
+|---|---|
+| `api-ms-win-crt-*` (8 tệp) | **UCRT — nằm sẵn trong Windows 10 và 11**, không phải thứ phải cài |
+| `kernel32` `user32` `shell32` `ole32` `gdi32` `comctl32` `dwmapi` `mpr` `ntdll` `propsys` `shlwapi` `advapi32` `oleaut32` `bcryptprimitives` | Thành phần của Windows |
+| `vcruntime140.dll` | **KHÔNG có mặt** — Rust đã liên kết tĩnh phần đó vào exe |
+
+**Kết quả đáng chú ý nhất là thứ *không* có:** `vcruntime140.dll`. Nếu nó có mặt thì mỗi máy đều
+cần gói Visual C++ Redistributable, và máy thiếu nó sẽ báo *"vcruntime140.dll not found"* — đúng
+kiểu lỗi khó hiểu mà người dùng không tự xử lý được. Đã kiểm và không cần lo.
+
+**Thứ duy nhất ở ngoài: WebView2 Runtime.** Nó **không nằm trong bảng nhập** vì được nạp lúc chạy,
+nên chỉ phát hiện được qua registry. Máy này: `151.0.4129.107`, cài ở cấp máy (`HKLM`).
+
+**Vế "máy có bản cũ thì nâng lên" tự xảy ra.** WebView2 là loại *evergreen* — Microsoft tự cập
+nhật nó qua trình cập nhật của Edge. Bộ cài chỉ cần lo vế "máy chưa có", và đã lo bằng cách nhúng
+hẳn bộ cài WebView2 vào trong (208 MB).
+
+**Vẫn cần một lớp nữa: nói cho người dùng biết khi thiếu.** Nếu WebView2 vắng mặt vì lý do nào đó
+— thường gặp nhất là **chép tệp exe từ máy khác sang thay vì chạy bộ cài** — thì thứ người dùng
+thấy là cửa sổ trắng, không câu nào giải thích. Nên nay có bước kiểm tra chạy **trước khi mở cửa
+sổ**, hiện một hộp thoại nói đúng một việc họ cần làm.
+
+### Bẫy thứ ba của cùng một họ với [CHECK-008](#check-008)
+
+**Đang chạy ứng dụng thì bộ cài không ghi đè được — mà vẫn thoát với mã 0.** `Stop-Process` trả về
+ngay lập tức trong khi tiến trình còn đang thoát và **vẫn giữ tệp exe**. Bộ cài NSIS gặp tệp bị giữ
+thì bỏ qua, báo thành công, và mọi phép đo sau đó đo nhầm bản cũ.
+
+Đã dính bẫy này **hai lần liên tiếp** trong cùng một buổi, và cả hai lần đều do chính công cụ chụp
+hộp thoại khởi động ứng dụng lên rồi để đó. Công cụ cài đặt nay **chờ tiến trình thật sự biến mất**
+khỏi danh sách tiến trình, chứ không chỉ gọi lệnh tắt rồi đi tiếp — và nếu lần cài đầu không ghi đè
+được thì tự thử lại một lần.

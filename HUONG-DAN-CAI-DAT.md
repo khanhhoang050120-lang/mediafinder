@@ -130,6 +130,10 @@ mất kết nối thì MediaFinder không đọc được và sẽ nói rõ lý 
 Những ổ đó bị bỏ qua, và phần mềm nói rõ ổ nào bị bỏ qua vì lý do gì. Đây là giới hạn thật: cách
 đọc nhanh mà MediaFinder dùng chỉ có trên NTFS.
 
+**Mở lên hiện hộp thoại "MediaFinder chưa chạy được".**
+Máy thiếu WebView2 Runtime — hầu như luôn là do **chép tệp chương trình từ máy khác sang** thay vì
+chạy bộ cài. Chạy bộ cài `-setup.exe`; nó mang sẵn thành phần đó bên trong, không cần mạng.
+
 **Muốn tắt phần tự khởi động cùng Windows.**
 Mở PowerShell rồi dán:
 

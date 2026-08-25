@@ -1045,6 +1045,39 @@ một đội chuyển hàng gigabyte footage mỗi ngày thì 208 MB chuyển m�
 | 7 | **Phần mềm có gửi gì ra ngoài không** | ✅ **0** gói mạng trong toàn bộ cây phụ thuộc, 0 lời gọi HTTP trong mã |
 | 8 | Vòng kiểm tra | ✅ **206 test**, sạch cả bốn |
 
+### Đóng gói thư viện: đo trước, và câu trả lời ngắn hơn dự tính
+
+**Ý định của người dùng:** gói sẵn mọi thư viện cần thiết; máy nào thiếu thì cài, máy nào có bản cũ
+thì nâng lên bằng bản của máy gốc.
+
+Trước khi xây bất cứ cơ chế nào, phải biết **danh sách thư viện thật**. Đọc thẳng bảng nhập PE của
+tệp exe — không đoán từ `Cargo.toml` — ra 22 DLL, và **không có thư viện nào phải cài thêm**
+([CHECK-009](docs/check.md#check-009)):
+
+- `api-ms-win-crt-*` là UCRT, **nằm sẵn trong Windows 10 và 11**.
+- Phần còn lại đều là thành phần của Windows.
+- **`vcruntime140.dll` không có mặt** — Rust đã liên kết tĩnh phần đó. Nếu nó có, mỗi máy sẽ cần
+  gói Visual C++ Redistributable và máy thiếu sẽ báo `vcruntime140.dll not found`.
+
+Thứ duy nhất ở ngoài là **WebView2 Runtime**, và nó đã được nhúng hẳn vào bộ cài. Vế *"máy có bản
+cũ thì nâng lên"* **tự xảy ra**: WebView2 là loại evergreen, Microsoft tự cập nhật qua trình cập
+nhật của Edge.
+
+Nên cơ chế cần xây nhỏ hơn nhiều so với hình dung ban đầu — không phải một trình quản lý thư viện,
+mà **một bước kiểm tra và một câu nói đúng lúc**.
+
+### Kiểm tra trước khi mở cửa sổ
+
+Nếu WebView2 vắng mặt — thường gặp nhất là **chép tệp exe từ máy khác sang thay vì chạy bộ cài** —
+thì thứ người dùng thấy là một cửa sổ trắng, không câu nào giải thích. Với người không biết code,
+đó là chỗ họ dừng lại.
+
+Nay có bước kiểm tra chạy **trước khi Tauri khởi động**, hiện một hộp thoại của Windows nói đúng
+một việc cần làm. Đã ép hiện ra để nhìn tận mắt, và phải sửa câu chữ **hai lần**: hộp thoại của
+Windows rộng khoảng 50 ký tự và dòng nào dài hơn thì nó **cắt vào giữa chữ** — bản đầu hiện ra
+*"kết thúc bằ / ng"*, bản sau *"nó sẽ tự c / ài"*. Với tiếng Việt thì một chữ bị cắt đôi trông như
+phần mềm lỗi phông. Nay mỗi dòng dưới 46 ký tự, và có test giữ ngưỡng đó khỏi trôi.
+
 ### Còn một phép thử cần người bấm
 
 Đường "máy chưa có tác vụ → bấm Quét lần đầu → UAC → tiến trình quét tự tạo tác vụ" **không thể tự

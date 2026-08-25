@@ -963,3 +963,51 @@ nó đã đủ, và lớp kia đã bị gỡ. Chi tiết: [CHECK-008](./check.md
 **Hai bài học.** Một: ba lần chạy sạch trên dữ liệu nhẹ không chứng minh được gì về dữ liệu nặng.
 Hai, và nặng hơn: **một phép đo trên nhị phân sai còn tệ hơn không đo** — nó không chỉ bỏ sót lỗi
 mà còn dựng lên một lý thuyết nhân quả sai, rồi lý thuyết ấy được ghi vào tài liệu như tri thức.
+
+### 2026-08-25 — Đóng gói thư viện: đo trước khi xây
+
+**Người dùng muốn:** bộ cài tự lo phần thư viện — thiếu thì cài, cũ thì nâng lên — để người dùng
+chỉ việc mở phần mềm ra dùng.
+
+| # | Nội dung | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | **Thật sự cần thư viện nào** | đọc bảng nhập PE của exe đã dựng | ✅ 22 DLL, **không cái nào phải cài thêm** ([CHECK-009](./check.md#check-009)) |
+| 2 | Có cần Visual C++ Redistributable không | tìm `vcruntime140.dll` trong bảng nhập | ✅ **không có** — Rust liên kết tĩnh |
+| 3 | WebView2 trên máy này | đọc registry đúng khoá bộ cài kiểm | ✅ `151.0.4129.107`, cấp máy |
+| 4 | Hộp thoại khi thiếu WebView2 | ép hiện qua khe thử, chụp màn hình | ✅ sau **2 lần sửa câu chữ** |
+| 5 | Hộp thoại khi Windows quá cũ | như trên | ✅ |
+| 6 | Đường bình thường không bị ảnh hưởng | mở ứng dụng, tìm thật | ✅ 360.654 tệp, 1,7 ms |
+| 7 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ **212 test**, sạch cả bốn |
+
+**Kết luận:** 7/7 pass. Cơ chế cần xây **nhỏ hơn nhiều** so với hình dung ban đầu — không phải một
+trình quản lý thư viện, mà một bước kiểm tra và một câu nói đúng lúc.
+
+#### Câu chữ phải sửa hai lần, và chỉ ảnh chụp mới cho biết
+
+Test đã kiểm nội dung thông báo (có "Cách xử lý:", không lộ tên API). Test **không** thấy được thứ
+hỏng thật: hộp thoại của Windows rộng khoảng 50 ký tự, và dòng nào dài hơn thì nó **cắt vào giữa
+chữ** thay vì lùi về khoảng trắng.
+
+```
+bản 1:  "... tệp có tên kết thúc bằ
+         ng -setup.exe ..."
+bản 2:  "... nên nó sẽ tự c
+         ài giúp bạn."
+```
+
+Với tiếng Việt, một chữ bị cắt đôi trông như phần mềm lỗi phông — và đây là màn hình **duy nhất**
+người dùng thấy khi máy họ chưa chạy được. Nay mỗi dòng dưới 46 ký tự, và có một test giữ ngưỡng đó
+khỏi trôi khi ai đó sửa câu sau này.
+
+**Bài học:** test kiểm được *nội dung* thông báo, không kiểm được *hình dạng* của nó. Thứ duy nhất
+trả lời được câu "người dùng nhìn thấy gì" là nhìn thử.
+
+#### Dính bẫy bản dựng cũ thêm hai lần nữa
+
+Cùng họ với [CHECK-008](./check.md#check-008), lần này nguyên nhân mới: **đang chạy ứng dụng thì bộ
+cài không ghi đè được exe, mà vẫn thoát với mã 0.** `Stop-Process` trả về ngay trong khi tiến trình
+còn đang thoát và vẫn giữ tệp.
+
+Cả hai lần đều do chính kịch bản chụp hộp thoại khởi động ứng dụng lên rồi để đó. Công cụ cài đặt
+nay **chờ tiến trình biến mất khỏi danh sách tiến trình** chứ không chỉ gọi lệnh tắt, và tự thử lại
+một lần nếu lần đầu không ghi đè được.

@@ -13,6 +13,7 @@ pub mod index;
 pub mod ipc;
 pub mod media;
 pub mod ntfs;
+pub mod preflight;
 pub mod setup;
 pub mod state;
 pub mod walk;

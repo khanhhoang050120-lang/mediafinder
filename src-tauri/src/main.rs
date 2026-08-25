@@ -31,6 +31,18 @@ fn main() {
         return;
     }
 
+    // Kiểm tra môi trường trước khi mở cửa sổ. Nếu thiếu thứ gì thì hiện một
+    // hộp thoại nói rõ phải làm gì, thay vì để người dùng nhìn một cửa sổ trắng
+    // và tự đoán.
+    //
+    // Chỉ áp dụng cho chế độ GUI: tiến trình quét không mở cửa sổ nào nên không
+    // cần WebView2, và nó phải chạy được kể cả khi phần giao diện đang hỏng.
+    if !args.iter().any(|a| a == "--index") {
+        if let Some(missing) = mediafinder::preflight::check() {
+            mediafinder::preflight::show_and_exit(&missing);
+        }
+    }
+
     if args.iter().any(|a| a == "--index") {
         mediafinder::run_indexer();
     } else if args.iter().any(|a| a == "--watch") {
