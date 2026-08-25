@@ -1039,3 +1039,16 @@ quyền mỗi ngày hay không. Câu trả lời: **một lần duy nhất, lúc
 mà **không hề đi qua SmartScreen** — vì Windows không chặn tệp do chính máy tạo ra. Phép thử khi đó
 trông giống hệt phép thử thật nhưng bỏ sót đúng cái màn hình mà người dùng mới sẽ khựng lại. Một
 dòng gắn `ZoneId=3` là khác biệt giữa hai điều đó.
+
+#### Hai điều chỉ người dùng xác nhận được
+
+Sau lượt thử trên máy trắng, hai đường tôi không tự kiểm được đã được người dùng xác nhận:
+
+| Nội dung | Xác nhận |
+|---|---|
+| Màn SmartScreen hiện **đúng như hướng dẫn đã viết** (`More info` → `Run anyway`) | ✅ khớp |
+| Bộ gỡ cài đặt **có hiện UAC** để xoá tác vụ chạy nền, và bấm `Yes` thì xoá được | ✅ hoạt động |
+
+Điều thứ hai đóng lại phần còn dở ở lượt trước: khi đó tôi chỉ đo được bằng gỡ im lặng — đường đó
+**cố ý bỏ qua** bước xin quyền, nên tác vụ còn sót lại và tôi không biết đường xin quyền có chạy
+được không. Nay biết là chạy được.
