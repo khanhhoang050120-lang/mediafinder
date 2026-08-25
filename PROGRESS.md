@@ -41,6 +41,7 @@ nào khớp tốt hơn ([CONF-005](docs/config.md#conf-005)).
 | **P9** | Cập nhật gia tăng qua USN journal | ✅ **giai đoạn 1 XONG** — 0,45s thay cho 13,2s, kiểm chứng trên máy thật |
 | **P10** | Quét ổ mạng / NAS theo yêu cầu | ✅ **XONG** — 313.945 tệp trên NAS, 4,5 phút, có nút riêng |
 | **P11** | Chạy nền ở khay hệ thống | ✅ **XONG** — đóng cửa sổ thì ẩn, chỉ Thoát mới tắt hẳn |
+| **P12** | Kéo tệp ra ngoài (CapCut, Explorer, web) | ✅ **XONG** — `CF_HDROP` thật, đã kiểm chứng đầu bên kia |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -779,6 +780,59 @@ Mục cuối là thứ dễ làm sai nhất mà không ai để ý cho tới lú
 đóng có thể chặn nhầm cả tín hiệu kết thúc phiên, khiến Windows hiện *"ứng dụng này đang ngăn tắt
 máy"*. Thử được an toàn bằng cách gửi đúng thông điệp Windows dùng để hỏi, thay vì phải tắt máy
 thật.
+
+---
+
+## P12 — Kéo tệp ra ngoài ✅
+
+**Người dùng hỏi:** tìm thấy tệp rồi thì kéo thẳng vào CapCut hoặc ô upload của trang web được
+không.
+
+### Cái bẫy ở tầng đầu tiên
+
+Giao diện chạy trong WebView2, và kéo-thả HTML5 chỉ đặt được các kiểu dữ liệu của web —
+`text/plain`, `text/uri-list`. Mọi ứng dụng nhận tệp đều đọc **`CF_HDROP`**, cấu trúc `DROPFILES`
+của shell Windows. Hai thứ đó không gặp nhau: kéo bằng HTML5 vào CapCut sẽ **không ra tệp nào**, và
+sẽ trông như tính năng bị hỏng chứ không như một giới hạn.
+
+Nên phải làm **nguồn kéo OLE gốc**: `IDataObject` thật mang `DROPFILES`, chạy qua `DoDragDrop`.
+
+### Dùng crate `drag` thay vì tự viết
+
+Phần khó đã có sẵn: `#[implement(IDataObject)]`, `CF_HDROP` + `DROPFILES`, `IDropSource`,
+`IDragSourceHelper` cho ảnh kéo. Tự viết là khoảng ba trăm dòng COM `unsafe`, và chỗ cấp phát
+`HGLOBAL` sai thì hỏng âm thầm. Cái giá: +456 KB và một bản `windows` 0.52 nằm cạnh 0.61 —
+đã đo và chấp nhận, xem [CONF-006](docs/config.md#conf-006).
+
+### Ba chi tiết quyết định
+
+**`preventDefault()` trên `dragstart`.** Nếu không chặn, WebView sẽ khởi động phép kéo của riêng
+nó song song với phép kéo gốc; con trỏ kẹt và không thả được gì.
+
+**`DoDragDrop` chặn luồng gọi** cho tới khi thả xong — đọc mã crate đã xác nhận. Nên nó chạy trên
+luồng giao diện qua `run_on_main_thread`, và cửa sổ đứng yên trong lúc kéo. Explorer cũng vậy.
+
+**Luôn là Copy, không bao giờ Move.** Một công cụ tìm kiếm không có việc gì phải di dời tệp nó tìm
+được. Thả vào thư mục khác phải để nguyên bản gốc tại chỗ.
+
+### Kiểm chứng: hỏi đầu bên kia nhận được gì
+
+Không dùng Explorer làm đích — nó chỉ cho biết tệp có sang hay không. Dựng một cửa sổ nhận thả
+riêng, ghi lại **đúng những định dạng nhận được**:
+
+```
+các định dạng: Shell IDList Array, FileDrop, FileNameW, FileName,
+               FileContents, FileGroupDescriptorW, ZoneIdentifier
+CF_HDROP: CÓ
+  tệp: C:\Users\Padoma1\Videos\mf-keo-tha-thu.mp4  (262144 byte)
+```
+
+Một shell data object đầy đủ — đúng thứ CapCut, Explorer và ô upload đọc.
+
+### Giới hạn đã biết
+
+Thả vào ứng dụng chạy quyền Administrator sẽ bị Windows chặn (UIPI). Đó là ràng buộc bảo mật của
+hệ điều hành, không sửa được từ phía ứng dụng.
 
 ---
 

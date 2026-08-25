@@ -188,6 +188,81 @@ pub fn enrich_status(
     enrich.status()
 }
 
+/// Begin dragging files out of the window, into whatever accepts a file drop.
+///
+/// This cannot be done from the web side. A drag started by the WebView offers
+/// the formats a web page can offer — text, a URL — and every application that
+/// takes files wants `CF_HDROP`, the shell's own structure. CapCut, Explorer
+/// and a browser's upload field all ignore what a WebView drag provides.
+///
+/// So the drag is started natively instead: a real `IDataObject` carrying
+/// `DROPFILES`, handed to `DoDragDrop`. The frontend's only job is to cancel
+/// its own drag and call this.
+///
+/// **Blocks the window until the drop finishes.** `DoDragDrop` runs its own
+/// modal loop and does not return until the user releases the button, which is
+/// why this has to be on the UI thread and why the window sits still while a
+/// drag is in flight. Explorer behaves the same way.
+#[tauri::command]
+pub fn start_file_drag(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    thumbs: State<'_, crate::media::thumbnail::ThumbnailService>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("Không có tệp nào để kéo.".into());
+    }
+
+    // Missing files are dropped rather than refused: a drag of five files
+    // should not fail because one of them was deleted a moment ago.
+    let files: Vec<std::path::PathBuf> = paths
+        .iter()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists())
+        .collect();
+    if files.is_empty() {
+        return Err("Tệp không còn ở đó nữa.".into());
+    }
+
+    // The picture that follows the cursor. Rendered here rather than passing
+    // the file itself: `Image::File` on a 500 MB video would try to decode the
+    // video as a picture, and the thumbnail already exists.
+    let image = thumbs
+        .get(0, &files[0].to_string_lossy(), 96)
+        .ok()
+        .map(|png| drag::Image::Raw(png.as_slice().to_vec()))
+        // Falls back to the file itself, which works for images and quietly
+        // yields no drag image for anything else — better than refusing to
+        // drag at all.
+        .unwrap_or_else(|| drag::Image::File(files[0].clone()));
+
+    let count = files.len();
+    app.run_on_main_thread(move || {
+        let result = drag::start_drag(
+            &window,
+            drag::DragItem::Files(files),
+            image,
+            move |result, _cursor| {
+                tracing::debug!("kéo {count} tệp: {result:?}");
+            },
+            // Copy, never move: a search tool has no business relocating the
+            // files it found. Dropping into a folder should leave the original
+            // exactly where it was.
+            drag::Options {
+                mode: drag::DragMode::Copy,
+                ..Default::default()
+            },
+        );
+        if let Err(e) = result {
+            tracing::warn!("không bắt đầu được thao tác kéo: {e}");
+        }
+    })
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// The summon shortcut, and whether the app actually managed to claim it.
 ///
 /// The combination is sent to the frontend rather than written there too, so

@@ -36,6 +36,7 @@ Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 | Mở phần mềm | `Ctrl+Alt+Space` từ bất kỳ đâu, Start Menu, hoặc bấm biểu tượng ở khay |
 | Ẩn đi | bấm lại đúng phím đó, hoặc đóng cửa sổ |
 | **Tắt hẳn** | chuột phải biểu tượng ở khay → **Thoát** |
+| Kéo tệp sang phần mềm khác | kéo thẳng kết quả vào CapCut, Explorer, ô upload của trang web |
 | Cập nhật ổ trong máy | tự động khi đăng nhập và lúc 13:00 hằng ngày, hoặc nút **Quét lại** — không hỏi quyền |
 | Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
 

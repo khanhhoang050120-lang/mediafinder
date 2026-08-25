@@ -25,6 +25,7 @@
     formatResolution,
     hotkeyStatus,
     searchFiles,
+    startFileDrag,
     thumbUrl,
     type IndexMeta,
     type NetworkDrive,
@@ -214,6 +215,19 @@
 
   async function stopScan() {
     await cancelScan();
+  }
+
+  /// Hand a result over to whatever the user drops it on.
+  ///
+  /// `preventDefault()` first, and that is the whole trick: it cancels the
+  /// drag the WebView was about to start on its own. Two drags at once leaves
+  /// the cursor stuck and nothing dropped. What replaces it is a native drag
+  /// carrying the shell's own file format, which is the only thing CapCut or
+  /// an upload field will accept.
+  function onDragStart(e: DragEvent, hit: SearchHit) {
+    e.preventDefault();
+    selected = hits.indexOf(hit);
+    startFileDrag([hit.path]).catch((err) => (error = String(err)));
   }
 
   function startPolling() {
@@ -722,6 +736,8 @@
             ondblclick={() => open(hit)}
             oncontextmenu={(e) => onContextMenu(e, i)}
             onkeydown={() => {}}
+            draggable="true"
+            ondragstart={(e) => onDragStart(e, hit)}
           >
             <!--
               `loading="lazy"` matters even here: the virtualiser keeps a few

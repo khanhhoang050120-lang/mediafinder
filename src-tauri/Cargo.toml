@@ -34,6 +34,14 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Kéo tệp từ kết quả tìm kiếm ra ngoài, thả vào CapCut / Explorer / ô upload.
+#
+# WebView2 chỉ đặt được các kiểu dữ liệu của web; mọi ứng dụng nhận tệp đều chờ
+# CF_HDROP của shell Windows. Crate này dựng đúng phần đó: một IDataObject thật
+# mang DROPFILES, chạy qua DoDragDrop. Tự viết là vài trăm dòng COM với vài chỗ
+# cấp phát HGLOBAL rất dễ sai.
+drag = "2"
+
 # --- Core index + search (P2) ---
 rayon = "1"
 memchr = "2"

@@ -211,3 +211,44 @@ trong đó assert đúng từng chuỗi tiếng Việt, nên nếu định dạn
 đã đổ.
 
 `cargo fmt --check` nay là lệnh thứ ba trong [vòng kiểm tra](../README.md#vòng-kiểm-tra).
+
+
+---
+
+## CONF-006 🟡 — Crate `drag` kéo theo `windows` 0.52 bên cạnh 0.61 của dự án
+
+**Giai đoạn:** P12 · **Trạng thái:** ĐÃ ĐO, CHẤP NHẬN · **Ngày:** 2026-08-25
+
+**Tình huống.** Thêm `drag = "2"` để kéo tệp ra ngoài. Nó phụ thuộc `windows` 0.52, trong khi dự án
+và Tauri dùng 0.61:
+
+```
+windows v0.52.0   windows v0.61.3
+windows-core      v0.52.0 · v0.58.0 · v0.61.2
+windows-implement v0.52.0 · v0.58.0 · v0.60.2
+windows-interface v0.52.0 · v0.58.0 · v0.59.3
+```
+
+Đúng loại vấn đề [CONF-001](#conf-001) từng nêu, nên phải đo lại chứ không cho qua theo thói quen.
+
+**Đã đo:**
+
+| | Trước | Sau |
+|---|---|---|
+| `cargo build --lib` (đã có cache phụ thuộc) | — | **25,5 s** |
+| Kích thước exe release | 9,72 MB | **10,15 MB** (+456 KB, +4,5%) |
+
+CONF-001 nghiêm trọng vì thời gian kiểm tra là **2 phút 35**; ở đây build 25 giây, hoàn toàn khác
+mức độ.
+
+**Lựa chọn thay thế: tự viết.** Phần Windows của crate này là một `IDataObject` cài bằng
+`#[implement]`, một `IDropSource`, cấu trúc `DROPFILES` cấp phát trên `HGLOBAL`, cộng
+`IDragSourceHelper` cho ảnh kéo. Khoảng ba trăm dòng COM `unsafe`, trong đó chỗ cấp phát `HGLOBAL`
+và bố cục `DROPFILES` là những chỗ sai thì hỏng âm thầm — cấp thiếu một byte thì đường dẫn bị cắt
+cụt, và triệu chứng sẽ là "thả vào CapCut không lên tệp" chứ không phải một lỗi rõ ràng.
+
+**Đã chọn: dùng crate.** 456 KB đổi lấy ba trăm dòng COM không phải tự bảo trì là đáng. Crate do
+CrabNebula viết — cùng nhóm làm Tauri — nên nó theo sát vòng đời của Tauri.
+
+**Việc cần làm khi nâng cấp:** nếu `drag` ra bản dùng `windows` 0.61 thì nâng, và đo lại hai con
+số trên.

@@ -700,3 +700,40 @@ báo xong. Hai việc tưởng rời nhau hoá ra là một.
 Tần suất thấp là lựa chọn hợp lý **vì** nút "Quét lại" không còn hỏi quyền: tải xong một tệp thì
 bấm nút là có sau vài giây. Nếu nút vẫn hỏi UAC như trước thì lựa chọn này sẽ khó chịu — hai thay
 đổi đó phụ thuộc nhau.
+
+
+---
+
+### 2026-08-25 — Lượt test P12 (kéo tệp ra ngoài)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ 186 pass, sạch cả bốn |
+| 2 | Crate có thật dùng `CF_HDROP` không | đọc mã nguồn crate | ✅ `IDataObject` + `DROPFILES` + `DoDragDrop` |
+| 3 | `DoDragDrop` có chặn luồng gọi không | đọc mã nguồn crate | ✅ có — nên phải chạy trên luồng giao diện |
+| 4 | Cái giá của phụ thuộc mới | đo build và kích thước | ✅ 25,5 s · +456 KB ([CONF-006](./config.md#conf-006)) |
+| 5 | **Thả thật vào ứng dụng khác** | cửa sổ nhận thả tự dựng | ✅ **`CF_HDROP: CÓ`**, đúng đường dẫn và dung lượng |
+| 6 | Các định dạng kèm theo | như trên | ✅ Shell IDList Array, FileNameW, FileContents, FileGroupDescriptorW |
+
+**Kết luận:** 6/6 pass.
+
+**Mục 5 phải làm lại năm lần, và cả năm lỗi đều nằm ở kịch bản test.** Đáng ghi vì nó lặp lại đúng
+[BUG-016](./bug.md#bug-016) theo một cách mới:
+
+1. Explorer mở lên chiếm foreground, phím tắt không gọi được cửa sổ lên.
+2. Hai cửa sổ chồng nhau nên điểm bắt đầu kéo rơi vào nhầm cửa sổ.
+3. Đặt vị trí tường minh rồi, nhưng điểm thả vẫn báo sai.
+4. **Kiểm tra theo tên lớp cửa sổ là sai từ gốc:** VS Code và WebView2 **dùng chung** lớp
+   `Chrome_RenderWidgetHostHWND`, nên điều kiện `-like 'Chrome*'` cho qua nhầm cửa sổ. Chuyển sang
+   kiểm theo **PID** thì lộ ra ngay: điểm thả thuộc tiến trình `Code`, không phải Explorer.
+5. VS Code đang toàn màn hình 1920×1032 và nằm trên tất cả; giành z-order với nó là cuộc chiến
+   không cần thiết.
+
+Cách giải sau cùng tốt hơn cách ban đầu: **tự dựng cửa sổ nhận thả**. Nó `TopMost` nên không phải
+tranh z-order, và quan trọng hơn — nó ghi lại **đúng những định dạng dữ liệu nhận được**. Explorer
+chỉ trả lời được "tệp có sang không"; câu hỏi thật là "tệp đến dưới dạng `CF_HDROP` hay không", và
+chỉ cửa sổ tự dựng mới trả lời được.
+
+**Bài học lặp lại lần thứ ba:** nhận diện cửa sổ theo tên lớp là không đủ. Lần này là VS Code đội
+lốt WebView2; [BUG-001](./bug.md#bug-001) là cửa sổ ẩn của tao đội lốt cửa sổ chính. PID và handle
+thì không nói dối.

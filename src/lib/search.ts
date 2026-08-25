@@ -177,6 +177,16 @@ export function cancelScan(): Promise<void> {
   return invoke("cancel_scan");
 }
 
+/// Start dragging files out of the window.
+///
+/// Must be called from a `dragstart` handler that has already called
+/// `preventDefault()`. The WebView's own drag offers web formats — text, a URL
+/// — and nothing that takes files will look at those; the native drag offers
+/// `CF_HDROP`, which is what CapCut, Explorer and upload fields read.
+export function startFileDrag(paths: string[]): Promise<void> {
+  return invoke("start_file_drag", { paths });
+}
+
 export function indexStatus(): Promise<IndexMeta> {
   return invoke<IndexMeta>("index_status");
 }

@@ -115,6 +115,7 @@ pub fn run_gui() {
             ipc::commands::search,
             ipc::commands::index_status,
             ipc::commands::open_file,
+            ipc::commands::start_file_drag,
             ipc::commands::reveal_in_explorer,
             ipc::commands::request_scan,
             ipc::commands::request_scan_with_network,
