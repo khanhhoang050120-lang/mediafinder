@@ -144,7 +144,7 @@ cũ không phải sửa một dòng, và 6 test mới dùng một `DirLookup` gi
 **Ba điều dễ sai đã xử lý.**
 
 1. **Luật loại trừ phải áp lại.** Đường dẫn lấy từ NTFS đã **đi vòng qua** `tree.rs`, nơi vốn lọc
-   từng thành phần một trong lúc đi ngược chuỗi cha. Không lọc lại thì `C:{bs}Windows{bs}Temp` sẽ
+   từng thành phần một trong lúc đi ngược chuỗi cha. Không lọc lại thì `C:\Windows\Temp` sẽ
    chui thẳng vào index — một lỗ hổng rộng đúng bằng tính năng này. Thêm
    `ResolveOptions::excludes_path`, có test khoá lại.
 
