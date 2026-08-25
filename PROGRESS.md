@@ -623,8 +623,11 @@ Tạo, đổi tên, tạo thư mục mới, rồi xoá — tất cả đi qua US
 Nhanh hơn khoảng **30 lần**, và nút "Quét lại" trong giao diện cũng đi đúng đường này vì nó gọi
 cùng một `--index`. Tệp `.txt` tạo kèm không vào index, đúng như phải thế.
 
-Giới hạn đã biết: tệp media **đầu tiên** đặt vào một thư mục cũ chưa từng chứa media sẽ bị bỏ sót
-cho tới lần quét đầy đủ kế tiếp — [RISK-003](docs/risk.md#risk-003).
+Giới hạn cuối cùng đã được sửa: tệp media **đầu tiên** đặt vào một thư mục cũ chưa từng chứa media
+trước đây bị bỏ sót tới lần quét kế tiếp. Nay khi không tra được thư mục cha, hệ thống hỏi thẳng
+NTFS bằng `OpenFileById` + `GetFinalPathNameByHandleW`, và áp lại luật loại trừ cho đường dẫn nhận
+được — xem [RISK-003](docs/risk.md#risk-003). Kiểm chứng trên máy thật: **+1 tệp, 1 lần hỏi hệ
+thống tệp, 0,60 s**.
 
 ### Giao tiếp giữa service và GUI — chọn đường ít quyền nhất trước
 

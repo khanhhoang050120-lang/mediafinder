@@ -5,6 +5,7 @@
 //! every directory record has been read. Filtering by directory therefore
 //! cannot happen during the read; only extension filtering can.
 
+pub mod dir_lookup;
 pub mod tree;
 pub mod usn_enum;
 pub mod usn_journal;

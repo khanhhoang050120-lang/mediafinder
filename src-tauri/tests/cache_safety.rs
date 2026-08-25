@@ -143,7 +143,7 @@ fn inventory() {
         // Soi cả đường dẫn, không chỉ tên tệp: một tệp trong thư mục thử mang
         // tên hoàn toàn bình thường, và lọc theo tên đã bỏ sót đúng nó.
         let path = ix.full_path(i);
-        if path.contains("mf-test") || path.contains("mediafinder-test") {
+        if path.contains("mf-") || path.contains("mediafinder-test") {
             println!("  TỆP THỬ: {}  ({} byte, frn={})", path, ix.size(i), ix.frn(i));
             hits += 1;
         }

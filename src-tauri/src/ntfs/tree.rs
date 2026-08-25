@@ -96,6 +96,19 @@ impl Default for ResolveOptions {
 }
 
 impl ResolveOptions {
+    /// Would any component of this absolute path be excluded?
+    ///
+    /// `tree.rs` normally applies the rules one component at a time while
+    /// walking the parent chain. A path that arrives already assembled — from
+    /// `dir_lookup`, which asks NTFS directly — has skipped that walk, so it
+    /// has to be checked in one go instead.
+    ///
+    /// The drive letter is skipped: `C:` is not a directory name and can never
+    /// be excluded.
+    pub fn excludes_path(&self, path: &str) -> bool {
+        path.split('\\').skip(1).any(|c| self.is_excluded(c))
+    }
+
     fn is_excluded(&self, name: &str) -> bool {
         if self.skip_dot_directories && name.starts_with('.') {
             return true;
@@ -524,6 +537,26 @@ mod tests {
         assert_eq!(set.files.len(), 1);
         assert_eq!(set.files[0].name, "keep.mp4");
         assert_eq!(set.stats.excluded, 1);
+    }
+
+    #[test]
+    fn an_assembled_path_is_filtered_by_the_same_rules_as_a_walked_one() {
+        // `dir_lookup` asks NTFS for a path directly, skipping the walk that
+        // normally applies these rules one component at a time. If this
+        // disagreed with `is_excluded`, the exclusions would have a hole in
+        // them exactly the width of that feature.
+        let opts = ResolveOptions::default();
+
+        assert!(!opts.excludes_path(r"D:\\Phim\\2024"));
+        assert!(opts.excludes_path(r"C:\\Windows\\Media"));
+        assert!(opts.excludes_path(r"C:\\Users\\Me\\AppData\\Local\\Temp"));
+        assert!(opts.excludes_path(r"D:\\du an\\.recycle_bin\\98"));
+        assert!(opts.excludes_path(r"D:\\code\\node_modules\\x"));
+
+        // Case must not matter, and the drive letter is never a component
+        // anyone could exclude.
+        assert!(opts.excludes_path(r"c:\\WINDOWS"));
+        assert!(!opts.excludes_path("D:"));
     }
 
     #[test]

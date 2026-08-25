@@ -55,6 +55,44 @@ pub enum Change {
     },
 }
 
+/// What the file system says about a directory the index has never heard of.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirAnswer {
+    /// It exists, it belongs in the index, and this is its absolute path.
+    Path(String),
+    /// It exists but is deliberately not indexed — under `Windows`, `AppData`,
+    /// a dot-directory, and so on. Nothing is wrong; the file simply is not
+    /// one this index tracks.
+    Excluded,
+    /// No such directory, or it could not be opened.
+    Unknown,
+}
+
+/// Names a directory that the index does not already know.
+///
+/// The index only ever holds directories that contain indexed media, because
+/// that is the only way one gets added. So a journal record saying "a new
+/// `.mp4` appeared under directory 12345" can name a directory that exists on
+/// disk and yet is nowhere in the table — the folder was made last week and is
+/// only now getting its first video.
+///
+/// Without a way to ask the file system, that file is dropped and stays
+/// invisible until the next full scan. This trait is that way to ask, kept
+/// behind an interface so the rebuild itself stays free of Win32 and testable
+/// on any machine.
+pub trait DirLookup {
+    fn path_of(&self, volume: u8, frn: u64) -> DirAnswer;
+}
+
+/// A lookup that never knows anything, for callers that have no volume open.
+pub struct NoLookup;
+
+impl DirLookup for NoLookup {
+    fn path_of(&self, _volume: u8, _frn: u64) -> DirAnswer {
+        DirAnswer::Unknown
+    }
+}
+
 /// Not a reference number NTFS ever hands out, so it is safe as "no identity".
 ///
 /// Record 0 is `$MFT` itself and always carries a sequence number in the high
@@ -82,11 +120,21 @@ pub struct UpdateStats {
     pub dirs_added: usize,
     pub dirs_removed: usize,
     pub dirs_renamed: usize,
-    /// Changes naming a parent directory that is nowhere to be found.
+    /// Changes whose parent directory is deliberately not indexed.
     ///
-    /// Expected, not alarming: a file created under `C:\Windows` is reported
-    /// by the journal but was never indexed, so its parent is unknown here.
+    /// Entirely expected: a file created under `C:\Windows` or inside
+    /// `AppData` is reported by the journal like any other, and declining it
+    /// is the correct outcome rather than a miss.
+    pub excluded: usize,
+
+    /// Changes whose parent directory could not be named at all.
+    ///
+    /// This is the one worth watching. Every such change is a file that exists
+    /// on disk and is missing from the index until the next full scan.
     pub unresolved: usize,
+
+    /// Directories named by asking the file system rather than by the index.
+    pub dirs_looked_up: usize,
 }
 
 /// Build a new index from `old` with `changes` applied.
@@ -96,6 +144,18 @@ pub struct UpdateStats {
 /// already how it works after a rescan: `epoch` invalidates thumbnail URLs and
 /// enrichment re-seeds from its own path-keyed store.
 pub fn rebuild_with(old: &Index, changes: &[Change]) -> (Index, UpdateStats) {
+    rebuild_with_lookup(old, changes, &NoLookup)
+}
+
+/// The same, able to ask the file system about directories it does not know.
+///
+/// See [`DirLookup`]. Without one, the first media file dropped into a folder
+/// that never held any is invisible until the next full scan.
+pub fn rebuild_with_lookup(
+    old: &Index,
+    changes: &[Change],
+    lookup: &dyn DirLookup,
+) -> (Index, UpdateStats) {
     let mut stats = UpdateStats::default();
 
     // Last record for a given entry wins: it describes where the entry ended
@@ -109,7 +169,13 @@ pub fn rebuild_with(old: &Index, changes: &[Change]) -> (Index, UpdateStats) {
     }
 
     let mut dirs = DirTable::from_index(old);
-    dirs.apply(&latest, &mut stats);
+    dirs.apply(&latest, lookup, &mut stats);
+
+    // Before the table is frozen into the builder: find homes for files whose
+    // parent is not in it. Done here rather than while adding the files,
+    // because `install` hands out the final directory ids and nothing can be
+    // added after that.
+    dirs.discover_parents(&latest, lookup, &mut stats);
 
     // Where each old entry lives now, so a moved file keeps the size and
     // timestamp already known about it.
@@ -178,7 +244,11 @@ pub fn rebuild_with(old: &Index, changes: &[Change]) -> (Index, UpdateStats) {
             continue;
         };
         let Some(dir_id) = dirs.resolve(*volume, *parent_frn).and_then(|d| remap[d as usize]) else {
-            stats.unresolved += 1;
+            if dirs.was_excluded(*volume, *parent_frn) {
+                stats.excluded += 1;
+            } else {
+                stats.unresolved += 1;
+            }
             continue;
         };
 
@@ -215,6 +285,13 @@ struct DirTable {
     /// Volume of each entry, so lookups never confuse two drives.
     vols: Vec<u8>,
     by_frn: HashMap<Key, u32>,
+    /// Directories the file system was asked about and would not name.
+    ///
+    /// The value says *why*: `true` for a directory that is deliberately not
+    /// indexed, `false` for one that could not be named at all. Keeping the
+    /// two apart is the whole point — the first is a correct outcome, the
+    /// second is a file quietly missing from the index.
+    declined: HashMap<Key, bool>,
 }
 
 impl DirTable {
@@ -225,6 +302,7 @@ impl DirTable {
             frns: Vec::with_capacity(n),
             vols: Vec::with_capacity(n),
             by_frn: HashMap::with_capacity(n),
+            declined: HashMap::new(),
         };
         for i in 0..n {
             let vol = old.volume_of_dir(i);
@@ -262,11 +340,82 @@ impl DirTable {
         self.by_frn.get(&(vol, Self::lookup_frn(frn))).copied()
     }
 
+    /// Was this directory left out on purpose, rather than simply not found?
+    fn was_excluded(&self, vol: u8, frn: u64) -> bool {
+        self.declined
+            .get(&(vol, Self::lookup_frn(frn)))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Resolve, and if that fails ask the file system once.
+    fn resolve_or_ask(&mut self, vol: u8, frn: u64, lookup: &dyn DirLookup) -> Option<u32> {
+        if let Some(id) = self.resolve(vol, frn) {
+            return Some(id);
+        }
+        let key = (vol, Self::lookup_frn(frn));
+        if self.declined.contains_key(&key) {
+            return None;
+        }
+        match lookup.path_of(vol, frn) {
+            DirAnswer::Path(path) => Some(self.push(vol, frn, path)),
+            // Remembered either way: the answer will not change within one
+            // batch, and asking again means another file-system round trip.
+            DirAnswer::Excluded => {
+                self.declined.insert(key, true);
+                None
+            }
+            DirAnswer::Unknown => {
+                self.declined.insert(key, false);
+                None
+            }
+        }
+    }
+
+    /// Give every file change a directory to land in, asking the file system
+    /// for the ones the index has never seen.
+    fn discover_parents(
+        &mut self,
+        latest: &HashMap<Key, &Change>,
+        lookup: &dyn DirLookup,
+        stats: &mut UpdateStats,
+    ) {
+        // Collected first so the borrow of `latest` ends before the table is
+        // mutated, and deduplicated because one new folder usually arrives
+        // holding many files at once.
+        let mut wanted: Vec<Key> = latest
+            .values()
+            .filter_map(|c| match c {
+                Change::Present {
+                    volume,
+                    parent_frn,
+                    is_dir: false,
+                    ..
+                } => Some((*volume, Self::lookup_frn(*parent_frn))),
+                _ => None,
+            })
+            .filter(|k| self.resolve(k.0, k.1).is_none())
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+
+        for (vol, frn) in wanted {
+            if self.resolve_or_ask(vol, frn, lookup).is_some() {
+                stats.dirs_looked_up += 1;
+            }
+        }
+    }
+
     fn live_count(&self) -> usize {
         self.paths.iter().filter(|p| p.is_some()).count()
     }
 
-    fn apply(&mut self, latest: &HashMap<Key, &Change>, stats: &mut UpdateStats) {
+    fn apply(
+        &mut self,
+        latest: &HashMap<Key, &Change>,
+        lookup: &dyn DirLookup,
+        stats: &mut UpdateStats,
+    ) {
         // Creations first, and in dependency order: a new directory's parent
         // may itself be new and appear later in the batch.
         let mut pending: HashMap<Key, (u64, &str)> = HashMap::new();
@@ -285,6 +434,11 @@ impl DirTable {
         }
         let keys: Vec<Key> = pending.keys().copied().collect();
         for key in keys {
+            // A new folder's parent may be one the index never knew either —
+            // a whole tree created under a directory that held nothing before.
+            if let Some((parent_frn, _)) = pending.get(&key).copied() {
+                let _ = self.resolve_or_ask(key.0, parent_frn, lookup);
+            }
             if self.materialise(key, &pending, 0).is_none() {
                 stats.unresolved += 1;
             } else {
@@ -638,6 +792,155 @@ mod tests {
         assert_eq!(new.len(), 4);
         assert_eq!(stats.unresolved, 1);
         assert_eq!(stats.files_added, 0);
+    }
+
+    /// A stand-in for the file system: knows a few directories by reference
+    /// number, refuses one on purpose, and knows nothing of the rest.
+    struct FakeFs {
+        known: Vec<(u8, u64, &'static str)>,
+        excluded: Vec<(u8, u64)>,
+    }
+
+    impl DirLookup for FakeFs {
+        fn path_of(&self, volume: u8, frn: u64) -> DirAnswer {
+            if self.excluded.iter().any(|&(v, f)| v == volume && f == frn) {
+                return DirAnswer::Excluded;
+            }
+            match self
+                .known
+                .iter()
+                .find(|&&(v, f, _)| v == volume && f == frn)
+            {
+                Some(&(_, _, path)) => DirAnswer::Path(path.to_string()),
+                None => DirAnswer::Unknown,
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_media_file_in_an_old_empty_folder_is_found_by_asking() {
+        // RISK-003. The folder was made last week and held nothing the index
+        // wanted, so it is not in the table. Today it gets its first video.
+        // Before this, that file stayed invisible until the next full scan.
+        let fs = FakeFs {
+            known: vec![(b'D', 77, r"D:\Phim\Chưa dùng")],
+            excluded: vec![],
+        };
+        let changes = vec![present(700, 77, "phim đầu tiên.mp4", false)];
+
+        // Without a lookup: dropped, and counted as a miss rather than as a
+        // deliberate exclusion.
+        let (before, s1) = rebuild_with(&library(), &changes);
+        assert_eq!(before.len(), 4);
+        assert_eq!(s1.unresolved, 1);
+        assert_eq!(s1.excluded, 0);
+
+        // With one: found.
+        let (after, s2) = rebuild_with_lookup(&library(), &changes, &fs);
+        assert!(paths(&after).contains(&r"D:\Phim\Chưa dùng\phim đầu tiên.mp4".to_string()));
+        assert_eq!(s2.files_added, 1);
+        assert_eq!(s2.dirs_looked_up, 1);
+        assert_eq!(s2.unresolved, 0);
+    }
+
+    #[test]
+    fn a_folder_the_file_system_declines_counts_as_excluded_not_as_a_miss() {
+        // `C:\Windows\Temp` produces journal records constantly. Declining
+        // them is the correct answer, and it must not look like the index is
+        // losing files — otherwise the one number worth watching is buried.
+        let fs = FakeFs {
+            known: vec![],
+            excluded: vec![(b'D', 88)],
+        };
+        let (new, stats) = rebuild_with_lookup(
+            &library(),
+            &[present(701, 88, "rác.mp4", false)],
+            &fs,
+        );
+
+        assert_eq!(new.len(), 4);
+        assert_eq!(stats.excluded, 1);
+        assert_eq!(stats.unresolved, 0, "bị loại có chủ ý không phải là bỏ sót");
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_named_at_all_still_counts_as_a_miss() {
+        let fs = FakeFs {
+            known: vec![],
+            excluded: vec![],
+        };
+        let (_, stats) =
+            rebuild_with_lookup(&library(), &[present(702, 99, "x.mp4", false)], &fs);
+        assert_eq!(stats.unresolved, 1);
+        assert_eq!(stats.excluded, 0);
+    }
+
+    #[test]
+    fn one_new_folder_holding_many_files_is_asked_about_once() {
+        // A folder usually turns up holding a whole batch of files. Asking the
+        // file system once per file would be one handle open per file.
+        struct Counting {
+            asked: std::cell::Cell<usize>,
+        }
+        impl DirLookup for Counting {
+            fn path_of(&self, _volume: u8, _frn: u64) -> DirAnswer {
+                self.asked.set(self.asked.get() + 1);
+                DirAnswer::Path(r"D:\Phim\Mới".to_string())
+            }
+        }
+
+        let fs = Counting {
+            asked: std::cell::Cell::new(0),
+        };
+        let changes: Vec<Change> = (0..50)
+            .map(|i| present(800 + i, 77, &format!("tệp {i}.mp4"), false))
+            .collect();
+
+        let (new, stats) = rebuild_with_lookup(&library(), &changes, &fs);
+
+        assert_eq!(stats.files_added, 50);
+        assert_eq!(fs.asked.get(), 1, "50 tệp cùng một thư mục = 1 lần hỏi");
+        assert_eq!(new.dir_count(), 4, "chỉ thêm đúng một thư mục");
+    }
+
+    #[test]
+    fn a_lookup_is_not_consulted_for_folders_the_index_already_knows() {
+        // Every avoidable question is a file-system round trip, and the index
+        // is right there.
+        struct Forbidden;
+        impl DirLookup for Forbidden {
+            fn path_of(&self, _volume: u8, _frn: u64) -> DirAnswer {
+                panic!("không được hỏi hệ thống tệp về thư mục đã có trong index");
+            }
+        }
+        let (new, _) = rebuild_with_lookup(
+            &library(),
+            &[present(900, 10, "thêm.mp4", false)],
+            &Forbidden,
+        );
+        assert!(paths(&new).contains(&r"D:\Phim\thêm.mp4".to_string()));
+    }
+
+    #[test]
+    fn a_new_folder_under_an_unknown_folder_resolves_through_both() {
+        // The journal describes the new subfolder, and the file system
+        // supplies the parent the index never had.
+        let fs = FakeFs {
+            known: vec![(b'D', 77, r"D:\Kho")],
+            excluded: vec![],
+        };
+        let changes = vec![
+            present(78, 77, "2026", true),
+            present(901, 78, "clip.mp4", false),
+        ];
+        let (new, stats) = rebuild_with_lookup(&library(), &changes, &fs);
+
+        assert!(
+            paths(&new).contains(&r"D:\Kho\2026\clip.mp4".to_string()),
+            "{:?}",
+            paths(&new)
+        );
+        assert_eq!(stats.files_added, 1);
     }
 
     #[test]

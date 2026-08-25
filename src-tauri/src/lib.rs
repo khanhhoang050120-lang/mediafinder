@@ -200,7 +200,7 @@ fn toggle(app: &tauri::AppHandle) {
 ///
 /// Needs Administrator, like every direct volume read (CHECK-004).
 pub fn run_incremental() -> bool {
-    use index::update::{rebuild_with, Change};
+    use index::update::Change;
     use ntfs::usn_journal::{self, Batch, Cursor};
     use ntfs::volume;
     use rayon::prelude::*;
@@ -226,6 +226,9 @@ pub fn run_incremental() -> bool {
 
     let mut changes: Vec<Change> = Vec::new();
     let mut stamps: Vec<index::persist::VolumeStamp> = Vec::new();
+    // Kept open past the journal read: applying the changes needs them again,
+    // to name directories the index has never seen (RISK-003).
+    let mut open: Vec<(u8, volume::VolumeHandle)> = Vec::new();
 
     for st in &cache.volumes {
         let Some(info) = by_letter.get(&st.letter) else {
@@ -255,6 +258,7 @@ pub fn run_incremental() -> bool {
                 let mut updated = st.clone();
                 updated.next_usn = next.next_usn;
                 stamps.push(updated);
+                open.push(((st.letter as u8).to_ascii_uppercase(), handle));
             }
             Ok(Batch::Restart(r)) => {
                 // Not an error. The journal simply cannot answer, so the only
@@ -281,18 +285,37 @@ pub fn run_incremental() -> bool {
         return true;
     }
 
-    let (mut ix, stats) = rebuild_with(&cache.index, &changes);
+    let lookup = ntfs::dir_lookup::VolumeDirLookup::new(
+        open.iter().map(|(letter, h)| (*letter, h)).collect(),
+        ntfs::tree::ResolveOptions::default(),
+    );
+    let (mut ix, stats) = index::update::rebuild_with_lookup(&cache.index, &changes, &lookup);
     tracing::info!(
-        "áp thay đổi: +{} tệp, -{} tệp, {} tệp chuyển chỗ, +{} thư mục, -{} thư mục, \
-         {} thư mục đổi tên, {} bỏ qua (ngoài phạm vi index)",
+        "áp thay đổi: +{} tệp, -{} tệp, {} tệp chuyển chỗ, +{} thư mục ({} hỏi hệ thống tệp), \
+         -{} thư mục, {} thư mục đổi tên",
         stats.files_added,
         stats.files_removed,
         stats.files_moved,
         stats.dirs_added,
+        stats.dirs_looked_up,
         stats.dirs_removed,
-        stats.dirs_renamed,
-        stats.unresolved
+        stats.dirs_renamed
     );
+    tracing::info!(
+        "  bỏ qua {} thay đổi ngoài phạm vi index — đúng như thiết kế",
+        stats.excluded
+    );
+    // Split from the line above on purpose. One number means "working as
+    // intended", the other means files are missing — reporting them together
+    // as a single "skipped" count is what would hide the second behind the
+    // first.
+    if stats.unresolved > 0 {
+        tracing::warn!(
+            "  {} thay đổi không tra được thư mục cha — những tệp này sẽ thiếu \
+             trong chỉ mục cho tới lần quét đầy đủ kế tiếp",
+            stats.unresolved
+        );
+    }
 
     // Only the entries the journal could not describe need a disk lookup: a
     // journal record carries no size, so a newly created file arrives at zero

@@ -437,3 +437,36 @@ ngay lần đếm đầu, tôi đã đi sửa một bộ quét vốn không hỏ
 
 **Mục 14.** Nút "Quét lại" trong giao diện gọi cùng một `--index`, nên nó cũng đi đường cập nhật
 nhanh — từ 13 giây xuống dưới nửa giây, vẫn chỉ một lần UAC.
+
+
+---
+
+### 2026-08-24 — Lượt test RISK-003 (tra thư mục cha qua NTFS)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **179/179 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Tệp đầu tiên trong thư mục cũ rỗng | `DirLookup` giả | ✅ không có lookup thì mất, có lookup thì tìm ra |
+| 4 | Thư mục bị hệ thống từ chối | như trên | ✅ đếm vào `excluded`, **không** vào `unresolved` |
+| 5 | Thư mục không tra được tên | như trên | ✅ vẫn đếm vào `unresolved` |
+| 6 | 50 tệp cùng một thư mục mới | đếm số lần gọi lookup | ✅ **1 lần hỏi**, không phải 50 |
+| 7 | Không hỏi về thư mục đã biết | lookup panic khi bị gọi | ✅ không bị gọi |
+| 8 | Thư mục mới nằm dưới thư mục lạ | journal + lookup | ✅ resolve qua cả hai |
+| 9 | Luật loại trừ áp cho đường dẫn ghép sẵn | `excludes_path` | ✅ `C:\Windows\Media`, `AppData`, `.recycle_bin`, `node_modules` đều bị loại |
+| 10 | Bỏ tiền tố `\\?\` | unit test | ✅ `\\?\D:\Phim` → `D:\Phim` |
+| 11 | **Kịch bản thật trên máy** | thư mục có trước lần quét đầy đủ, sau đó mới bỏ `.mp4` vào | ✅ **+1 tệp, 1 lần hỏi hệ thống tệp**, 0,60s |
+| 12 | Xoá thư mục vừa tra được | xoá rồi cập nhật nhanh | ✅ -1 tệp, -1 thư mục, về đúng 46.700 |
+
+**Kết luận:** 12/12 pass.
+
+**Mục 9 là mục dễ bỏ sót nhất.** Đường dẫn lấy thẳng từ NTFS **đi vòng qua** `tree.rs` — nơi vốn
+lọc từng thành phần trong lúc đi ngược chuỗi cha. Nếu không áp lại luật loại trừ ở đây thì mọi tệp
+media mới trong `C:\Windows` hay `AppData` sẽ chui thẳng vào index, và bộ lọc mà cả dự án dựa vào
+sẽ có một lỗ hổng rộng đúng bằng tính năng vừa thêm. Không có test nào **hiện có** bắt được điều
+đó, vì đường dẫn mới này chưa từng tồn tại.
+
+**Một lỗi trình bày tự tôi gây ra rồi tự bắt được.** Dòng log cảnh báo in ra một dãy dấu cách giữa
+câu: ký tự nối dòng `\` trong chuỗi Rust bị Python nuốt mất lúc tôi ghi file. Chỉ lộ ra khi **đọc
+dòng log thật**, không assertion nào chạm tới. Nhân đó tách luôn cảnh báo `unresolved` ra khỏi dòng
+`excluded` — gộp hai con số vào một câu chính là cách giấu con số quan trọng sau con số bình thường.

@@ -84,7 +84,7 @@ kết thúc dòng, và mỗi giai đoạn hoàn thành được commit thành m�
 
 ## RISK-003 ⚪ — Tệp media mới trong thư mục chưa từng có media sẽ bị cập nhật nhanh bỏ sót
 
-**Giai đoạn:** P9 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+**Giai đoạn:** P9 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-24
 
 **Chưa xảy ra với người dùng**, nhưng đã thấy dấu vết trong log của chính lượt kiểm chứng:
 
@@ -118,6 +118,58 @@ thêm quyền gì. Chi phí chỉ phát sinh với FRN chưa biết, tức là h
 Chưa làm vì nó cần thêm một đường Win32 nữa, và phần cập nhật nhanh vừa mới được kiểm chứng xong —
 thêm mã ngay lúc này sẽ trộn lẫn thứ đã kiểm chứng với thứ chưa.
 
-**Cách nhận biết nếu nó đang xảy ra.** Con số `unresolved` trong log. Hiện tại nó cũng đếm cả những
-thay đổi dưới thư mục **cố ý bị loại** (`Windows`, `AppData`…), vốn hoàn toàn bình thường — nên nếu
-làm tiếp thì nên tách hai loại này ra, chứ một con số gộp thì không nói lên điều gì.
+## Đã sửa
+
+**Cách sửa.** Khi không tra được FRN của thư mục cha, hỏi thẳng NTFS: `OpenFileById` mở thư mục
+theo số hiệu, `GetFinalPathNameByHandleW` cho biết nó nằm ở đâu.
+
+Ràng buộc kiến trúc: `index/update.rs` là đường nối **cố ý không có Win32** — đó là thứ khiến nó
+test được trên máy bất kỳ, không cần quyền, không cần ổ NTFS. Nên phần tra cứu đi qua một trait:
+
+```rust
+pub enum DirAnswer {
+    Path(String),   // có, và đây là đường dẫn
+    Excluded,       // có, nhưng cố ý không index
+    Unknown,        // không mở được, hoặc không còn tồn tại
+}
+
+pub trait DirLookup {
+    fn path_of(&self, volume: u8, frn: u64) -> DirAnswer;
+}
+```
+
+`rebuild_with` giữ nguyên chữ ký cũ (dùng `NoLookup`), thêm `rebuild_with_lookup`. Toàn bộ 21 test
+cũ không phải sửa một dòng, và 6 test mới dùng một `DirLookup` giả — chạy được không cần quyền.
+
+**Ba điều dễ sai đã xử lý.**
+
+1. **Luật loại trừ phải áp lại.** Đường dẫn lấy từ NTFS đã **đi vòng qua** `tree.rs`, nơi vốn lọc
+   từng thành phần một trong lúc đi ngược chuỗi cha. Không lọc lại thì `C:{bs}Windows{bs}Temp` sẽ
+   chui thẳng vào index — một lỗ hổng rộng đúng bằng tính năng này. Thêm
+   `ResolveOptions::excludes_path`, có test khoá lại.
+
+2. **Hỏi một lần cho mỗi thư mục, không phải mỗi tệp.** Một thư mục mới thường xuất hiện kèm cả
+   loạt tệp; hỏi theo từng tệp là mở một handle cho mỗi tệp. `discover_parents` gom và khử trùng
+   lặp trước. Có test: 50 tệp cùng một thư mục → **1 lần hỏi**.
+
+3. **Không hỏi về thư mục index đã biết.** Test dùng một `DirLookup` panic ngay khi bị gọi.
+
+**Tách `unresolved` làm hai.** Trước đây một con số gộp cả "cố ý bỏ qua" lẫn "không tra được" thì
+không nói lên điều gì. Nay `excluded` ghi ở mức `info` (đúng như thiết kế) còn `unresolved` ghi ở
+mức `warn` — vì mỗi mục ở đó là một tệp có thật trên đĩa và thiếu trong chỉ mục.
+
+**Kiểm chứng trên máy thật.** Đúng kịch bản, gộp trong một lần elevate:
+
+```
+BUOC 1: tạo thư mục + một tệp .txt, rồi quét đầy đủ
+        → thư mục không có media nên KHÔNG vào index
+BUOC 2: giờ mới bỏ một .mp4 vào thư mục đó
+BUOC 3: cập nhật nhanh
+
+áp thay đổi: +1 tệp, ..., +0 thư mục (1 hỏi hệ thống tệp), ...
+  bỏ qua 0 thay đổi ngoài phạm vi index
+cập nhật nhanh xong: 46701 mục [0.60s]
+```
+
+Đúng một lần hỏi, tệp vào index đúng đường dẫn và đúng dung lượng. Trước khi sửa, chính tệp đó bị
+đếm vào `unresolved` và biến mất cho tới lần quét đầy đủ kế tiếp.
