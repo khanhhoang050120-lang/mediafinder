@@ -40,6 +40,7 @@ nào khớp tốt hơn ([CONF-005](docs/config.md#conf-005)).
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ✅ **XONG** — 126 test, kiểm chứng trên bản release |
 | **P9** | Cập nhật gia tăng qua USN journal | ✅ **giai đoạn 1 XONG** — 0,45s thay cho 13,2s, kiểm chứng trên máy thật |
 | **P10** | Quét ổ mạng / NAS theo yêu cầu | ✅ **XONG** — 313.945 tệp trên NAS, 4,5 phút, có nút riêng |
+| **P11** | Chạy nền ở khay hệ thống | ✅ **XONG** — đóng cửa sổ thì ẩn, chỉ Thoát mới tắt hẳn |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -742,6 +743,42 @@ bấm "Quét lại" là mất sạch. Quy tắc, cố ý viết mà không nhắ
 Phần NAS **không** cập nhật gia tăng — không có journal để theo. Muốn mới thì bấm lại nút.
 `ReadDirectoryChangesW` *có thể* chạy qua SMB nếu máy chủ hỗ trợ change notify, nhưng đó là thứ
 phải thử thật trên chính hai máy này chứ không đọc tài liệu rồi tin.
+
+---
+
+## P11 — Chạy nền ở khay hệ thống ✅
+
+**Người dùng đề xuất, và nó vá một lỗ hổng thật.** Nguyên văn: *"khi ấy tôi đã tắt rồi nhưng mà
+đột nhiên tôi có file muốn tìm thì tôi sẽ không sử dụng được Ctrl+Alt+Space."*
+
+Phím tắt sống trong tiến trình. Bấm X là giết tiến trình, nên phím tắt chết theo — mà đó lại là
+đường vào chính. Nghịch lý: càng dùng đúng cách (đóng cửa sổ cho gọn) thì càng làm hỏng tính năng
+chính, và không có gì trên màn hình nói cho biết điều đó.
+
+### Việc đã làm
+
+- [x] Đóng cửa sổ thì **ẩn**, không thoát — `CloseRequested` gọi `prevent_close()` rồi `hide()`
+- [x] Biểu tượng ở khay hệ thống, kèm tooltip nhắc phím tắt
+- [x] Bấm trái vào biểu tượng: hiện/ẩn, y như phím tắt
+- [x] Chuột phải: menu **Mở MediaFinder** · **Thoát**
+- [x] Menu chỉ hiện khi chuột phải — chuột trái là thao tác nhanh, phải làm việc nhanh
+- [x] Một dòng trên màn hình trống nói rõ đóng cửa sổ không phải là thoát
+- [x] Không cản trở tắt máy
+
+### Kiểm chứng trên máy thật
+
+| Việc | Kết quả |
+|---|---|
+| Gửi `WM_CLOSE` (đúng thứ nút X gửi) | cửa sổ ẩn, **tiến trình vẫn sống** |
+| Bấm phím tắt sau đó | cửa sổ hiện lại |
+| Biểu tượng có trong khay không | có, trong vùng ẩn, tooltip *"MediaFinder — Ctrl+Alt+Space để tìm kiếm"* |
+| Chuột phải → Thoát | **tiến trình kết thúc** |
+| `WM_QUERYENDSESSION` | trả về **1** — không cản trở tắt máy |
+
+Mục cuối là thứ dễ làm sai nhất mà không ai để ý cho tới lúc tắt máy: một ứng dụng chặn sự kiện
+đóng có thể chặn nhầm cả tín hiệu kết thúc phiên, khiến Windows hiện *"ứng dụng này đang ngăn tắt
+máy"*. Thử được an toàn bằng cách gửi đúng thông điệp Windows dùng để hỏi, thay vì phải tắt máy
+thật.
 
 ---
 

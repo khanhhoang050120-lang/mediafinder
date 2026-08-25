@@ -84,7 +84,24 @@ pub fn run_gui() {
 
             register_hotkey(app.handle());
             watch_cache(app.handle());
+            build_tray(app.handle());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing the window must not end the process.
+            //
+            // The hotkey lives in this process; killing it takes the hotkey
+            // with it, so tidying the window away would quietly disable the
+            // main way back in. Hiding keeps the program reachable and costs
+            // 45 MB of an idle process.
+            //
+            // Only reached for the window's own close button. A shutdown ends
+            // the session rather than asking each window to close, so this
+            // cannot hold up a restart.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .manage(app_state)
         .manage(media::thumbnail::ThumbnailService::new())
@@ -113,6 +130,80 @@ pub fn run_gui() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");
+}
+
+/// The tray icon, and the only way to actually quit.
+///
+/// Closing the window hides it, so without something in the tray there would
+/// be no sign the program is still running and no way to stop it short of Task
+/// Manager. The icon is that sign; "Thoát" is that way.
+fn build_tray(app: &tauri::AppHandle) {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let open = MenuItemBuilder::with_id("open", format!("Mở MediaFinder  ({HOTKEY})"))
+        .build(app)
+        .ok();
+    let quit = MenuItemBuilder::with_id("quit", "Thoát").build(app).ok();
+    let (Some(open), Some(quit)) = (open, quit) else {
+        tracing::warn!("không dựng được mục menu khay hệ thống");
+        return;
+    };
+
+    let menu = match MenuBuilder::new(app)
+        .item(&open)
+        .separator()
+        .item(&quit)
+        .build()
+    {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("không dựng được menu khay hệ thống: {e}");
+            return;
+        }
+    };
+
+    let result = TrayIconBuilder::with_id("main")
+        .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
+            // Never expected: the icon is compiled in. Falling back to a blank
+            // one still leaves something clickable in the tray, which beats
+            // having no way to quit.
+            tauri::image::Image::new_owned(vec![0; 4], 1, 1)
+        }))
+        .tooltip(format!("MediaFinder — {HOTKEY} để tìm kiếm"))
+        .menu(&menu)
+        // The menu belongs on right-click only. Left-click is the quick
+        // gesture and should do the quick thing.
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "open" => summon(app),
+            "quit" => {
+                tracing::info!("thoát theo yêu cầu từ khay hệ thống");
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle(tray.app_handle());
+            }
+        })
+        .build(app);
+
+    match result {
+        Ok(_) => tracing::info!("khay hệ thống: sẵn sàng"),
+        // Not fatal, but it does mean closing the window would leave no way
+        // back except the hotkey — so say so rather than fail silently.
+        Err(e) => tracing::warn!(
+            "không dựng được biểu tượng khay hệ thống: {e} — \
+             đóng cửa sổ vẫn ẩn chứ không thoát, dùng {HOTKEY} để gọi lại"
+        ),
+    }
 }
 
 /// Reload the index when something else rewrites the cache.

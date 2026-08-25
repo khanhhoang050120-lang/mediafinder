@@ -33,13 +33,18 @@ Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 
 | Việc | Cách |
 |---|---|
-| Mở phần mềm | `Ctrl+Alt+Space` từ bất kỳ đâu, hoặc Start Menu |
-| Ẩn đi | bấm lại đúng phím đó |
+| Mở phần mềm | `Ctrl+Alt+Space` từ bất kỳ đâu, Start Menu, hoặc bấm biểu tượng ở khay |
+| Ẩn đi | bấm lại đúng phím đó, hoặc đóng cửa sổ |
+| **Tắt hẳn** | chuột phải biểu tượng ở khay → **Thoát** |
 | Cập nhật ổ trong máy | tự động lúc đăng nhập (~0,45 s, không UAC), hoặc nút **Quét lại** |
 | Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
 
 Ứng dụng khởi động cùng Windows ở chế độ **ẩn**: nó đăng ký phím tắt rồi chờ, không mở cửa sổ nào.
 Phím tắt chỉ hoạt động khi ứng dụng đang chạy, nên đây là điều kiện để nó dùng được.
+
+Vì cùng lý do đó, **đóng cửa sổ chỉ ẩn đi**. Biểu tượng ở khay hệ thống là dấu hiệu cho biết nó vẫn
+ở đó, và menu chuột phải là cách tắt hẳn. Tắt máy thì nó tắt theo như mọi chương trình khác — đã
+kiểm chứng là không cản trở quá trình tắt máy.
 
 Tự cập nhật chạy qua một Scheduled Task với quyền cao — đó là cách duy nhất đọc được USN journal
 mà **không** hiện UAC mỗi lần đăng nhập ([CHECK-004](./docs/check.md#check-004)). Tác vụ này không

@@ -624,3 +624,37 @@ nào.
 bản: nó bấm phím tắt để gọi cửa sổ **trước**, mà cửa sổ đang hiện và đang focus — nên chính phím
 tắt đó **ẩn nó đi**, và UIA không còn gì để tìm. Cùng họ với [BUG-016](./bug.md#bug-016): công cụ
 kiểm chứng cũng cần được kiểm chứng.
+
+
+---
+
+### 2026-08-25 — Lượt test P11 (chạy nền ở khay hệ thống)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ 186 pass, sạch cả bốn |
+| 2 | Khay hệ thống dựng được | đọc log | ✅ *"khay hệ thống: sẵn sàng"* |
+| 3 | Bấm X thì ẩn hay thoát | gửi `WM_CLOSE` | ✅ ẩn, **tiến trình vẫn sống** |
+| 4 | Gọi lại sau khi ẩn | phím tắt | ✅ cửa sổ hiện lại |
+| 5 | Biểu tượng có thật trong khay không | UI Automation | ✅ trong vùng ẩn, đúng tooltip |
+| 6 | Chuột phải → Thoát | UIA tìm biểu tượng, chuột phải, bàn phím chọn | ✅ **tiến trình kết thúc** |
+| 7 | Có cản trở tắt máy không | gửi `WM_QUERYENDSESSION` | ✅ trả về **1** — không cản trở |
+| 8 | Người dùng có biết X không phải thoát không | nhìn ảnh chụp | ✅ có một dòng nói rõ trên màn hình trống |
+
+**Kết luận:** 8/8 pass.
+
+**Mục 7 là mục dễ bỏ qua nhất và hậu quả thì chỉ hiện ra lúc tắt máy.** Một ứng dụng chặn sự kiện
+đóng cửa sổ có thể chặn nhầm luôn tín hiệu kết thúc phiên, khiến Windows treo ở màn hình
+*"ứng dụng này đang ngăn tắt máy"*. Không cần tắt máy thật để biết: gửi đúng thông điệp Windows
+dùng để hỏi (`WM_QUERYENDSESSION`) và đọc câu trả lời.
+
+**Mục 6 phải đi đường vòng.** UIA **không đọc được** menu khay của Tauri — nó là menu Win32 gốc
+(lớp `#32768`), và khi hỏi UIA thì thứ trả về lại là thanh menu của VS Code ở cửa sổ khác. Cách làm
+sau cùng: xác nhận đúng một cửa sổ `#32768` vừa hiện ra, rồi điều khiển bằng bàn phím — menu gốc
+luôn nhận phím mũi tên. Ghi lại vì lần sau gặp menu gốc sẽ vấp đúng chỗ này.
+
+**Hai lần đầu kịch bản chạy sai, cả hai đều là lỗi của kịch bản.** Lần một: nó bấm nút "Show Hidden
+Icons" trong khi vùng ẩn **đang mở**, mà Invoke là phép bật/tắt nên nó đóng lại. Lần hai: chuột
+phải rơi vào toạ độ cũ sau khi flyout đã đóng. Cùng bài học với [BUG-016](./bug.md#bug-016) — thao
+tác ở cấp hệ thống không tự biết nó đang nhắm vào cái gì, nên phải xác nhận trạng thái ngay trước
+mỗi bước, và gộp cả chuỗi vào một tiến trình.

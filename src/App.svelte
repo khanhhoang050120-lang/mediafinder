@@ -797,6 +797,11 @@
               {/each}
               {#if hotkey.active}
                 để gọi cửa sổ này từ bất kỳ đâu
+                <br />
+                <span class="quiet">
+                  Đóng cửa sổ chỉ ẩn đi để phím tắt còn dùng được — chuột phải
+                  biểu tượng ở khay hệ thống rồi chọn <em>Thoát</em> để tắt hẳn
+                </span>
               {:else}
                 đang bị ứng dụng khác chiếm — đóng ứng dụng đó rồi mở lại
                 MediaFinder để dùng được phím tắt
@@ -1162,6 +1167,20 @@
     font-size: 12px;
     opacity: 0.75;
   }
+  /* A second line under the hotkey hint, deliberately quieter: it answers a
+     question the user has not asked yet, and should not compete with the one
+     they have. */
+  .quiet {
+    display: inline-block;
+    margin-top: 6px;
+    font-size: 12px;
+    opacity: 0.65;
+  }
+  .quiet em {
+    font-style: normal;
+    opacity: 0.9;
+  }
+
   /* Amber rather than red: the app still works, only the shortcut is gone. */
   .hint.taken {
     color: #d8a657;

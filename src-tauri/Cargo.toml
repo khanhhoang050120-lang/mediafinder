@@ -19,7 +19,11 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon`: closing the window hides it instead of quitting, and the tray is
+# then the only visible sign the program is still there. Without it, a user who
+# tidies the window away would silently lose the global hotkey — which is the
+# main way in.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 
 # A launcher that has to be found and clicked is not a launcher. The hotkey is
 # what makes this reachable mid-task without leaving whatever you were doing.
