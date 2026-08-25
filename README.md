@@ -29,6 +29,24 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 
 Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 
+## Vòng kiểm tra
+
+Bốn lệnh, chạy trước mỗi lần commit:
+
+```bash
+cd src-tauri && cargo test            # 186 test
+cd src-tauri && cargo clippy --all-targets
+cd src-tauri && cargo fmt --check     # phải im lặng
+npm run check                         # type-check frontend
+```
+
+Định dạng theo **mặc định của rustfmt**, không có `rustfmt.toml`. Đã đo: không cấu hình nào khớp
+với mã nguồn tốt hơn mặc định — xem [`docs/config.md`](./docs/config.md#conf-005).
+
+Hai chỗ mang `#[rustfmt::skip]`, và chỉ hai chỗ: `is_word_boundary` trong `index/search.rs` và
+`mod pkey` trong `media/metadata.rs`. Cả hai là **bảng dữ liệu** mà đọc theo hàng mới có nghĩa;
+rustfmt tách mỗi phần tử một dòng và làm mất hình dạng của bảng.
+
 ## Tài liệu
 
 | File | Nội dung |

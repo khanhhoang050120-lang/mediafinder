@@ -72,7 +72,10 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     // a thumbnail decode.
     drop(snapshot);
 
-    match app.state::<ThumbnailService>().get(index as u64, &path, size) {
+    match app
+        .state::<ThumbnailService>()
+        .get(index as u64, &path, size)
+    {
         Ok(png) => Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "image/png")

@@ -118,9 +118,8 @@ pub fn enumerate(
             break;
         }
 
-        let bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, returned as usize)
-        };
+        let bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, returned as usize) };
 
         // The first 8 bytes are the cursor for the next call, not a record.
         input.StartFileReferenceNumber = u64::from_le_bytes(bytes[..8].try_into().unwrap());
@@ -178,8 +177,7 @@ fn parse_buffer(mut bytes: &[u8], out: &mut Vec<RawRecord>, stats: &mut ScanStat
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
 
-        let attrs =
-            u32::from_le_bytes(record[rec::FILE_ATTRIBUTES..][..4].try_into().unwrap());
+        let attrs = u32::from_le_bytes(record[rec::FILE_ATTRIBUTES..][..4].try_into().unwrap());
         let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
 
         // Directories are always kept: without the full set of them the tree
@@ -201,7 +199,9 @@ fn parse_buffer(mut bytes: &[u8], out: &mut Vec<RawRecord>, stats: &mut ScanStat
         };
 
         let frn = u64::from_le_bytes(
-            record[rec::FILE_REFERENCE_NUMBER..][..8].try_into().unwrap(),
+            record[rec::FILE_REFERENCE_NUMBER..][..8]
+                .try_into()
+                .unwrap(),
         );
         let parent_frn = u64::from_le_bytes(
             record[rec::PARENT_FILE_REFERENCE_NUMBER..][..8]
@@ -301,8 +301,14 @@ mod tests {
         r[rec::MAJOR_VERSION..][..2].copy_from_slice(&2u16.to_le_bytes());
         r[rec::FILE_REFERENCE_NUMBER..][..8].copy_from_slice(&frn.to_le_bytes());
         r[rec::PARENT_FILE_REFERENCE_NUMBER..][..8].copy_from_slice(&parent.to_le_bytes());
-        r[rec::FILE_ATTRIBUTES..][..4]
-            .copy_from_slice(&(if is_dir { FILE_ATTRIBUTE_DIRECTORY } else { 0x80 }).to_le_bytes());
+        r[rec::FILE_ATTRIBUTES..][..4].copy_from_slice(
+            &(if is_dir {
+                FILE_ATTRIBUTE_DIRECTORY
+            } else {
+                0x80
+            })
+            .to_le_bytes(),
+        );
         r[rec::FILE_NAME_LENGTH..][..2].copy_from_slice(&(name_bytes.len() as u16).to_le_bytes());
         r[rec::FILE_NAME_OFFSET..][..2].copy_from_slice(&(name_off as u16).to_le_bytes());
         r[name_off..name_off + name_bytes.len()].copy_from_slice(&name_bytes);

@@ -195,7 +195,11 @@ fn find_duplicates(
 
     // Biggest waste first — the order somebody clearing space wants to work
     // through. The entry tiebreak keeps two runs of the same scan identical.
-    groups.sort_unstable_by(|a, b| b.wasted.cmp(&a.wasted).then(a.entries[0].cmp(&b.entries[0])));
+    groups.sort_unstable_by(|a, b| {
+        b.wasted
+            .cmp(&a.wasted)
+            .then(a.entries[0].cmp(&b.entries[0]))
+    });
     groups
 }
 

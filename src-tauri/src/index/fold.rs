@@ -191,7 +191,13 @@ mod tests {
     #[test]
     fn ascii_fast_path_matches_the_general_path() {
         // The ASCII shortcut must not diverge from the full implementation.
-        for s in ["Hello World.MP4", "S01E02-1080p.MKV", "", "12345", "A_b-c.d"] {
+        for s in [
+            "Hello World.MP4",
+            "S01E02-1080p.MKV",
+            "",
+            "12345",
+            "A_b-c.d",
+        ] {
             let mut general = String::new();
             for c in s.nfd() {
                 if !is_combining_mark(c) {
@@ -219,7 +225,11 @@ mod tests {
     #[test]
     fn handles_empty_and_marks_only_input() {
         assert_eq!(fold(""), "");
-        assert_eq!(fold("\u{0301}\u{0323}"), "", "bare marks fold away entirely");
+        assert_eq!(
+            fold("\u{0301}\u{0323}"),
+            "",
+            "bare marks fold away entirely"
+        );
     }
 
     #[test]

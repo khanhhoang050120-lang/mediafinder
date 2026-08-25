@@ -390,7 +390,11 @@ mod tests {
 
     #[test]
     fn file_directly_in_the_volume_root() {
-        let set = resolve(vec![file(100, ROOT, "movie.mp4")], 'D', &ResolveOptions::default());
+        let set = resolve(
+            vec![file(100, ROOT, "movie.mp4")],
+            'D',
+            &ResolveOptions::default(),
+        );
         assert_eq!(path_of(&set, &set.files[0]), r"D:\movie.mp4");
     }
 
@@ -588,10 +592,7 @@ mod tests {
 
     #[test]
     fn dot_directory_rule_can_be_turned_off() {
-        let records = vec![
-            dir(10, ROOT, ".hidden"),
-            file(100, 10, "clip.mp4"),
-        ];
+        let records = vec![dir(10, ROOT, ".hidden"), file(100, 10, "clip.mp4")];
         let opts = ResolveOptions {
             skip_dot_directories: false,
             ..Default::default()
@@ -606,7 +607,9 @@ mod tests {
         // are also perfectly ordinary folder names. Losing a user's media
         // silently is much worse than showing a few build artefacts, so these
         // must stay searchable.
-        for name in ["build", "dist", "target", "bin", "obj", "vendor", "packages"] {
+        for name in [
+            "build", "dist", "target", "bin", "obj", "vendor", "packages",
+        ] {
             let records = vec![dir(10, ROOT, name), file(100, 10, "clip.mp4")];
             let set = resolve(records, 'D', &ResolveOptions::default());
             assert_eq!(
@@ -620,7 +623,11 @@ mod tests {
     #[test]
     fn orphan_is_counted_not_panicked_on() {
         // Parent 99 was never enumerated.
-        let set = resolve(vec![file(100, 99, "lost.mp4")], 'C', &ResolveOptions::default());
+        let set = resolve(
+            vec![file(100, 99, "lost.mp4")],
+            'C',
+            &ResolveOptions::default(),
+        );
         assert!(set.files.is_empty());
         assert_eq!(set.stats.orphaned, 1);
     }

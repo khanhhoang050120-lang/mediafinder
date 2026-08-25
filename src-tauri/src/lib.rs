@@ -119,13 +119,15 @@ fn register_hotkey(app: &tauri::AppHandle) {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
     let handle = app.clone();
-    let result = app.global_shortcut().on_shortcut(HOTKEY, move |_app, _sc, event| {
-        // Fire on press only. Without this the window would toggle twice per
-        // keypress — once down, once up — and end up back where it started.
-        if event.state == ShortcutState::Pressed {
-            toggle(&handle);
-        }
-    });
+    let result = app
+        .global_shortcut()
+        .on_shortcut(HOTKEY, move |_app, _sc, event| {
+            // Fire on press only. Without this the window would toggle twice per
+            // keypress — once down, once up — and end up back where it started.
+            if event.state == ShortcutState::Pressed {
+                toggle(&handle);
+            }
+        });
 
     match result {
         Ok(()) => {
@@ -239,8 +241,11 @@ pub fn scan_network_volumes(cancel: &std::sync::atomic::AtomicBool) -> NetworkSc
 
     let mut progress = ipc::elevate::ProgressWriter::new().ok();
     let opts = ntfs::tree::ResolveOptions::default();
-    let mut walked: Vec<(char, ntfs::tree::ResolvedSet, Vec<media::metadata::FileStats>)> =
-        Vec::new();
+    let mut walked: Vec<(
+        char,
+        ntfs::tree::ResolvedSet,
+        Vec<media::metadata::FileStats>,
+    )> = Vec::new();
 
     for (n, letter) in drives.iter().enumerate() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -302,7 +307,10 @@ pub fn scan_network_volumes(cancel: &std::sync::atomic::AtomicBool) -> NetworkSc
         }
         let old_dir = old.dir_ids()[i];
         let dir_id = *dir_remap.entry(old_dir).or_insert_with(|| {
-            builder.add_dir(old.dir_path(old_dir as usize), old.dir_frn(old_dir as usize))
+            builder.add_dir(
+                old.dir_path(old_dir as usize),
+                old.dir_frn(old_dir as usize),
+            )
         });
         builder.add_file(old.name(i), old.kind(i), dir_id, old.frn(i));
         sizes.push(old.size(i));
@@ -311,11 +319,7 @@ pub fn scan_network_volumes(cancel: &std::sync::atomic::AtomicBool) -> NetworkSc
     let kept = sizes.len();
 
     for (_, set, stats) in &walked {
-        let remap: Vec<u32> = set
-            .dirs
-            .iter()
-            .map(|d| builder.add_dir(d, 0))
-            .collect();
+        let remap: Vec<u32> = set.dirs.iter().map(|d| builder.add_dir(d, 0)).collect();
         for (f, st) in set.files.iter().zip(stats) {
             builder.add_file(&f.name, f.kind, remap[f.dir_id as usize], 0);
             sizes.push(st.size);
@@ -703,9 +707,7 @@ pub fn run_audit(args: &[String]) {
                     for d in deletions.iter().filter(|d| d.is_dir) {
                         if by_frn.contains_key(&d.parent_frn) {
                             if let Some(parent) = resolve(d.parent_frn) {
-                                *roots
-                                    .entry(format!("{parent}\\{}", d.name))
-                                    .or_default() += 1;
+                                *roots.entry(format!("{parent}\\{}", d.name)).or_default() += 1;
                             }
                         }
                     }
@@ -921,7 +923,11 @@ fn describe(c: &index::update::Change) -> String {
         } => format!(
             "{}: {} frn={frn} cha={parent_frn} {name}",
             *volume as char,
-            if *is_dir { "THƯ MỤC " } else { "CÓ MẶT  " }
+            if *is_dir {
+                "THƯ MỤC "
+            } else {
+                "CÓ MẶT  "
+            }
         ),
     }
 }
@@ -1136,11 +1142,7 @@ pub fn run_indexer() {
             st.volumes_done += 1;
             st.media_files += set.files.len() as u64;
             st.phase = "indexing".into();
-            st.message = format!(
-                "Xong ổ {}: {} tệp media",
-                v.letter,
-                set.files.len()
-            );
+            st.message = format!("Xong ổ {}: {} tệp media", v.letter, set.files.len());
             p.flush();
         }
 
@@ -1175,8 +1177,7 @@ pub fn run_indexer() {
 
     if let Ok(previous) = index::persist::load() {
         let old = &previous.index;
-        let mut dir_remap: std::collections::HashMap<u32, u32> =
-            std::collections::HashMap::new();
+        let mut dir_remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
 
         for i in 0..old.len() {
             if scanned.contains(&old.volume_of(i)) {
@@ -1184,7 +1185,10 @@ pub fn run_indexer() {
             }
             let old_dir = old.dir_ids()[i];
             let dir_id = *dir_remap.entry(old_dir).or_insert_with(|| {
-                builder.add_dir(old.dir_path(old_dir as usize), old.dir_frn(old_dir as usize))
+                builder.add_dir(
+                    old.dir_path(old_dir as usize),
+                    old.dir_frn(old_dir as usize),
+                )
             });
             builder.add_file(old.name(i), old.kind(i), dir_id, old.frn(i));
             // Kept rather than re-measured: these files are on a drive this
@@ -1200,10 +1204,8 @@ pub fn run_indexer() {
         }
 
         if !carried.is_empty() {
-            let drives: std::collections::BTreeSet<char> = carried_stamps
-                .iter()
-                .map(|s| s.letter)
-                .collect();
+            let drives: std::collections::BTreeSet<char> =
+                carried_stamps.iter().map(|s| s.letter).collect();
             tracing::info!(
                 "giữ lại {} mục từ ổ không quét lần này ({}) — lần quét này không có \
                  thẩm quyền nói gì về chúng",
@@ -1243,9 +1245,11 @@ pub fn run_indexer() {
             .par_iter()
             .map(|p| media::metadata::file_stats(p).unwrap_or_default())
             .collect();
-        stats.extend(carried.iter().map(|&(size, mtime)| {
-            media::metadata::FileStats { size, mtime }
-        }));
+        stats.extend(
+            carried
+                .iter()
+                .map(|&(size, mtime)| media::metadata::FileStats { size, mtime }),
+        );
 
         let total_bytes: u64 = stats.iter().map(|s| s.size).sum();
         ix.set_file_stats(
@@ -1390,11 +1394,7 @@ fn demo_searches(ix: &index::model::Index) {
             note
         );
         for h in outcome.hits.iter().take(3) {
-            tracing::info!(
-                "      [{}] {}",
-                h.score,
-                ix.full_path(h.index as usize)
-            );
+            tracing::info!("      [{}] {}", h.score, ix.full_path(h.index as usize));
         }
     }
 }

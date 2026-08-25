@@ -33,7 +33,7 @@ use rayon::prelude::*;
 
 use crate::index::model::classify_name;
 use crate::media::metadata::FileStats;
-use crate::ntfs::tree::{ResolveOptions, ResolvedFile, ResolveStats, ResolvedSet};
+use crate::ntfs::tree::{ResolveOptions, ResolveStats, ResolvedFile, ResolvedSet};
 
 /// How many directories to hand to rayon at once.
 ///
@@ -106,10 +106,7 @@ pub fn walk_volume(
             stats.excluded += r.excluded;
 
             for (path, name) in r.subdirs {
-                let full = format!(
-                    "{}\\{name}",
-                    dirs[r.id as usize]
-                );
+                let full = format!("{}\\{name}", dirs[r.id as usize]);
                 let key = full.to_ascii_lowercase();
                 let id = match dir_id.get(&key) {
                     // A path reached twice means a link was followed despite
@@ -193,12 +190,7 @@ fn stats_of(entry: &std::fs::DirEntry) -> FileStats {
     }
 }
 
-fn read_one(
-    path: &Path,
-    id: u32,
-    opts: &ResolveOptions,
-    files_seen: &AtomicUsize,
-) -> DirContents {
+fn read_one(path: &Path, id: u32, opts: &ResolveOptions, files_seen: &AtomicUsize) -> DirContents {
     let mut out = DirContents {
         id,
         subdirs: Vec::new(),
@@ -381,8 +373,14 @@ mod tests {
         let paths = names(&set);
 
         assert_eq!(paths.len(), 2);
-        assert!(paths.iter().any(|p| p.ends_with(r"a\b\c\sâu.mp4")), "{paths:?}");
-        assert!(paths.iter().any(|p| p.ends_with(r"a\nông.mkv")), "{paths:?}");
+        assert!(
+            paths.iter().any(|p| p.ends_with(r"a\b\c\sâu.mp4")),
+            "{paths:?}"
+        );
+        assert!(
+            paths.iter().any(|p| p.ends_with(r"a\nông.mkv")),
+            "{paths:?}"
+        );
     }
 
     #[test]
@@ -438,7 +436,11 @@ mod tests {
         let (set, stats) = walk_dir(&t.root, &ResolveOptions::default());
 
         assert_eq!(set.files.len(), 1);
-        assert_eq!(stats.len(), set.files.len(), "phải song song với danh sách tệp");
+        assert_eq!(
+            stats.len(),
+            set.files.len(),
+            "phải song song với danh sách tệp"
+        );
         assert_eq!(stats[0].size, 4096);
         assert!(stats[0].mtime > 0, "phải có thời gian sửa đổi thật");
     }

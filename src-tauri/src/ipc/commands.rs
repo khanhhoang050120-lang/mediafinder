@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
 use crate::index::model::MediaKind;
-use crate::ipc::elevate;
 use crate::index::search::{search as run_search, SearchOptions};
+use crate::ipc::elevate;
 use crate::state::{AppState, IndexMeta};
 
 #[derive(Debug, Serialize)]
@@ -464,8 +464,8 @@ pub mod shell {
     use windows::Win32::System::Com::{
         CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
     };
-    use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
     use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     /// `ShellExecuteW` returns a fake HINSTANCE; anything above 32 means success.
@@ -564,8 +564,7 @@ mod tests {
 
     #[test]
     fn revealing_a_missing_file_under_a_missing_folder_is_an_error() {
-        let err =
-            reveal_in_explorer(r"D:\definitely\not\here\nope.mp4".into()).unwrap_err();
+        let err = reveal_in_explorer(r"D:\definitely\not\here\nope.mp4".into()).unwrap_err();
         assert!(err.contains("không còn"));
     }
 }

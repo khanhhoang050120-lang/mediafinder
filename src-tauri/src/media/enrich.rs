@@ -60,7 +60,10 @@ const SAVE_EVERY: usize = 500;
 // finishing meaningfully sooner, and saving more often than every few hundred
 // files would make saving itself the bottleneck.
 const _: () = assert!(WORKERS < 4, "quá nhiều luồng sẽ chiếm đĩa của người dùng");
-const _: () = assert!(WORKERS * SAVE_EVERY >= 200, "một lượt lưu phải bao đủ công việc");
+const _: () = assert!(
+    WORKERS * SAVE_EVERY >= 200,
+    "một lượt lưu phải bao đủ công việc"
+);
 
 /// One file's stored answer.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -309,10 +312,7 @@ fn worker(ctx: WorkerCtx) {
     if ctx.active.fetch_sub(1, Ordering::AcqRel) == 1 {
         let _ = save_store(&ctx.store.lock());
         ctx.running.store(false, Ordering::Relaxed);
-        tracing::info!(
-            "enrichment xong: {} mục",
-            ctx.done.load(Ordering::Relaxed)
-        );
+        tracing::info!("enrichment xong: {} mục", ctx.done.load(Ordering::Relaxed));
     }
 }
 
@@ -380,7 +380,9 @@ fn path_key(path: &str) -> u64 {
 }
 
 fn store_path() -> Option<PathBuf> {
-    crate::index::persist::cache_dir().ok().map(|d| d.join("metadata.bin"))
+    crate::index::persist::cache_dir()
+        .ok()
+        .map(|d| d.join("metadata.bin"))
 }
 
 fn load_store() -> Option<Store> {

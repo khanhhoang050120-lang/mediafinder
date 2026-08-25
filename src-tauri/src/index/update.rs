@@ -243,7 +243,10 @@ pub fn rebuild_with_lookup(
             // and nothing wrong either.
             continue;
         };
-        let Some(dir_id) = dirs.resolve(*volume, *parent_frn).and_then(|d| remap[d as usize]) else {
+        let Some(dir_id) = dirs
+            .resolve(*volume, *parent_frn)
+            .and_then(|d| remap[d as usize])
+        else {
             if dirs.was_excluded(*volume, *parent_frn) {
                 stats.excluded += 1;
             } else {
@@ -492,7 +495,8 @@ impl DirTable {
             stats.dirs_removed += 1;
             self.paths[id as usize] = None;
             for i in 0..self.paths.len() {
-                if self.vols[i] == key.0 && matches!(&self.paths[i], Some(p) if is_under(p, &path)) {
+                if self.vols[i] == key.0 && matches!(&self.paths[i], Some(p) if is_under(p, &path))
+                {
                     self.paths[i] = None;
                     stats.dirs_removed += 1;
                 }
@@ -592,10 +596,7 @@ mod tests {
     }
 
     fn gone(frn: u64) -> Change {
-        Change::Gone {
-            volume: b'D',
-            frn,
-        }
+        Change::Gone { volume: b'D', frn }
     }
 
     #[test]
@@ -852,11 +853,8 @@ mod tests {
             known: vec![],
             excluded: vec![(b'D', 88)],
         };
-        let (new, stats) = rebuild_with_lookup(
-            &library(),
-            &[present(701, 88, "rác.mp4", false)],
-            &fs,
-        );
+        let (new, stats) =
+            rebuild_with_lookup(&library(), &[present(701, 88, "rác.mp4", false)], &fs);
 
         assert_eq!(new.len(), 4);
         assert_eq!(stats.excluded, 1);
@@ -869,8 +867,7 @@ mod tests {
             known: vec![],
             excluded: vec![],
         };
-        let (_, stats) =
-            rebuild_with_lookup(&library(), &[present(702, 99, "x.mp4", false)], &fs);
+        let (_, stats) = rebuild_with_lookup(&library(), &[present(702, 99, "x.mp4", false)], &fs);
         assert_eq!(stats.unresolved, 1);
         assert_eq!(stats.excluded, 0);
     }
@@ -1020,8 +1017,19 @@ mod tests {
         let (new, _) = rebuild_with(&library(), &[present(600, 10, "Tiếng Việt.mp4", false)]);
 
         let cancel = AtomicU64::new(0);
-        let hits = search(&new, "tieng viet", &SearchOptions::default(), &[], &cancel, 0).hits;
+        let hits = search(
+            &new,
+            "tieng viet",
+            &SearchOptions::default(),
+            &[],
+            &cancel,
+            0,
+        )
+        .hits;
         assert_eq!(hits.len(), 1);
-        assert_eq!(new.full_path(hits[0].index as usize), r"D:\Phim\Tiếng Việt.mp4");
+        assert_eq!(
+            new.full_path(hits[0].index as usize),
+            r"D:\Phim\Tiếng Việt.mp4"
+        );
     }
 }

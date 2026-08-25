@@ -78,7 +78,10 @@ fn a_failed_scan_reports_finished_so_the_ui_stops_polling() {
         .expect("lượt quét thất bại vẫn phải ghi tiến độ");
 
     assert_eq!(progress.phase, "error");
-    assert!(progress.finished, "phải đặt finished, nếu không UI poll mãi");
+    assert!(
+        progress.finished,
+        "phải đặt finished, nếu không UI poll mãi"
+    );
     assert!(
         progress.error.is_some_and(|e| e.contains("giữ nguyên")),
         "thông báo phải trấn an rằng dữ liệu cũ còn nguyên"
@@ -144,7 +147,12 @@ fn inventory() {
         // tên hoàn toàn bình thường, và lọc theo tên đã bỏ sót đúng nó.
         let path = ix.full_path(i);
         if path.contains("mf-") || path.contains("mediafinder-test") {
-            println!("  TỆP THỬ: {}  ({} byte, frn={})", path, ix.size(i), ix.frn(i));
+            println!(
+                "  TỆP THỬ: {}  ({} byte, frn={})",
+                path,
+                ix.size(i),
+                ix.frn(i)
+            );
             hits += 1;
         }
     }

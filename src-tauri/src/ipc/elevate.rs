@@ -142,8 +142,8 @@ impl ProgressWriter {
     /// read every few polls would make the progress bar stutter for no reason.
     fn write_atomic(&self) -> Result<(), ElevateError> {
         let tmp = self.path.with_extension("json.tmp");
-        let json = serde_json::to_string(&self.state)
-            .map_err(|e| ElevateError::Launch(e.to_string()))?;
+        let json =
+            serde_json::to_string(&self.state).map_err(|e| ElevateError::Launch(e.to_string()))?;
         fs::write(&tmp, json)?;
         fs::rename(&tmp, &self.path)?;
         Ok(())

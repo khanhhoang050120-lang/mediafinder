@@ -241,7 +241,11 @@ impl Index {
     }
 
     fn volume_of_path(path: &str) -> u8 {
-        path.as_bytes().first().copied().unwrap_or(0).to_ascii_uppercase()
+        path.as_bytes()
+            .first()
+            .copied()
+            .unwrap_or(0)
+            .to_ascii_uppercase()
     }
 
     /// The absolute path of directory `dir_id`.
@@ -447,8 +451,24 @@ mod tests {
         // scan of C: immediately filed TypeScript sources as videos. Anything
         // added to the table later must not reintroduce that overlap.
         for ext in [
-            &b"ts"[..], b"tsx", b"js", b"jsx", b"json", b"md", b"toml", b"yml", b"h", b"c",
-            b"cpp", b"py", b"go", b"java", b"cs", b"sh", b"log", b"lock",
+            &b"ts"[..],
+            b"tsx",
+            b"js",
+            b"jsx",
+            b"json",
+            b"md",
+            b"toml",
+            b"yml",
+            b"h",
+            b"c",
+            b"cpp",
+            b"py",
+            b"go",
+            b"java",
+            b"cs",
+            b"sh",
+            b"log",
+            b"lock",
         ] {
             assert_eq!(
                 kind_from_ext(ext),
@@ -463,8 +483,18 @@ mod tests {
         // A longer extension would be silently truncated by the scanner's
         // stack buffer, so assert the invariant here.
         for ext in [
-            &b"mpeg"[..], b"webm", b"m2ts", b"jpeg", b"tiff", b"heic", b"avif", b"flac",
-            b"opus", b"aiff", b"alac", b"midi",
+            &b"mpeg"[..],
+            b"webm",
+            b"m2ts",
+            b"jpeg",
+            b"tiff",
+            b"heic",
+            b"avif",
+            b"flac",
+            b"opus",
+            b"aiff",
+            b"alac",
+            b"midi",
         ] {
             assert!(ext.len() <= MAX_EXT_LEN, "{ext:?} exceeds MAX_EXT_LEN");
         }

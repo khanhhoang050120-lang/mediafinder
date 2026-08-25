@@ -142,7 +142,7 @@ lỗi của sản phẩm. Sửa triệt để thì phải dùng job object hoặ
 
 ## CONF-005 🟡 — `cargo fmt` chưa từng chạy, nay lệch với toàn bộ mã nguồn
 
-**Giai đoạn:** P8 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+**Giai đoạn:** P8 → P10 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25
 
 **Hiện tượng.** Chạy `cargo fmt --check` lần đầu ở P8: **51 điểm lệch trên 20 tệp**, trải khắp mọi
 giai đoạn từ P1 tới P8. Không phải lỗi mới — vòng kiểm tra của dự án từ trước tới nay là
@@ -162,5 +162,52 @@ toàn bộ mã đã viết từ P1. Đây là quyết định của chủ dự �
 | Chạy `cargo fmt` một lần, thêm vào vòng kiểm tra | Thống nhất về sau, nhưng một commit chạm 20 tệp và mất định dạng thủ công ở nhiều chỗ |
 | Thêm `rustfmt.toml` nới `max_width`, rồi mới format | Diff nhỏ hơn nhiều, giữ được phần lớn cách xuống dòng hiện tại |
 
-Cách thứ hai hợp với dự án này hơn: phần lớn điểm lệch là do độ rộng dòng, không phải do thụt lề
-hay dấu ngoặc sai.
+## Đã sửa — và khuyến nghị ban đầu của tôi ở trên là **sai**
+
+Câu *"phần lớn điểm lệch là do độ rộng dòng"* là suy đoán, không phải số đo. Đem đo thì sai:
+
+Ba ví dụ đầu tiên `cargo fmt --check` đưa ra đều là **dòng dưới 100 ký tự** mà rustfmt vẫn muốn
+tách. Nới `max_width` không giải quyết được gì, vì thủ phạm là `use_small_heuristics` — mặc định
+nó giới hạn đối số lời gọi hàm ở **60%** của `max_width`, tức 60 ký tự.
+
+Nên tôi thử đúng cái núm đó, và kết quả ngược hẳn dự đoán:
+
+| Cấu hình | Điểm lệch |
+|---|---|
+| **Mặc định** | **81** |
+| `use_small_heuristics = "Max"` | 157 |
+| `Max` + `max_width = 100` | 157 |
+| `Max` + `max_width = 110` | 199 |
+
+Nới ra làm **tệ gấp đôi**, vì khi đó rustfmt quay sang *nối* những dòng tôi đã tự tách. Mã nguồn
+không được viết theo một kiểu nhất quán nào cả — nó là kết quả của việc xuống dòng bằng tay theo
+cảm giác từng chỗ, nên không có cấu hình nào khớp.
+
+**Kết luận: không thêm `rustfmt.toml`.** Mặc định là lựa chọn ít lệch nhất và cũng là lựa chọn dễ
+đoán nhất cho bất kỳ ai đọc mã sau này.
+
+### Hai ngoại lệ, và chỉ hai
+
+Chạy `cargo fmt` xong, có bốn chỗ đọc **kém hẳn đi**, tất cả cùng một dạng: bảng dữ liệu bị nổ
+tung mỗi phần tử một dòng. Hai chỗ đáng giữ lại bằng `#[rustfmt::skip]`:
+
+| Chỗ | Trước | Sau khi rustfmt đụng vào |
+|---|---|---|
+| `is_word_boundary` (`index/search.rs`) | 2 dòng, 20 ký tự | **21 dòng**, mỗi ký tự một dòng |
+| `mod pkey` (`media/metadata.rs`) | 5 dòng thẳng hàng | **20 dòng** |
+
+Cả hai là bảng: `pkey` chỉ khác nhau ở GUID nào và chỉ số nào, và điều đó chỉ nhìn ra được khi
+chúng nằm thẳng hàng. Hai chỗ còn lại (danh sách phần mở rộng trong test) thì để rustfmt làm —
+một phần tử một dòng cũng hợp lý cho danh sách hay phải sửa.
+
+`#[rustfmt::skip]` dùng dè: hai chỗ trên toàn bộ dự án, mỗi chỗ kèm lý do. Rải khắp nơi thì chẳng
+khác gì không dùng rustfmt.
+
+### Kết quả
+
+23 tệp, +346/−187, **không một dòng nào ngoài `.rs`**. Chú thích chỉ bị thụt lại chứ không bị viết
+lại nội dung (rustfmt mặc định không đụng vào chú thích). 186 test vẫn pass y nguyên — nhiều test
+trong đó assert đúng từng chuỗi tiếng Việt, nên nếu định dạng có chạm vào nội dung chuỗi thì chúng
+đã đổ.
+
+`cargo fmt --check` nay là lệnh thứ ba trong [vòng kiểm tra](../README.md#vòng-kiểm-tra).

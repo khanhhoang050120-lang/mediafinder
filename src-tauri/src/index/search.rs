@@ -51,6 +51,10 @@ mod score {
 }
 
 /// Characters that begin a word inside a filename.
+// Left as written: this is a table of characters, and reading it as two dense
+// rows is the point. rustfmt puts each byte on its own line, which turns
+// twenty characters into twenty-one lines and hides the shape of the set.
+#[rustfmt::skip]
 fn is_word_boundary(b: u8) -> bool {
     matches!(
         b,
@@ -298,7 +302,6 @@ fn run_pass(
     // Fewest tokens an entry must match to count. `0` means "all of them".
     min_matched: usize,
 ) -> Vec<Hit> {
-
     // Built once and shared: constructing a Finder compiles a skip table, and
     // doing that per candidate rather than per token would dominate the scan.
     let finders: Vec<Finder> = tokens.iter().map(|t| Finder::new(t.as_bytes())).collect();
@@ -411,12 +414,11 @@ fn score_directories(index: &Index, tokens: &[&str], finders: &[Finder]) -> Vec<
         let path = index.dir_folded(d);
         for (t, finder) in finders.iter().enumerate() {
             if let Some(pos) = finder.find(path) {
-                table[d * tokens.len() + t] =
-                    if pos == 0 || is_word_boundary(path[pos - 1]) {
-                        score::DIR_WORD_START
-                    } else {
-                        score::DIR_SUBSTRING
-                    };
+                table[d * tokens.len() + t] = if pos == 0 || is_word_boundary(path[pos - 1]) {
+                    score::DIR_WORD_START
+                } else {
+                    score::DIR_SUBSTRING
+                };
             }
         }
     }
@@ -464,7 +466,11 @@ fn score_entry(
         }
     }
 
-    let floor = if require_all { tokens.len() } else { min_matched };
+    let floor = if require_all {
+        tokens.len()
+    } else {
+        min_matched
+    };
     if (matched as usize) < floor.max(1) {
         return None;
     }
@@ -496,7 +502,9 @@ fn score_token(folded: &[u8], token: &[u8], finder: &Finder) -> Option<i32> {
 
 /// Favour shorter names: `Avatar.mkv` beats `my_avatar_backup_2019.mkv`.
 fn length_bonus(len: usize) -> i32 {
-    score::MAX_LENGTH_BONUS.saturating_sub((len / 4) as i32).max(0)
+    score::MAX_LENGTH_BONUS
+        .saturating_sub((len / 4) as i32)
+        .max(0)
 }
 
 #[cfg(test)]
@@ -622,7 +630,10 @@ mod tests {
             (r"D:\Sounds Edit\NHẠC GO", "01.mp3"),
             (r"D:\Sounds Edit\Nhạc nền", "02.mp3"),
             (r"D:\Sounds Edit\HƯNG\NHẠC NỀN\Nhạc\Năng Động", "03.mp3"),
-            (r"D:\Sounds Edit\HƯNG\WISE\DATA TẠO VID HƯNG\HAN QUOC\13", "154.mp3"),
+            (
+                r"D:\Sounds Edit\HƯNG\WISE\DATA TẠO VID HƯNG\HAN QUOC\13",
+                "154.mp3",
+            ),
             (r"D:\Phim\Không dấu gì cả", "04.mp4"),
         ] {
             let d = b.add_dir(path, 0);
@@ -698,7 +709,10 @@ mod tests {
         // A hyphenated pair becomes two tokens, so it matches `deep_sea`,
         // `deep sea` and `Deep-Sea` alike.
         assert_eq!(tokenize("deep-sea fishing"), vec!["deep", "sea", "fishing"]);
-        assert_eq!(tokenize("s01e02 (1080p) [x265]"), vec!["s01e02", "1080p", "x265"]);
+        assert_eq!(
+            tokenize("s01e02 (1080p) [x265]"),
+            vec!["s01e02", "1080p", "x265"]
+        );
         assert!(tokenize("   ...   ").is_empty());
     }
 
@@ -732,7 +746,10 @@ mod tests {
 
         let relaxed = out.relaxed.expect("results are partial and must say so");
         assert_eq!(relaxed.total_tokens, 9);
-        assert_eq!(relaxed.best_matched, 6, "the, anglerfish, the, original, approach, to");
+        assert_eq!(
+            relaxed.best_matched, 6,
+            "the, anglerfish, the, original, approach, to"
+        );
     }
 
     #[test]
@@ -788,8 +805,8 @@ mod tests {
         // happens to contain the word "the" — thousands of results, all
         // useless, burying the one good answer.
         let ix = build(&[
-            "the.mp4",                              // 1 of 5 — must be dropped
-            "the anglerfish original.mp4",          // 3 of 5 — must be kept
+            "the.mp4",                     // 1 of 5 — must be dropped
+            "the anglerfish original.mp4", // 3 of 5 — must be kept
         ]);
         let cancel = AtomicU64::new(0);
         let out = search(
@@ -802,7 +819,10 @@ mod tests {
         );
 
         assert_eq!(out.hits.len(), 1, "the 1-of-5 match must not survive");
-        assert_eq!(ix.name(out.hits[0].index as usize), "the anglerfish original.mp4");
+        assert_eq!(
+            ix.name(out.hits[0].index as usize),
+            "the anglerfish original.mp4"
+        );
     }
 
     #[test]
@@ -824,10 +844,20 @@ mod tests {
         // 2009` should not start dragging in every file containing `2009`.
         let ix = build(&["avatar 2009.mkv", "titanic 2009.mkv", "avatar 2022.mkv"]);
         let cancel = AtomicU64::new(0);
-        let out = search(&ix, "avatar 2009", &SearchOptions::default(), &[], &cancel, 0);
+        let out = search(
+            &ix,
+            "avatar 2009",
+            &SearchOptions::default(),
+            &[],
+            &cancel,
+            0,
+        );
 
         assert_eq!(out.hits.len(), 1);
-        assert!(out.relaxed.is_none(), "strict results must not be marked partial");
+        assert!(
+            out.relaxed.is_none(),
+            "strict results must not be marked partial"
+        );
     }
 
     #[test]
@@ -836,7 +866,14 @@ mod tests {
         // would be meaningless.
         let ix = build(&["holiday.mp4"]);
         let cancel = AtomicU64::new(0);
-        let out = search(&ix, "zzzznothing", &SearchOptions::default(), &[], &cancel, 0);
+        let out = search(
+            &ix,
+            "zzzznothing",
+            &SearchOptions::default(),
+            &[],
+            &cancel,
+            0,
+        );
         assert!(out.hits.is_empty());
         assert!(out.relaxed.is_none());
     }
@@ -845,7 +882,14 @@ mod tests {
     fn relaxed_still_returns_nothing_when_no_token_matches_at_all() {
         let ix = build(&["holiday.mp4"]);
         let cancel = AtomicU64::new(0);
-        let out = search(&ix, "zzzz qqqq wwww", &SearchOptions::default(), &[], &cancel, 0);
+        let out = search(
+            &ix,
+            "zzzz qqqq wwww",
+            &SearchOptions::default(),
+            &[],
+            &cancel,
+            0,
+        );
         assert!(out.hits.is_empty());
         assert!(out.relaxed.is_none());
     }
@@ -914,7 +958,11 @@ mod tests {
     fn a_superseded_search_bails_out() {
         let ix = build(&["a.mp4", "b.mp4"]);
         let cancel = AtomicU64::new(7); // a newer keystroke already arrived
-        assert!(search(&ix, "mp4", &SearchOptions::default(), &[], &cancel, 3).hits.is_empty());
+        assert!(
+            search(&ix, "mp4", &SearchOptions::default(), &[], &cancel, 3)
+                .hits
+                .is_empty()
+        );
     }
 
     #[test]
@@ -966,9 +1014,7 @@ mod tests {
     fn spans_many_chunks_correctly() {
         // More entries than CHUNK, so the parallel merge is actually exercised
         // and nothing is dropped at a chunk boundary.
-        let names: Vec<String> = (0..CHUNK * 2 + 7)
-            .map(|i| format!("file{i}.mp4"))
-            .collect();
+        let names: Vec<String> = (0..CHUNK * 2 + 7).map(|i| format!("file{i}.mp4")).collect();
         let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
         let ix = build(&refs);
 

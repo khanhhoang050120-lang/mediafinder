@@ -521,3 +521,41 @@ mãi ở một con số không bao giờ tới đích.
 chỉ mục **không có ổ Z: nào trong đó**. Nếu không có quy tắc "giữ nguyên mục của ổ không quét", thì
 quét NAS 4,5 phút rồi bấm "Quét lại" là mất sạch — và mất một cách hoàn toàn im lặng, vì đứng từ
 phía tiến trình đó thì nó đã làm đúng mọi thứ.
+
+---
+
+### 2026-08-25 — Lượt test CONF-005 (`cargo fmt`)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Cấu hình nào khớp mã nguồn nhất | đo 4 cấu hình | ❌ **giả thuyết của tôi sai** — nới ra làm tệ gấp đôi |
+| 2 | `cargo fmt` có đụng vào chuỗi không | `cargo test` sau khi format | ✅ **186/186 pass**, y nguyên |
+| 3 | Có đụng vào nội dung chú thích không | đọc diff | ✅ chỉ thụt lại, không viết lại |
+| 4 | Có đụng tệp ngoài `.rs` không | `git diff --name-only` | ✅ 23 tệp, toàn `.rs` |
+| 5 | Chất lượng code sau khi format | `cargo clippy --all-targets` | ✅ sạch |
+| 6 | Chỗ nào đọc kém hẳn đi | đọc từng hunk lớn | ❌ **4 chỗ** — bảng dữ liệu bị nổ tung |
+| 7 | Hai bảng giữ được bằng `#[rustfmt::skip]` | đọc lại tệp | ✅ nguyên vẹn |
+| 8 | `cargo fmt --check` sau khi xong | | ✅ **0 điểm lệch** |
+
+**Kết luận:** 6/8 pass, 2 mục tìm ra vấn đề — cả hai đều đã xử lý.
+
+**Mục 1: tôi đã ghi một khuyến nghị sai vào tài liệu, và số đo lật lại nó.** CONF-005 viết từ P8
+nói *"phần lớn điểm lệch là do độ rộng dòng… nới `max_width` thì diff nhỏ hơn nhiều"*. Đó là suy
+đoán. Đem đo:
+
+| Cấu hình | Điểm lệch |
+|---|---|
+| Mặc định | **81** |
+| `use_small_heuristics = "Max"` | 157 |
+| `Max` + `max_width = 110` | 199 |
+
+Nới ra làm **tệ gấp đôi**, vì rustfmt khi đó quay sang *nối* những dòng đã tự tách. Ba ví dụ đầu
+tiên nó đưa ra đều là dòng **dưới 100 ký tự** — nên `max_width` chưa bao giờ là thủ phạm.
+
+**Mục 6: định dạng tự động làm hỏng bảng.** `is_word_boundary` từ 2 dòng gọn thành 21 dòng, mỗi
+ký tự một dòng; `mod pkey` từ 5 dòng thẳng hàng thành 20. Cả hai là bảng dữ liệu — `pkey` chỉ khác
+nhau ở GUID nào và chỉ số nào, và điều đó chỉ nhìn ra được khi chúng thẳng hàng. Giữ lại bằng
+`#[rustfmt::skip]`, đúng hai chỗ trên toàn dự án, mỗi chỗ kèm lý do.
+
+Điều này chỉ thấy được bằng cách **đọc từng hunk lớn**. `cargo fmt --check` không phân biệt "khác"
+với "tệ hơn"; nó chỉ nói là khác.

@@ -33,18 +33,17 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 | File | Số mục | Còn mở | Nội dung |
 |---|---|---|---|
 | [bug.md](./bug.md) | 18 | 0 | Lỗi làm phần mềm chạy sai |
-| [config.md](./config.md) | 5 | 1 | Xung đột cấu hình / phiên bản |
+| [config.md](./config.md) | 5 | 0 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 3 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
 | [check.md](./check.md) | 7 | 0 | Nghi ngờ đã kiểm chứng |
 | [issue.md](./issue.md) | 3 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **40** | **1** | |
+| **Cộng** | **40** | **0** | |
 
 ### Mục còn mở
 
-[CONF-005](./config.md#conf-005) — `cargo fmt` chưa từng chạy, nay lệch 51 điểm trên 20 tệp.
-Cần chủ dự án chọn: format một lần, hay nới `max_width` trước rồi mới format.
+_Không còn mục nào đang chờ xử lý._
 
 Ba mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
 [BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`),

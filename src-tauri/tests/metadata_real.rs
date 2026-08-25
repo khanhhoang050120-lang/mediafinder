@@ -40,7 +40,10 @@ fn reads_dimensions_and_duration_from_real_files() {
     let mut with_props = 0;
 
     for (query, label) in [("mp4", "video"), ("jpg", "image"), ("mp3", "audio")] {
-        let opts = SearchOptions { limit: 60, ..Default::default() };
+        let opts = SearchOptions {
+            limit: 60,
+            ..Default::default()
+        };
         let mut shown = 0;
         for hit in search(&cache.index, query, &opts, &[], &cancel, 0).hits {
             if shown >= 3 {
@@ -63,13 +66,15 @@ fn reads_dimensions_and_duration_from_real_files() {
             }
             println!(
                 "  {label:<6} {:>5}x{:<5} {:>8} ms  {:>10} byte  {:>6.1}ms đọc",
-                props.width,
-                props.height,
-                props.duration_ms,
-                stats.size,
-                elapsed
+                props.width, props.height, props.duration_ms, stats.size, elapsed
             );
-            println!("         {}", std::path::Path::new(&path).file_name().unwrap().to_string_lossy());
+            println!(
+                "         {}",
+                std::path::Path::new(&path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+            );
         }
     }
 

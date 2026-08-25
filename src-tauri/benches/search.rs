@@ -85,13 +85,13 @@ fn queries(c: &mut Criterion) {
 
     // Each case stresses a different part of the scan.
     let cases: &[(&str, &str)] = &[
-        ("common_term", "holiday"),          // matches a tenth of the index
-        ("rare_term", "concert"),            // few hits, still a full scan
-        ("two_tokens", "avatar 1080p"),      // AND across two finders
+        ("common_term", "holiday"),     // matches a tenth of the index
+        ("rare_term", "concert"),       // few hits, still a full scan
+        ("two_tokens", "avatar 1080p"), // AND across two finders
         ("three_tokens", "family trip 2024"),
         ("vietnamese_unfolded", "tieng viet"), // the fold's whole reason to exist
-        ("no_match", "zzzzzzzznothing"),     // worst case: nothing short-circuits
-        ("single_char", "a"),                // matches nearly everything
+        ("no_match", "zzzzzzzznothing"),       // worst case: nothing short-circuits
+        ("single_char", "a"),                  // matches nearly everything
     ];
 
     for (name, query) in cases {

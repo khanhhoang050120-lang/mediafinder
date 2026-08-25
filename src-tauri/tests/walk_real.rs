@@ -69,10 +69,7 @@ fn walk_every_network_drive_and_report_what_it_costs() {
             secs
         );
         if secs > 0.0 {
-            println!(
-                "         {:.0} thư mục/giây",
-                set.dirs.len() as f64 / secs
-            );
+            println!("         {:.0} thư mục/giây", set.dirs.len() as f64 / secs);
         }
         assert_eq!(
             stats.len(),
@@ -186,7 +183,11 @@ fn merge_network_drives_into_the_real_cache() {
     // Journal cursors belong to local drives and must survive; network drives
     // must not acquire one, or an incremental update would think it can follow
     // a journal that does not exist.
-    assert_eq!(after.volumes.len(), stamps_before, "số mốc volume không đổi");
+    assert_eq!(
+        after.volumes.len(),
+        stamps_before,
+        "số mốc volume không đổi"
+    );
     for st in &after.volumes {
         assert!(
             !network_drives().contains(&st.letter),

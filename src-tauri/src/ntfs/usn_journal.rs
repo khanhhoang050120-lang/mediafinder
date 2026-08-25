@@ -183,12 +183,7 @@ pub fn read_batch(vol: &VolumeHandle, letter: char, from: Cursor) -> Result<Batc
         if let Err(e) = result {
             return Ok(match restart_reason(&e) {
                 Some(r) => Batch::Restart(r),
-                None => {
-                    return Err(NtfsError::Enumerate {
-                        letter,
-                        source: e,
-                    })
-                }
+                None => return Err(NtfsError::Enumerate { letter, source: e }),
             });
         }
 
@@ -197,9 +192,8 @@ pub fn read_batch(vol: &VolumeHandle, letter: char, from: Cursor) -> Result<Batc
         if (returned as usize) < 8 {
             break;
         }
-        let bytes = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, returned as usize)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, returned as usize) };
         let next = i64::from_le_bytes(bytes[..8].try_into().unwrap());
         parse_buffer(&bytes[8..], letter, &mut changes, &mut stats);
 
@@ -356,7 +350,9 @@ fn collect_deletions(
         out.push(Deletion {
             name,
             frn: u64::from_le_bytes(
-                record[rec::FILE_REFERENCE_NUMBER..][..8].try_into().unwrap(),
+                record[rec::FILE_REFERENCE_NUMBER..][..8]
+                    .try_into()
+                    .unwrap(),
             ),
             parent_frn: u64::from_le_bytes(
                 record[rec::PARENT_FILE_REFERENCE_NUMBER..][..8]
@@ -419,8 +415,11 @@ fn parse_buffer(mut bytes: &[u8], letter: char, out: &mut Vec<Change>, stats: &m
             continue;
         }
 
-        let frn =
-            u64::from_le_bytes(record[rec::FILE_REFERENCE_NUMBER..][..8].try_into().unwrap());
+        let frn = u64::from_le_bytes(
+            record[rec::FILE_REFERENCE_NUMBER..][..8]
+                .try_into()
+                .unwrap(),
+        );
         let parent_frn = u64::from_le_bytes(
             record[rec::PARENT_FILE_REFERENCE_NUMBER..][..8]
                 .try_into()
@@ -580,13 +579,7 @@ mod tests {
         // Renaming `phim.mp4` to `phim.txt` must reach `rebuild_with`, which
         // removes the old entry. Filtering it out here would leave the index
         // claiming a file that no longer goes by that name.
-        let (out, _) = parse(&[record(
-            100,
-            10,
-            "phim.txt",
-            reason::RENAME_NEW_NAME,
-            false,
-        )]);
+        let (out, _) = parse(&[record(100, 10, "phim.txt", reason::RENAME_NEW_NAME, false)]);
         assert_eq!(out.len(), 1);
         assert!(matches!(&out[0], Change::Present { name, .. } if name == "phim.txt"));
     }
@@ -714,7 +707,10 @@ mod tests {
 
         let paths: Vec<String> = (0..new.len()).map(|i| new.full_path(i)).collect();
         assert!(paths.contains(&r"D:\Phim\mới.mp4".to_string()), "{paths:?}");
-        assert!(paths.contains(&r"D:\Phim\thêm.mkv".to_string()), "{paths:?}");
+        assert!(
+            paths.contains(&r"D:\Phim\thêm.mkv".to_string()),
+            "{paths:?}"
+        );
         assert!(!paths.contains(&r"D:\Phim\cũ.mp4".to_string()), "{paths:?}");
         assert_eq!(stats.files_moved, 1);
         assert_eq!(stats.files_added, 1);

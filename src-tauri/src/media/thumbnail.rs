@@ -37,8 +37,7 @@ use windows::Win32::System::Com::{
     CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
 };
 use windows::Win32::UI::Shell::{
-    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_INCACHEONLY,
-    SIIGBF_THUMBNAILONLY,
+    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_INCACHEONLY, SIIGBF_THUMBNAILONLY,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +86,10 @@ const QUEUE_DEPTH: usize = 64;
 // one screenful of rows, or fast scrolling would drop requests that are about
 // to become visible.
 const _: () = assert!(CACHE_ENTRIES > 0);
-const _: () = assert!(QUEUE_DEPTH > WORKERS * 4, "hàng đợi phải chứa hơn một màn hình");
+const _: () = assert!(
+    QUEUE_DEPTH > WORKERS * 4,
+    "hàng đợi phải chứa hơn một màn hình"
+);
 
 type CacheKey = (u64, u32);
 
@@ -228,12 +230,7 @@ fn render_png(path: &str, size: u32) -> Result<Vec<u8>, ThumbError> {
 /// otherwise put a multi-megabyte image into a cache sized for thumbnails.
 /// Clamping here means a badly behaved provider costs a little CPU instead of
 /// hundreds of megabytes of memory.
-fn downscale_to_fit(
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
-    size: u32,
-) -> (u32, u32, Vec<u8>) {
+fn downscale_to_fit(width: u32, height: u32, rgba: Vec<u8>, size: u32) -> (u32, u32, Vec<u8>) {
     if width <= size && height <= size {
         return (width, height, rgba);
     }

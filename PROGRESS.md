@@ -19,6 +19,10 @@
 
 Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` đã kiểm chứng chạy được · `[!]` đang vướng
 
+**Vòng kiểm tra trước mỗi commit:** `cargo test` · `cargo clippy --all-targets` · `cargo fmt --check`
+· `npm run check`. Định dạng theo mặc định rustfmt, không có `rustfmt.toml` — đã đo, không cấu hình
+nào khớp tốt hơn ([CONF-005](docs/config.md#conf-005)).
+
 ---
 
 ## Bảng tổng quan

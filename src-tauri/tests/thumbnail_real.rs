@@ -121,7 +121,10 @@ fn the_cache_makes_a_second_request_far_cheaper() {
         first.len()
     );
 
-    assert!(std::sync::Arc::ptr_eq(&first, &second), "phải trả về cùng một bộ nhớ đệm");
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "phải trả về cùng một bộ nhớ đệm"
+    );
     assert!(
         warm < cold || warm.as_micros() < 200,
         "lần thứ hai phải gần như tức thì, đo được {warm:?}"

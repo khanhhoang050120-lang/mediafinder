@@ -71,7 +71,10 @@ pub fn file_stats(path: &str) -> Option<FileStats> {
 
     Some(FileStats {
         size: ((data.nFileSizeHigh as u64) << 32) | data.nFileSizeLow as u64,
-        mtime: filetime_to_unix(data.ftLastWriteTime.dwHighDateTime, data.ftLastWriteTime.dwLowDateTime),
+        mtime: filetime_to_unix(
+            data.ftLastWriteTime.dwHighDateTime,
+            data.ftLastWriteTime.dwLowDateTime,
+        ),
     })
 }
 
@@ -92,6 +95,10 @@ fn filetime_to_unix(high: u32, low: u32) -> i64 {
 // feature set is enabled, and the definitions are simply a GUID and an index.
 // Writing them here keeps the dependency surface small and makes it obvious
 // which properties are being asked for.
+// Left as written: five constants that differ only in which GUID and which
+// index they name, so they belong on five aligned lines where the pattern is
+// visible. rustfmt gives each one four lines and the table disappears.
+#[rustfmt::skip]
 mod pkey {
     use windows::core::GUID;
     use windows::Win32::Foundation::PROPERTYKEY;
