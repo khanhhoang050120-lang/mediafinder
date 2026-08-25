@@ -244,3 +244,27 @@ Phần NAS **không** được cập nhật gia tăng — không có journal đ�
 nút "+ ổ mạng". Với thư viện mà phần lớn là tư liệu đã hoàn thành thì đó là đánh đổi hợp lý; nếu
 sau này thấy phiền, `ReadDirectoryChangesW` **có thể** hoạt động qua SMB khi máy chủ hỗ trợ
 change notify — cần thử thật trên chính hai NAS này, không được tin tài liệu.
+
+## ISSUE-004 🟡 — Tệp vừa tải về không tìm thấy cho tới lần quét kế tiếp
+
+**Giai đoạn:** BT · **Trạng thái:** ĐÃ ĐO, CHƯA SỬA · **Ngày:** 2026-08-25
+
+**Người dùng hỏi:** vừa tải video về ổ, Quit hẳn ứng dụng rồi mở lại thì có quét lại không.
+
+**Đã đo:** không. Mở lại ứng dụng **không** kích hoạt quét — xem [test-log](./test-log.md). Chỉ mục
+mới chỉ đến từ ba nguồn: tác vụ lúc **đăng nhập**, tác vụ **hằng ngày 13:00**, và nút **"Quét lại"**.
+
+**Khoảng hở thật.** Tải một video lúc 14:00 thì tìm không ra cho tới 13:00 hôm sau, trừ khi tự bấm
+"Quét lại". Với người dùng tải footage về liên tục trong ngày, đây là khoảng hở đáng kể.
+
+**Vì sao chưa sửa bằng cách quét lúc khởi động.** Đánh đổi sai chiều: mở ứng dụng phải gõ được ngay
+(nạp cache ~0,13 s), quét lúc mở sẽ giết đúng tính chất đó. Và nó cũng **không giải quyết được vấn
+đề**: ứng dụng chạy nền ở khay hệ thống suốt ngày, hiếm khi bị mở lại — nên "quét lúc mở" gần như
+không bao giờ chạy đúng lúc cần.
+
+**Hướng sửa đúng: [P9](../PROGRESS.md) — theo dõi USN realtime.** Journal đã có sẵn cursor cho mỗi
+ổ; việc còn lại là đọc liên tục thay vì đọc theo lịch. Khi đó tệp vừa tải về xuất hiện trong vài
+giây, không cần lịch cũng không cần bấm nút.
+
+**Cách xoay xở hiện tại:** bấm **"Quét lại"** — cập nhật nhanh qua journal mất khoảng 0,45 giây,
+không phải quét lại toàn bộ.

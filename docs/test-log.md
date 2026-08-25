@@ -816,3 +816,28 @@ Shift+↓ hai lần chỉ chọn được 2 hàng thay vì 3, ổn định qua n
 
 Phép đo 3 cho thấy logic chọn dải đúng; chỗ hụt là phím tổng hợp đầu tiên bị rơi sau khi tiêu điểm
 vừa đổi. Đã ghi vào kịch bản test để lần sau không truy lại từ đầu.
+
+### 2026-08-25 — Quit hẳn rồi mở lại có quét lại không
+
+**Người dùng hỏi:** vừa tải một video về ổ, nếu Quit hẳn ứng dụng rồi mở lại thì nó có quét lại
+không.
+
+Trả lời bằng đo chứ không bằng đọc code. Tạo `D:\video-moi-tai-ve-99887766.mp4`, rồi:
+
+| # | Bước | Quan sát |
+|---|---|---|
+| 1 | Quit hẳn, mở lại, tìm `99887766` | ❌ **Không tìm thấy** — dòng trạng thái vẫn *"quét lúc 13:00:00"*, y nguyên lần quét cũ |
+| 2 | Chạy tác vụ `MediaFinder - cap nhat chi muc` | ✅ Kết quả `0`; tìm thấy ngay, **360.655 → 360.656 tệp**, dấu thời gian đổi thành *15:28:19* |
+| 3 | Xoá tệp thử, chạy lại tác vụ | ✅ Về lại **360.655**, tìm không ra nữa |
+
+**Kết luận:** mở lại ứng dụng **không** kích hoạt quét. Khối `setup()` chỉ hiện cửa sổ, đăng ký
+phím tắt, dựng khay và theo dõi tệp cache — không có lệnh quét nào. Chỉ mục mới đến từ ba nguồn:
+tác vụ lúc **đăng nhập**, tác vụ **hằng ngày 13:00**, và nút **"Quét lại"**.
+
+**Đây là thiết kế cố ý, không phải thiếu sót.** Mở ứng dụng phải gõ được ngay (nạp cache ~0,13 s);
+nếu mỗi lần mở đều quét thì mất đúng cái tính chất đó. Nhưng nó tạo ra một khoảng hở thật: tệp tải
+về lúc 14:00 sẽ không tìm thấy cho tới 13:00 hôm sau, trừ khi bấm "Quét lại" — nên khoảng hở này
+được ghi vào [ISSUE](./issue.md) chứ không để ngầm hiểu.
+
+**Điều mục 2 cũng chứng minh luôn:** ứng dụng đang mở **tự nạp lại** chỉ mục mới do tác vụ nền ghi
+ra, không cần khởi động lại — `watch_cache` phát hiện cache đổi trong 5 giây.
