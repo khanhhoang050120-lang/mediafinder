@@ -903,3 +903,22 @@ thành "tính năng không hoạt động". Đã thêm `Esc` vào đầu mọi k
 thành `ẽ`. Ba lần chạy liên tiếp "thành công" thật ra không mở nổi lớp phủ nào vì truy vấn không có
 kết quả. Từ nay kịch bản dùng truy vấn **toàn chữ số**. Đây là bộ gõ của máy, không phải lỗi ứng
 dụng — nhưng nó làm hỏng phép thử y như một lỗi thật.
+
+#### Một quan sát chưa khép lại: số tệp lệch 1
+
+Trước lượt test: **360.655 tệp · 15.298 thư mục**. Sau khi dọn sạch 3 tệp thử tôi tự tạo:
+**360.654 tệp · 15.302 thư mục**. Lệch **−1 tệp, +4 thư mục** trong khoảng 1,5 giờ.
+
+**Nhiều khả năng là biến động bình thường của một ổ đang được dùng** — D: là ổ làm việc, CapCut
+sinh và xoá tệp tạm liên tục. Chỉ mục chỉ gỡ một mục khi **journal nói tệp đó đã bị xoá**, chứ
+không tự bỏ mục nào; và quy tắc "một lần quét không có thẩm quyền với ổ nó không quét" vẫn giữ
+nguyên mọi mục trên NAS.
+
+**Chưa xác nhận được bằng đo.** Chế độ `--audit` dựng lại đúng lịch sử xoá từ USN journal và trả
+lời được câu này, nhưng nó cần quyền Administrator: chạy ẩn thì mất kết quả, còn đăng ký một tác vụ
+quyền cao thì bản thân việc đăng ký cũng cần quyền cao. Cả hai đường đều dẫn tới một lời nhắc UAC,
+nên tôi dừng lại thay vì tự bật nó lên.
+
+**Cách khép lại khi cần:** chạy `mediafinder.exe --audit D` trong một cửa sổ dòng lệnh mở bằng
+quyền Administrator. Nó liệt kê từng tệp bị xoá kèm thời điểm, dựng lại từ journal chứ không từ
+chỉ mục — nên nó thấy được cả những gì chỉ mục chưa kịp biết.
