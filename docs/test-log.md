@@ -691,3 +691,12 @@ thao tác làm mới thường ngày **không còn hỏi quyền một lần nà
 Không có handle tiến trình để chờ (tác vụ chạy ở phiên riêng), nên hoàn tất được đọc từ chính
 `progress.json` — thứ vừa được sửa ở [BUG-019](./bug.md#bug-019) để đường cập nhật nhanh cũng phải
 báo xong. Hai việc tưởng rời nhau hoá ra là một.
+
+**Lịch cuối cùng (theo lựa chọn của chủ máy):** khi đăng nhập (trễ 1 phút) và **13:00 hằng ngày**
+— tức 1–2 lần mỗi ngày. Đã kiểm chứng sau khi đổi lịch: hành động và quyền của tác vụ vẫn nguyên
+(`--index`, `RunLevel = Highest`), chạy thử từ tiến trình quyền thường trả về mã 0, lần kế tiếp
+được lên lịch đúng 13:00.
+
+Tần suất thấp là lựa chọn hợp lý **vì** nút "Quét lại" không còn hỏi quyền: tải xong một tệp thì
+bấm nút là có sau vài giây. Nếu nút vẫn hỏi UAC như trước thì lựa chọn này sẽ khó chịu — hai thay
+đổi đó phụ thuộc nhau.

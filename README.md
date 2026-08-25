@@ -36,7 +36,7 @@ Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 | Mở phần mềm | `Ctrl+Alt+Space` từ bất kỳ đâu, Start Menu, hoặc bấm biểu tượng ở khay |
 | Ẩn đi | bấm lại đúng phím đó, hoặc đóng cửa sổ |
 | **Tắt hẳn** | chuột phải biểu tượng ở khay → **Thoát** |
-| Cập nhật ổ trong máy | tự động lúc đăng nhập, hoặc nút **Quét lại** — cả hai đều **không hỏi quyền** |
+| Cập nhật ổ trong máy | tự động khi đăng nhập và lúc 13:00 hằng ngày, hoặc nút **Quét lại** — không hỏi quyền |
 | Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
 
 Ứng dụng khởi động cùng Windows ở chế độ **ẩn**: nó đăng ký phím tắt rồi chờ, không mở cửa sổ nào.
@@ -54,6 +54,23 @@ hoạt một tác vụ đã lên lịch không cần quyền gì, vì chính tá
 tác vụ thì nút quay về cách cũ và sẽ hỏi quyền như trước. Tác vụ này không
 đụng tới ổ mạng, và cũng không thể: tiến trình elevated không nhìn thấy ổ mạng
 ([CHECK-007](./docs/check.md#check-007)).
+
+**Vì sao chỉ 1–2 lần mỗi ngày.** Đây là lựa chọn của chủ máy, và nó hợp lý vì nút "Quét lại" không
+còn hỏi quyền: tải xong một tệp thì bấm nút là có ngay sau vài giây, không phải chờ tới lượt tự
+động. Chạy nền dày hơn chỉ đổi lấy chút tiện mà thêm việc cho máy.
+
+Muốn đổi lịch (cần một lần quyền Administrator):
+
+```powershell
+# vi du: them mot lan nua luc 18:00
+$t = Get-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc'
+$logon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$logon.Delay = 'PT1M'
+Set-ScheduledTask -TaskName $t.TaskName -Trigger @(
+  $logon,
+  (New-ScheduledTaskTrigger -Daily -At '13:00'),
+  (New-ScheduledTaskTrigger -Daily -At '18:00'))
+```
 
 Muốn tắt phần nào:
 
