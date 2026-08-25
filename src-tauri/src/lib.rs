@@ -111,6 +111,12 @@ pub fn run_gui() {
             ipc::protocol::SCHEME,
             |ctx, request, responder| ipc::protocol::handle(ctx.app_handle(), request, responder),
         )
+        .register_asynchronous_uri_scheme_protocol(
+            ipc::media_stream::SCHEME,
+            |ctx, request, responder| {
+                ipc::media_stream::handle(ctx.app_handle(), request, responder)
+            },
+        )
         .invoke_handler(tauri::generate_handler![
             ipc::commands::search,
             ipc::commands::index_status,

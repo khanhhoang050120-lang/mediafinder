@@ -336,3 +336,15 @@ export function formatWhen(unix: number): string {
   if (!unix) return "";
   return new Date(unix * 1000).toLocaleString("vi-VN");
 }
+
+/**
+ * URL of a result's own bytes, for playing it inside the app.
+ *
+ * Same shape and same epoch rule as {@link thumbUrl}: the page names a
+ * position in the index, never a path. A URL that could carry a path would let
+ * the page read any file on the machine; this one can only reach files the
+ * index already holds.
+ */
+export function mediaUrl(epoch: number, index: number): string {
+  return convertFileSrc(`${epoch}_${index}`, "media");
+}

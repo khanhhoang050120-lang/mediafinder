@@ -894,6 +894,72 @@ Chi tiết cả lượt test, kể cả hai lần kéo không khởi động mà
 
 ---
 
+## P14 — Xem trước ngay trong ứng dụng ✅
+
+**Người dùng chọn:** *"Xem trước nhanh trong ứng dụng"*.
+
+**Vì sao đáng làm với người dựng phim:** thumbnail tĩnh cho biết *đúng tên tệp*, không cho biết
+*đúng cảnh quay*. Với 360.655 tệp mà 87% nằm trên NAS, mở từng clip bằng ứng dụng ngoài để xem thử
+là vòng lặp chậm nhất trong cả quy trình.
+
+### Đo trước khi hứa
+
+Câu hỏi chặn: phát một tệp trên NAS qua SMB có mượt không, hay sẽ giật và tua không nổi. Đem đo
+trên chính ổ `F:` của người dùng, tệp 1.987 MB:
+
+| | |
+|---|---|
+| Byte đầu tiên | **66 ms** |
+| Thông lượng | **84,7 MB/s** (678 Mbps) |
+| Nhảy tới cuối tệp rồi đọc 1 MB | **18 ms** |
+
+Cao hơn hẳn bitrate của bất kỳ video nào, nên tệp NAS phát như tệp cục bộ. Con số này mới là thứ
+quyết định làm hay không.
+
+### `media://` — và vì sao không dùng đường dẫn
+
+Trang web cần **byte** của tệp. Đưa qua data URL thì phải nạp cả video vào bộ nhớ rồi base64 —
+clip 2 GB thành 2,7 GB chữ. Nên byte đi qua URL, và trình duyệt tự lấy phần nó cần.
+
+URL có dạng `media://localhost/{epoch}_{index}` — **đúng cách định danh mà `thumb://` đã dùng**.
+Điểm quan trọng: **không đường dẫn nào xuất hiện trong URL**. Trang chỉ gọi được một vị trí trong
+chỉ mục, nên chỉ chạm được tới tệp mà chỉ mục đã có. Nếu phục vụ theo đường dẫn thì trang đọc được
+mọi tệp trên máy.
+
+**Range request là phần cốt lõi.** Trình phát của Chromium không tải cả video rồi mới phát — nó xin
+từng đoạn byte, và xin lại ở mỗi chỗ người dùng kéo thanh tua. Không có `206 Partial Content` thì
+phải tải hết mới hiện được khung hình đầu, và tua thì hỏng hẳn. Một yêu cầu `bytes=0-` được trả
+lời **có giới hạn 8 MB** thay vì trả nguyên tệp: trả ít hơn mức được xin là hợp lệ, và nó ngăn một
+yêu cầu kéo cả bộ phim vào bộ nhớ.
+
+### Ba cách mở, một cách đóng
+
+Nháy đúp · `Shift+Enter` · menu chuột phải. `Esc` đóng, `↑↓` đổi tệp mà không rời lớp phủ,
+`Enter` giao tệp cho Windows như cũ.
+
+**Nháy đúp trước đây mở bằng ứng dụng ngoài — trùng với Enter.** Nay nó mở xem trước, còn Enter
+giữ nguyên vai trò. Thao tác nhanh và không rời ứng dụng là thứ dùng nhiều hơn hẳn.
+
+### Hai lỗi tìm được khi tự kiểm chứng
+
+**[BUG-021](docs/bug.md#bug-021) 🟠 — nháy đúp mở xem trước làm cửa sổ bung toàn màn hình.** Cử chỉ
+mở lớp phủ rơi luôn vào thẻ `<video>` vừa hiện ra dưới con trỏ. Đo được: mở bằng bàn phím thì cửa
+sổ 880×620, mở bằng nháy đúp thì 1920×1080. Chặn riêng `dblclick` chỉ hết *đôi khi*; cách sửa đúng
+là lớp phủ từ chối mọi thao tác chuột trong 250 ms đầu.
+
+**[BUG-022](docs/bug.md#bug-022) 🟡 — `D:\` hiện thành `:D`.** Mẹo `direction: rtl` của tôi để cắt
+đầu đường dẫn dài đã bị thuật toán bidi chuyển dấu câu lên trước. Chỉ lộ ra với tệp nằm ngay gốc ổ.
+
+### Một giả định của tôi bị chính phép đo bác bỏ
+
+Tôi cố ý **không** khai báo `.mkv`/`.avi` là video, nghĩ rằng làm vậy sẽ khiến trình phát báo lỗi
+ngay thay vì hiện ô đen. Thử thật thì một tệp `.mkv` **vẫn phát bình thường**: Chromium tự đánh hơi
+nội dung chứ không tin phần mở rộng. Nên khai báo kiểu ở đây là **gợi ý, không phải cửa chặn** —
+và kết quả còn tốt hơn dự tính: nhiều tệp xem trước được hơn. Chú thích trong mã đã sửa lại theo
+đúng hành vi quan sát được, không giữ lời giải thích cũ.
+
+---
+
 ## BT — Bảo trì sau phát hành 🟢
 
 Không phải một giai đoạn có điểm kết thúc. Quy tắc số 5 vẫn nguyên hiệu lực: **mọi vấn đề gặp trong

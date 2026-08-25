@@ -841,3 +841,52 @@ phụ thuộc vào **nơi nó chạy**: cùng một panic, ở luồng thường
 procedure thì mất cả ứng dụng. Khi đánh giá "dùng crate hay tự viết" ở CONF-006 tôi đã cân kích
 thước binary và số dòng `unsafe`, mà không hỏi câu quan trọng hơn: *code này chạy ở đâu, và nếu nó
 panic ở đó thì mất gì.*
+
+## BUG-021 🟠 — Mở xem trước bằng nháy đúp làm cửa sổ tự bung toàn màn hình
+
+**Giai đoạn:** P14 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25
+
+**Hiện tượng.** Nháy đúp một hàng để xem trước. Lớp phủ hiện ra — và cả cửa sổ ứng dụng bung ra
+toàn màn hình, che hết mọi thứ khác.
+
+**Đo được, không phải cảm nhận.** `PrintWindow` trả về kích thước cửa sổ thật:
+
+| Cách mở | Kích thước cửa sổ sau khi mở |
+|---|---|
+| Bàn phím (Shift+Enter) | **880×620** — bình thường |
+| Nháy đúp | **1920×1080** — toàn màn hình |
+
+**Nguyên nhân.** Cử chỉ mở lớp phủ cũng rơi vào chính thứ mà lớp phủ vừa đặt xuống dưới con trỏ.
+Nháy đúp vào một hàng thì thẻ `<video>` hiện ra ngay tại chỗ con trỏ vừa nháy đúp, và Chromium đọc
+phần đuôi của cử chỉ đó như cử chỉ của riêng nó — nháy đúp vào video nghĩa là toàn màn hình.
+
+**Lần sửa đầu chưa đủ.** Chặn `dblclick` ngay trên thẻ `<video>` thì có lần hết, có lần không —
+nghĩa là sự kiện tới được trình phát **không phải lúc nào cũng là sự kiện đang bị chặn**. Đoán xem
+đó là sự kiện gì rồi chặn đúng cái đó là cách sửa dựa trên phỏng đoán.
+
+**Cách sửa thật.** Lớp phủ **từ chối mọi thao tác chuột trong 250 ms đầu** (`pointer-events: none`).
+Không cần biết sự kiện nào rò rỉ. 250 ms dài hơn hẳn phần đuôi của một cú nháy đúp, và ngắn hơn
+hẳn thời gian một người kịp quyết định bấm vào thứ vừa hiện ra.
+
+Kiểm chứng: 3 lần chạy, 6 ảnh chụp, **tất cả đều 880×620**.
+
+**Bài học.** Khi một cử chỉ mở ra thứ gì đó ngay dưới con trỏ, phần đuôi của cử chỉ ấy thuộc về ai
+là chuyện không hiển nhiên. Sửa bằng cách chặn *một* loại sự kiện là vá theo triệu chứng; từ chối
+toàn bộ đầu vào trong khoảnh khắc chuyển giao mới là sửa theo nguyên nhân.
+
+## BUG-022 🟡 — Đường dẫn thư mục gốc hiện ngược thành `:D`
+
+**Giai đoạn:** P14 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25
+
+**Hiện tượng.** Xem trước một tệp nằm ngay ở gốc ổ D:. Dòng đường dẫn hiện **`:D`** thay vì `D:\`.
+
+**Nguyên nhân.** Của chính tôi. Để cắt bớt đầu một đường dẫn dài mà vẫn thấy được thư mục ở cuối,
+tôi đặt `direction: rtl` cho dòng đó. Thuật toán bidi khi đó chuyển dấu câu ở cuối lên đầu, nên
+`D:\` thành `:D`. Với đường dẫn dài nhiều cấp thì không lộ ra, chỉ đúng trường hợp tệp nằm ở gốc ổ
+mới thấy — và tôi chỉ thấy vì tình cờ tạo một tệp thử ở `D:\`.
+
+**Cách sửa.** Bỏ `direction: rtl`. Danh sách kết quả vốn đã hiện đường dẫn xuôi từ trái sang phải;
+làm giống nó vừa đúng vừa nhất quán.
+
+**Bài học.** Một mẹo CSS thuần trình bày vẫn có thể **đổi nội dung người dùng đọc được**. `rtl` ở
+đây không chỉ căn lề khác đi — nó sắp xếp lại ký tự.

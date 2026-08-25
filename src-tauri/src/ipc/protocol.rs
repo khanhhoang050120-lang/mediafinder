@@ -51,7 +51,7 @@ pub fn handle(app: &AppHandle, request: Request<Vec<u8>>, responder: UriSchemeRe
 
 fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let uri = request.uri();
-    let Some((epoch, index)) = parse_path(uri.path()) else {
+    let Some((epoch, index)) = parse_entry(uri.path()) else {
         tracing::warn!("thumb: không phân tích được đường dẫn {:?}", uri.path());
         return error(StatusCode::BAD_REQUEST);
     };
@@ -100,7 +100,10 @@ fn error(status: StatusCode) -> Response<Vec<u8>> {
 }
 
 /// Parse `/{epoch}_{index}` out of the URL path.
-fn parse_path(path: &str) -> Option<(u64, usize)> {
+///
+/// Shared with [`super::media_stream`]: both schemes name an entry the same
+/// way, and two copies of this would drift the moment one of them changed.
+pub(crate) fn parse_entry(path: &str) -> Option<(u64, usize)> {
     let mut parts = path.trim_start_matches('/').split('_');
     let epoch = parts.next()?.parse().ok()?;
     let index = parts.next()?.parse().ok()?;
@@ -129,8 +132,8 @@ mod tests {
 
     #[test]
     fn parses_a_well_formed_path() {
-        assert_eq!(parse_path("/7_1234"), Some((7, 1234)));
-        assert_eq!(parse_path("7_0"), Some((7, 0)));
+        assert_eq!(parse_entry("/7_1234"), Some((7, 1234)));
+        assert_eq!(parse_entry("7_0"), Some((7, 0)));
     }
 
     #[test]
@@ -138,17 +141,17 @@ mod tests {
         // Regression guard. `convertFileSrc` percent-encodes the path, so a
         // slash reaches this function as `%2F` and splits nothing. Every
         // thumbnail 400'd silently until the separator changed to `_`.
-        assert_eq!(parse_path("/2%2F84341"), None);
-        assert_eq!(parse_path("/7/1234"), None);
+        assert_eq!(parse_entry("/2%2F84341"), None);
+        assert_eq!(parse_entry("/7/1234"), None);
     }
 
     #[test]
     fn rejects_paths_this_scheme_never_issues() {
-        assert_eq!(parse_path("/7"), None, "thiếu chỉ số");
-        assert_eq!(parse_path("/7_12_extra"), None, "thừa đoạn");
-        assert_eq!(parse_path("/abc_12"), None, "epoch không phải số");
-        assert_eq!(parse_path("/7_-1"), None, "chỉ số âm");
-        assert_eq!(parse_path("/"), None);
+        assert_eq!(parse_entry("/7"), None, "thiếu chỉ số");
+        assert_eq!(parse_entry("/7_12_extra"), None, "thừa đoạn");
+        assert_eq!(parse_entry("/abc_12"), None, "epoch không phải số");
+        assert_eq!(parse_entry("/7_-1"), None, "chỉ số âm");
+        assert_eq!(parse_entry("/"), None);
     }
 
     #[test]

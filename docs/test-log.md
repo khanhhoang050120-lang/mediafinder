@@ -841,3 +841,65 @@ về lúc 14:00 sẽ không tìm thấy cho tới 13:00 hôm sau, trừ khi bấ
 
 **Điều mục 2 cũng chứng minh luôn:** ứng dụng đang mở **tự nạp lại** chỉ mục mới do tác vụ nền ghi
 ra, không cần khởi động lại — `watch_cache` phát hiện cache đổi trong 5 giây.
+
+### 2026-08-25 — Lượt test P14 (xem trước ngay trong ứng dụng)
+
+**Đo trước khi viết một dòng code nào**, vì cả tính năng phụ thuộc vào một câu chưa ai kiểm tra:
+phát tệp NAS qua SMB có mượt không.
+
+| Phép đo trên `F:`, tệp 1.987 MB | Kết quả |
+|---|---|
+| Byte đầu tiên | **66 ms** |
+| Thông lượng | **84,7 MB/s** (678 Mbps) |
+| Nhảy tới cuối tệp rồi đọc 1 MB | **18 ms** |
+
+Cao hơn hẳn bitrate của bất kỳ video nào → làm được. Nếu số ra ngược lại thì tính năng này đã
+không nên làm.
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 0 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ **203 pass**, sạch cả bốn |
+| 1 | Phân tích `Range` | unit test | ✅ 7 test: đoạn thường, mở đuôi, đuôi tệp, quá cỡ, cắt trần, rác |
+| 2 | **Phát video NAS trong ứng dụng** | nháy đúp thật, chụp màn hình | ✅ hiện và phát sau **1,2 giây** |
+| 3 | Có phát thật hay đứng hình | chụp lại ở 4 giây | ✅ khung hình đổi, thanh điều khiển tự ẩn |
+| 4 | `↑↓` đổi tệp mà không rời lớp phủ | gửi `{DOWN}`, đọc tiêu đề | ✅ tên đổi, bộ đếm **2 / 40**, hiện `2.6 MB · 1280×720` |
+| 5 | `Esc` đóng và giữ đúng chỗ | chụp sau `Esc` | ✅ về danh sách, tiêu điểm nằm ở hàng vừa dừng |
+| 6 | Xem trước ảnh | truy vấn `462222` | ✅ ảnh vừa khung, không phóng to vỡ nét |
+| 7 | Định dạng không giải mã được | tự tạo `.mkv` chứa chữ | ✅ hiện *"Không xem trước được định dạng này"* + nút mở bằng ứng dụng ngoài |
+| 8 | Không rò rỉ cử chỉ mở | 3 lần chạy, 6 ảnh | ✅ **tất cả 880×620** (trước khi sửa: 1920×1080) |
+
+**Kết luận:** 9/9 pass, sau khi sửa 2 lỗi tìm được trong chính lượt test.
+
+#### Hai lỗi, cả hai đều do tự kiểm chứng chứ không do đọc lại code
+
+**[BUG-021](./bug.md#bug-021) 🟠 — nháy đúp mở xem trước làm cửa sổ bung toàn màn hình.** Thứ phát
+hiện ra nó là **kích thước ảnh chụp**: `PrintWindow` trả về 1920×1080 thay vì 880×620. Nếu chỉ nhìn
+nội dung ảnh thì không thấy gì bất thường — video vẫn hiện, vẫn phát.
+
+Lần sửa đầu (chặn `dblclick` trên `<video>`) **có lần hết, có lần không** — và chính sự không ổn
+định đó là dữ liệu: nếu chặn đúng sự kiện gây lỗi thì phải hết hẳn. Cách sửa đúng là lớp phủ từ
+chối mọi thao tác chuột trong 250 ms đầu, không cần biết sự kiện nào rò rỉ.
+
+**[BUG-022](./bug.md#bug-022) 🟡 — `D:\` hiện thành `:D`.** Chỉ lộ ra vì tệp thử tình cờ nằm ngay
+gốc ổ. Mọi ảnh chụp trước đó đều là tệp nằm sâu nhiều cấp, nên mẹo `direction: rtl` trông vẫn ổn.
+
+#### Một giả định của tôi bị phép đo bác bỏ
+
+Tôi cố ý **không** khai báo `.mkv`/`.avi` là video, tin rằng như vậy trình phát sẽ báo lỗi ngay
+thay vì hiện ô đen. Thử thật: một `.mkv` **vẫn phát bình thường** — Chromium đánh hơi nội dung chứ
+không tin phần mở rộng. Kiểu MIME ở đây là **gợi ý, không phải cửa chặn**.
+
+Kết quả còn tốt hơn dự tính (xem trước được nhiều tệp hơn), nhưng **chú thích trong mã đã sai** và
+đã sửa lại theo đúng hành vi đo được. Một chú thích mô tả hành vi tưởng tượng còn tệ hơn không có
+chú thích, vì người sau sẽ tin nó.
+
+#### Hai lỗi của kịch bản test
+
+**Lớp phủ còn mở từ lần chạy trước nuốt hết phím gõ vào.** Kịch bản gõ truy vấn mới, nhưng lớp phủ
+đang giữ bàn phím nên chẳng có gì tới ô tìm kiếm — và ảnh chụp ra là tệp của *lần trước*. Suýt ghi
+thành "tính năng không hoạt động". Đã thêm `Esc` vào đầu mọi kịch bản.
+
+**Bộ gõ Telex đổi truy vấn.** Gõ `An_extremely` thì ô tìm kiếm nhận `An_ẽtremely` — Telex biến `ex`
+thành `ẽ`. Ba lần chạy liên tiếp "thành công" thật ra không mở nổi lớp phủ nào vì truy vấn không có
+kết quả. Từ nay kịch bản dùng truy vấn **toàn chữ số**. Đây là bộ gõ của máy, không phải lỗi ứng
+dụng — nhưng nó làm hỏng phép thử y như một lỗi thật.

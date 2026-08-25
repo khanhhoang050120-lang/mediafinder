@@ -2,6 +2,7 @@
   import { listen } from "@tauri-apps/api/event";
 
   import ContextMenu, { type MenuItem } from "./lib/ContextMenu.svelte";
+  import Preview from "./lib/Preview.svelte";
   import VirtualList from "./lib/VirtualList.svelte";
   import {
     coalesce,
@@ -189,6 +190,30 @@
       .sort((a, b) => a - b)
       .map((n) => hits[n]?.path)
       .filter((p): p is string => !!p);
+  }
+
+  /// Whether the preview overlay is up.
+  ///
+  /// Not a copy of the hit: it follows `selected`, so stepping through results
+  /// while the overlay is open cannot leave the two disagreeing about which
+  /// file is on screen.
+  let preview = $state(false);
+
+  function openPreview(i: number) {
+    if (!hits[i]) return;
+    selectOnly(i);
+    preview = true;
+  }
+
+  /// Move to the next or previous result without leaving the overlay.
+  ///
+  /// Scrolls the list underneath too, so closing the overlay leaves the user
+  /// looking at the row they stopped on rather than where they started.
+  function previewStep(delta: number) {
+    if (!hits.length) return;
+    const next = Math.max(0, Math.min(hits.length - 1, selected + delta));
+    selectOnly(next);
+    listRef?.scrollToIndex(next);
   }
 
   let inputEl: HTMLInputElement | undefined = $state();
@@ -461,6 +486,12 @@
 
   function menuItems(hit: SearchHit): MenuItem[] {
     return [
+      {
+        label: "Xem trước",
+        icon: "eye",
+        shortcut: "Shift+Enter",
+        action: () => openPreview(hits.indexOf(hit)),
+      },
       { label: "Mở tệp", icon: "open", shortcut: "Enter", action: () => open(hit) },
       {
         label: "Mở thư mục chứa tệp",
@@ -502,7 +533,7 @@
     // on `window`, and `stopPropagation` does not stop a sibling listener on
     // the same target — without this guard Escape would close the menu *and*
     // clear the search box in the same keystroke.
-    if (menu) return;
+    if (menu || preview) return;
 
     switch (e.key) {
       case "ArrowDown":
@@ -535,7 +566,11 @@
         break;
       case "Enter":
         e.preventDefault();
-        (e.ctrlKey ? reveal : open)(hits[selected]);
+        // Enter still means "hand this to Windows". Shift+Enter is the
+        // in-app look, so the fast, non-committal action needs a modifier and
+        // the one that leaves the app does not change meaning.
+        if (e.shiftKey) openPreview(selected);
+        else (e.ctrlKey ? reveal : open)(hits[selected]);
         break;
       case "Escape":
         e.preventDefault();
@@ -843,7 +878,7 @@
             aria-selected={selection.has(i)}
             tabindex="-1"
             onclick={(e) => onRowClick(e, i)}
-            ondblclick={() => open(hit)}
+            ondblclick={() => openPreview(i)}
             oncontextmenu={(e) => onContextMenu(e, i)}
             onkeydown={() => {}}
             draggable="true"
@@ -950,6 +985,18 @@
     {/if}
   </div>
 </main>
+
+{#if preview && hits[selected]}
+  <Preview
+    hit={hits[selected]}
+    {epoch}
+    position={selected + 1}
+    total={hits.length}
+    onclose={() => (preview = false)}
+    onstep={previewStep}
+    onopen={() => open(hits[selected])}
+  />
+{/if}
 
 {#if menu}
   <ContextMenu

@@ -2,7 +2,7 @@
   export interface MenuItem {
     label: string;
     /** One of the icon keys below. */
-    icon: "open" | "folder" | "copy";
+    icon: "open" | "folder" | "copy" | "eye";
     shortcut?: string;
     action: () => void;
   }
@@ -79,6 +79,11 @@
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
             <path d="M1.8 4.2h4l1.2 1.5h7.2v6.6a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1V4.2Z" />
             <path d="M1.8 6.4h12.4" />
+          </svg>
+        {:else if item.icon === "eye"}
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4Z" />
+            <circle cx="8" cy="8" r="1.8" />
           </svg>
         {:else if item.icon === "open"}
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
