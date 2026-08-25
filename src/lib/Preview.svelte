@@ -40,9 +40,57 @@
   /// not always the one being suppressed. Refusing pointer input outright for
   /// a moment does not depend on guessing which event it is.
   ///
-  /// 250 ms is far longer than a double-click's tail and far shorter than the
-  /// time it takes a person to decide to click something that just appeared.
+  /// 250 ms was not enough, and the measurement that showed it is worth
+  /// keeping: on a query returning 5.000 rows the window still went fullscreen
+  /// in **2 of 5 opens**. A wall-clock timer races the input queue, and under
+  /// that load the queue was the slower of the two — the timer disarmed the
+  /// guard before the leaked event was ever processed.
+  ///
+  /// So the guard is now two things at once: no pointer input on the stage,
+  /// **and** a window-level capture listener that swallows `dblclick`
+  /// outright. Capture runs before every other handler, including whatever
+  /// Chromium wires inside the media controls — which is why the earlier
+  /// attempt at an `ondblclick` on the `<video>` itself only worked sometimes.
+  /// 800 ms because the cost of guessing high is nil and guessing low is a
+  /// window that fullscreens itself.
   let armed = $state(false);
+
+  /// Refuse the tail of the gesture that opened this overlay.
+  ///
+  /// Runs in the capture phase on `window`, so it sees the event before the
+  /// element under the cursor does.
+  function swallowStrayDoubleClick(e: MouseEvent) {
+    if (armed) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  /// Undo a fullscreen nobody asked for.
+  ///
+  /// This guards the **outcome**, not the cause, and that is a deliberate
+  /// retreat: two attempts at the cause both failed a measurement.
+  ///
+  /// - `ondblclick` on the `<video>` — the window still went fullscreen in
+  ///   2 of 5 opens.
+  /// - `pointer-events: none` on the stage *plus* a capture-phase `dblclick`
+  ///   swallow on `window` — still 2 of 5.
+  ///
+  /// With timing instrumentation it turned out to be deterministic rather than
+  /// flaky: the window is 1920x1080 within 300 ms of the double-click, every
+  /// single time, and `Esc` restores it. So something asks for fullscreen and
+  /// it is **not** an event either guard can see. Rather than keep guessing
+  /// which one, this watches the only thing that matters — the document going
+  /// fullscreen while the overlay is still too young for anyone to have asked
+  /// — and reverses it.
+  ///
+  /// A deliberate fullscreen still works: press the control, and by then the
+  /// overlay is armed.
+  function undoUnaskedFullscreen() {
+    if (armed || !document.fullscreenElement) return;
+    document.exitFullscreen().catch(() => {
+      // Nothing to do about it, and nothing worth breaking the preview over.
+    });
+  }
 
   $effect(() => {
     // Depend on the URL so this re-runs on every step.
@@ -52,7 +100,7 @@
   });
 
   $effect(() => {
-    const t = setTimeout(() => (armed = true), 250);
+    const t = setTimeout(() => (armed = true), 800);
     return () => clearTimeout(t);
   });
 
@@ -88,7 +136,11 @@
   }
 </script>
 
-<svelte:window on:keydown|capture={onKeydown} />
+<svelte:window
+  on:keydown|capture={onKeydown}
+  on:dblclick|capture={swallowStrayDoubleClick}
+/>
+<svelte:document on:fullscreenchange={undoUnaskedFullscreen} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -282,16 +334,39 @@
     flex: 1;
     min-height: 0;
     display: grid;
+    /*
+      `minmax(0, 1fr)` rather than the implicit `auto` track, and that is the
+      whole fix for the video spilling over the footer.
+
+      An `auto` track is sized by its content, so a percentage height inside it
+      has nothing definite to resolve against — the browser drops
+      `max-height: 100%` entirely and draws the video at its natural size. A
+      1920x1080 clip then rendered 1080 pixels tall inside a stage a few
+      hundred tall, and the overflow landed on top of the footer.
+
+      A `1fr` track takes its size from the stage, which flex has already
+      sized, so the percentage has a real number to resolve against. The `0`
+      minimum is what lets it shrink: grid tracks refuse to go below their
+      content's minimum otherwise, which is the same trap one level up.
+    */
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     place-items: center;
+    /* Backstop. Nothing in here may ever paint over the footer again. */
+    overflow: hidden;
     background: #000;
     padding: 8px;
   }
   .stage img,
   .stage video {
-    max-width: 100%;
-    max-height: 100%;
-    /* Never upscale a small file into a blurry wall. */
-    object-fit: contain;
+    width: 100%;
+    height: 100%;
+    /*
+      `scale-down`, not `contain`. Both letterbox to fit, but `contain` also
+      blows a small file up to fill the box — a 320x240 clip would become a
+      blurry wall. `scale-down` never draws larger than the file actually is.
+    */
+    object-fit: scale-down;
   }
   .audio {
     display: flex;

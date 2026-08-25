@@ -922,3 +922,40 @@ nên tôi dừng lại thay vì tự bật nó lên.
 **Cách khép lại khi cần:** chạy `mediafinder.exe --audit D` trong một cửa sổ dòng lệnh mở bằng
 quyền Administrator. Nó liệt kê từng tệp bị xoá kèm thời điểm, dựng lại từ journal chứ không từ
 chỉ mục — nên nó thấy được cả những gì chỉ mục chưa kịp biết.
+
+### 2026-08-25 — Người dùng báo: video tràn ra ngoài khung xem trước
+
+**Nguồn phát hiện là người dùng, không phải kịch bản test** — đúng dạng của giai đoạn BT. Kèm hai
+ảnh chụp: video 1920×1080 tràn xuống đè lên dòng chân.
+
+| # | Nội dung | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Tái hiện | mở đúng thư mục người dùng đang xem, video 1080p | ✅ tái hiện được |
+| 2 | Sửa bố cục | `grid-template-rows: minmax(0,1fr)` + `object-fit: scale-down` | ✅ video nằm gọn, dòng chân hiện đủ |
+| 3 | Không phóng to tệp nhỏ | `scale-down` thay `contain` | ✅ giữ đúng ý định ban đầu |
+| 4 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ **203 pass**, sạch cả bốn |
+| 5 | Tệp lớn trên ổ mạng | video **12 GB, 42:58** trên `Y:` | ✅ phát từ đầu, thanh tua chạy |
+
+#### Và lỗi cũ của tôi lộ ra là chưa sửa xong
+
+Trong lúc tái hiện, [BUG-021](./bug.md#bug-021) (cửa sổ tự bung toàn màn hình) **xuất hiện lại** —
+thứ tôi đã tuyên bố sửa xong ở lượt test P14.
+
+**Vì sao lượt P14 tưởng là hết.** Tôi chạy 3 lần trên truy vấn trả về **2 kết quả**, đều sạch. Lỗi
+này chỉ lộ dưới tải: truy vấn **5.000 kết quả** với video 1080p thì hiện lại ngay, **2/5 lần**.
+
+**Ba lần sửa, hai lần đầu đều bị đo bác bỏ:**
+
+| Cách sửa | Kết quả đo |
+|---|---|
+| Chặn `dblclick` trên `<video>` | ❌ 2/5 vẫn bung |
+| `pointer-events: none` + chặn `dblclick` ở tầng cửa sổ | ❌ 2/5 vẫn bung |
+| Theo dõi `fullscreenchange` rồi hoàn tác | ✅ 0/3, đo ở 5 mốc thời gian |
+
+Điều xoay chuyển cách nghĩ là một phép đo: `GetWindowRect` ở 5 mốc cho thấy nó **tất định** — bung
+trong 300 ms sau nháy đúp, lần nào cũng vậy — chứ không bất định như tôi tưởng. Tất định mà cả hai
+lớp chặn đều không thấy, nghĩa là **sự kiện gọi toàn màn hình không phải thứ tôi đang chặn**. Đến
+giờ tôi vẫn chưa biết nó là gì, và chú thích trong mã nói thẳng như vậy.
+
+**Bài học:** ba lần chạy sạch trên dữ liệu nhẹ không chứng minh được gì về dữ liệu nặng. Và khi đã
+hai lần chặn trượt nguyên nhân thì nên chặn ở kết quả — thứ quan sát và kiểm chứng được.

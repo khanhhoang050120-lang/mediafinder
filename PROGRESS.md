@@ -942,13 +942,21 @@ giữ nguyên vai trò. Thao tác nhanh và không rời ứng dụng là thứ 
 
 ### Hai lỗi tìm được khi tự kiểm chứng
 
-**[BUG-021](docs/bug.md#bug-021) 🟠 — nháy đúp mở xem trước làm cửa sổ bung toàn màn hình.** Cử chỉ
-mở lớp phủ rơi luôn vào thẻ `<video>` vừa hiện ra dưới con trỏ. Đo được: mở bằng bàn phím thì cửa
-sổ 880×620, mở bằng nháy đúp thì 1920×1080. Chặn riêng `dblclick` chỉ hết *đôi khi*; cách sửa đúng
-là lớp phủ từ chối mọi thao tác chuột trong 250 ms đầu.
+**[BUG-021](docs/bug.md#bug-021) 🟠 — nháy đúp mở xem trước làm cửa sổ bung toàn màn hình.** Đo
+được: mở bằng bàn phím thì cửa sổ 880×620, mở bằng nháy đúp thì 1920×1080. **Phải sửa ba lần** —
+hai cách đầu (chặn `dblclick` trên thẻ video; rồi chặn chuột trên khung + chặn `dblclick` ở tầng
+cửa sổ) đều còn bung 2/5 lần dưới tải nặng. Cách thứ ba chặn ở *kết quả*: theo dõi
+`fullscreenchange` và hoàn tác khi không ai hỏi. Nguyên nhân thật vẫn chưa xác định, và chú thích
+trong mã nói thẳng điều đó.
 
 **[BUG-022](docs/bug.md#bug-022) 🟡 — `D:\` hiện thành `:D`.** Mẹo `direction: rtl` của tôi để cắt
 đầu đường dẫn dài đã bị thuật toán bidi chuyển dấu câu lên trước. Chỉ lộ ra với tệp nằm ngay gốc ổ.
+
+**[BUG-023](docs/bug.md#bug-023) 🟠 — video 1080p tràn khỏi khung, đè lên dòng chân.** Người dùng
+báo, không phải kịch bản test tìm ra. Khung chứa dùng hàng lưới `auto` nên `max-height: 100%` không
+có mốc quy chiếu và bị bỏ qua; video vẽ ở kích thước gốc. Mọi ảnh kiểm chứng của tôi đều là clip
+720p — **dữ liệu thử nhỏ hơn dữ liệu thật**, đúng bài học của [BUG-020](docs/bug.md#bug-020) ở một
+chỗ khác.
 
 ### Một giả định của tôi bị chính phép đo bác bỏ
 

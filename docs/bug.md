@@ -864,15 +864,37 @@ phần đuôi của cử chỉ đó như cử chỉ của riêng nó — nháy �
 nghĩa là sự kiện tới được trình phát **không phải lúc nào cũng là sự kiện đang bị chặn**. Đoán xem
 đó là sự kiện gì rồi chặn đúng cái đó là cách sửa dựa trên phỏng đoán.
 
-**Cách sửa thật.** Lớp phủ **từ chối mọi thao tác chuột trong 250 ms đầu** (`pointer-events: none`).
-Không cần biết sự kiện nào rò rỉ. 250 ms dài hơn hẳn phần đuôi của một cú nháy đúp, và ngắn hơn
-hẳn thời gian một người kịp quyết định bấm vào thứ vừa hiện ra.
+**Ba lần sửa, hai lần đầu đều bị phép đo bác bỏ.** Ghi lại cả ba vì trình tự này mới là phần đáng
+đọc:
 
-Kiểm chứng: 3 lần chạy, 6 ảnh chụp, **tất cả đều 880×620**.
+| # | Cách sửa | Kết quả đo |
+|---|---|---|
+| 1 | Chặn `dblclick` ngay trên thẻ `<video>` | ❌ **2/5 lần vẫn bung** |
+| 2 | Thêm `pointer-events: none` trên khung + chặn `dblclick` ở tầng cửa sổ (capture) | ❌ **2/5 lần vẫn bung** |
+| 3 | Theo dõi `fullscreenchange` và **hoàn tác** nếu lớp phủ còn quá non | ✅ **0/3 lần**, đo ở 5 mốc thời gian |
 
-**Bài học.** Khi một cử chỉ mở ra thứ gì đó ngay dưới con trỏ, phần đuôi của cử chỉ ấy thuộc về ai
-là chuyện không hiển nhiên. Sửa bằng cách chặn *một* loại sự kiện là vá theo triệu chứng; từ chối
-toàn bộ đầu vào trong khoảnh khắc chuyển giao mới là sửa theo nguyên nhân.
+**Tôi đã tuyên bố sửa xong ở lần 1 — và sai.** Ba lần chạy đầu đều sạch nên tôi kết luận là hết.
+Chỉ khi người dùng báo một lỗi khác (video tràn khỏi khung, [BUG-023](#bug-023)) và tôi tái hiện
+bằng một truy vấn nặng hơn — 5.000 kết quả, video 1080p — thì nó mới hiện lại. **Truy vấn nhẹ
+không đủ tải để lộ ra một cuộc đua.**
+
+**Vì sao lần 1 và 2 đều trượt.** Ban đầu tôi tưởng là bất định và đổ cho hàng đợi sự kiện bị nghẽn.
+Đo bằng `GetWindowRect` ở 5 mốc thì hoá ra **hoàn toàn tất định**: cửa sổ thành 1920×1080 trong
+vòng 300 ms sau nháy đúp, lần nào cũng vậy, và `Esc` trả lại như cũ. Tất định mà cả hai lớp chặn
+đều không thấy → **sự kiện gọi toàn màn hình không phải thứ tôi đang chặn.** Tôi vẫn chưa biết nó
+là gì.
+
+**Nên lần 3 chặn ở *kết quả*, không ở nguyên nhân.** Nghe `fullscreenchange`; nếu tài liệu vào
+toàn màn hình trong lúc lớp phủ còn chưa "vũ trang" thì thoát ra ngay. Không cần biết ai đã hỏi.
+Người dùng chủ động bấm nút toàn màn hình thì vẫn được, vì lúc đó lớp phủ đã vũ trang.
+
+**Bài học.** Chặn theo nguyên nhân chỉ đúng khi **biết** nguyên nhân. Hai lần đầu tôi chặn thứ
+mình *đoán* là nguyên nhân, và cả hai lần phép đo đều nói không phải. Khi đã hai lần trượt thì
+chặn ở kết quả — thứ quan sát được và kiểm chứng được — là lựa chọn đúng, kèm chú thích nói thẳng
+rằng nguyên nhân vẫn chưa rõ.
+
+**Bài học thứ hai, về cách test.** Một lỗi đua chỉ lộ ra dưới tải. Ba lần chạy sạch trên truy vấn
+2 kết quả không chứng minh được gì về truy vấn 5.000 kết quả.
 
 ## BUG-022 🟡 — Đường dẫn thư mục gốc hiện ngược thành `:D`
 
@@ -890,3 +912,33 @@ làm giống nó vừa đúng vừa nhất quán.
 
 **Bài học.** Một mẹo CSS thuần trình bày vẫn có thể **đổi nội dung người dùng đọc được**. `rtl` ở
 đây không chỉ căn lề khác đi — nó sắp xếp lại ký tự.
+
+
+## BUG-023 🟠 — Video tràn ra ngoài khung xem trước, đè lên dòng chân
+
+**Giai đoạn:** P14 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25 · **Người báo:** người dùng
+
+**Hiện tượng.** Xem trước một video 1920×1080. Khung hình tràn xuống quá đáy khung chứa, đè lên
+dòng chân (dung lượng, độ phân giải, các phím tắt). Người dùng gửi ảnh chụp.
+
+**Nguyên nhân.** Của tôi, trong CSS. Khung chứa dùng `display: grid` với hàng ngầm định `auto` —
+tức **kích thước hàng do nội dung quyết định**. Khi đó `max-height: 100%` của thẻ video không có gì
+xác định để quy chiếu, nên trình duyệt **bỏ qua hẳn** thuộc tính ấy và vẽ video ở kích thước gốc.
+Một clip 1080p vẽ cao 1080 pixel trong một khung cao vài trăm pixel, phần thừa rơi xuống dòng chân.
+
+**Cách sửa.** Cho hàng một kích thước thật: `grid-template-rows: minmax(0, 1fr)`. `1fr` lấy kích
+thước từ khung chứa mà flex đã tính xong, nên phần trăm có mốc để quy chiếu; số `0` ở cận dưới là
+thứ cho phép nó co lại — nếu không, hàng lưới từ chối nhỏ hơn nội dung, đúng cái bẫy vừa gặp ở một
+tầng trên. Thêm `overflow: hidden` làm chốt chặn cuối.
+
+Đổi luôn `max-*: 100%` thành `width/height: 100%` cộng **`object-fit: scale-down`**. `contain` cũng
+vừa khung nhưng sẽ **phóng to** một tệp nhỏ cho đầy khung; `scale-down` không bao giờ vẽ lớn hơn
+kích thước thật của tệp — đúng ý định ban đầu.
+
+**Vì sao lọt qua lượt test P14.** Mọi ảnh chụp kiểm chứng của tôi đều là clip **720p** trong một
+cửa sổ đủ cao để 720 pixel vẫn lọt. Người dùng mở 1080p. Cùng một lỗi, chỉ khác dữ liệu — và lần
+này dữ liệu thật lớn hơn dữ liệu thử.
+
+**Bài học.** Lặp lại đúng bài học của [BUG-020](#bug-020) ở một chỗ khác: **dữ liệu thử do tôi chọn
+nhỏ hơn dữ liệu thật.** Với bố cục, "thử bằng thứ lớn nhất người dùng có" phải là một mục kiểm tra,
+không phải may rủi.
