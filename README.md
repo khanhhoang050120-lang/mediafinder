@@ -29,6 +29,33 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 
 Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 
+## Dùng hằng ngày
+
+| Việc | Cách |
+|---|---|
+| Mở phần mềm | `Ctrl+Alt+Space` từ bất kỳ đâu, hoặc Start Menu |
+| Ẩn đi | bấm lại đúng phím đó |
+| Cập nhật ổ trong máy | tự động lúc đăng nhập (~0,45 s, không UAC), hoặc nút **Quét lại** |
+| Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
+
+Ứng dụng khởi động cùng Windows ở chế độ **ẩn**: nó đăng ký phím tắt rồi chờ, không mở cửa sổ nào.
+Phím tắt chỉ hoạt động khi ứng dụng đang chạy, nên đây là điều kiện để nó dùng được.
+
+Tự cập nhật chạy qua một Scheduled Task với quyền cao — đó là cách duy nhất đọc được USN journal
+mà **không** hiện UAC mỗi lần đăng nhập ([CHECK-004](./docs/check.md#check-004)). Tác vụ này không
+đụng tới ổ mạng, và cũng không thể: tiến trình elevated không nhìn thấy ổ mạng
+([CHECK-007](./docs/check.md#check-007)).
+
+Muốn tắt phần nào:
+
+```powershell
+# tat tu khoi dong
+Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'MediaFinder.lnk')
+
+# tat tu cap nhat
+Unregister-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc' -Confirm:$false
+```
+
 ## Vòng kiểm tra
 
 Bốn lệnh, chạy trước mỗi lần commit:

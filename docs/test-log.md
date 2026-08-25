@@ -594,3 +594,33 @@ sai thì ứng dụng **vĩnh viễn vô hình** — mở lên không thấy gì
 `progress.json` cho thấy một lượt quét ổ mạng đã hoàn tất đúng thời điểm đó, nhưng **tôi không quy
 được nó về lệnh nào mình đã chạy**. Dữ liệu đã kiểm chứng là nhất quán và tìm kiếm được; ghi lại
 đây vì một chỉ mục tự thay đổi là thứ không nên bỏ qua, kể cả khi kết quả trông đúng.
+
+---
+
+### 2026-08-25 — Tác vụ tự cập nhật, và lượt test đầu tiên đi qua chính nút bấm
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ 186 pass, sạch cả bốn |
+| 2 | Tạo Scheduled Task | `Register-ScheduledTask` elevated | ✅ `RunLevel = Highest`, trễ 1 phút sau đăng nhập |
+| 3 | **Tác vụ chạy có hiện UAC không** | `Start-ScheduledTask` rồi quan sát | ✅ **không** — đúng mục đích của cả cách làm này |
+| 4 | Tác vụ có cập nhật thật không | đọc `built_at` trong cache | ✅ 09:06:44 → 10:25:00, mã trả về 0 |
+| 5 | **Bấm nút "Quét lại" trong giao diện** | UI Automation | ❌ **tìm ra lỗi** — báo *"kết thúc bất thường"* dù thành công ([BUG-019](./bug.md#bug-019)) |
+| 6 | Sau khi sửa: bấm lại | như trên | ✅ không còn lỗi giả, thanh trạng thái đổi sang *"quét lúc 10:32:43"* |
+| 7 | Quét ổ cục bộ có xoá mất NAS không | đếm lại sau khi bấm nút | ✅ **360.650 tệp** — 313.946 mục NAS còn nguyên |
+| 8 | Luồng hai pha của nút "+ ổ mạng" | đọc mã | ❌ **tìm ra lỗi** — pha một giương cờ kết thúc sớm |
+
+**Kết luận:** 6/8 pass, 2 lỗi tìm ra và đã sửa. Cả hai cùng một gốc.
+
+**Mục 5 là lần đầu tiên có ai bấm nút đó.** Suốt P9 tôi chỉ chạy `--index` từ dòng lệnh. Mọi phép
+đo đều đúng — 0,45 giây, đúng số tệp, cache ghi xong — nhưng **không phép đo nào đi qua con đường
+người dùng đi**. Chỉ cần một lần bấm nút là lỗi lộ ra ngay.
+
+**Mục 3 là thứ biện minh cho cả cách làm.** Nếu tác vụ vẫn hiện UAC thì nó chẳng hơn gì việc tự
+bấm nút, và toàn bộ lý do dùng Task Scheduler sụp đổ. Đã chạy thử và xác nhận: không có lời nhắc
+nào.
+
+**Một ghi chú về công cụ test.** Kịch bản bấm nút đầu tiên báo *"không thấy nút nào"*. Sai ở kịch
+bản: nó bấm phím tắt để gọi cửa sổ **trước**, mà cửa sổ đang hiện và đang focus — nên chính phím
+tắt đó **ẩn nó đi**, và UIA không còn gì để tìm. Cùng họ với [BUG-016](./bug.md#bug-016): công cụ
+kiểm chứng cũng cần được kiểm chứng.

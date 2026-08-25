@@ -486,6 +486,12 @@ pub fn run_incremental() -> bool {
 
     let started = std::time::Instant::now();
 
+    // The UI watches `progress.json` and nothing else. A run that finishes
+    // without ever writing `finished` looks exactly like a crash to it — which
+    // is what this path did until it was tried through the button rather than
+    // from a command line.
+    let mut progress = ipc::elevate::ProgressWriter::new().ok();
+
     let cache = match index::persist::load() {
         Ok(c) => c,
         Err(e) => {
@@ -530,6 +536,15 @@ pub fn run_incremental() -> bool {
             journal_id: st.journal_id,
             next_usn: st.next_usn,
         };
+        if let Some(w) = progress.as_mut() {
+            let p = w.state_mut();
+            p.phase = "scanning".into();
+            p.volume = st.letter.to_string();
+            p.volumes_total = cache.volumes.len();
+            p.message = format!("Đang đọc nhật ký thay đổi ổ {}:…", st.letter);
+            w.flush();
+        }
+
         match usn_journal::read_batch(&handle, st.letter, from) {
             Ok(Batch::Changes { changes: c, next }) => {
                 tracing::info!("ổ {}: {} thay đổi từ journal", st.letter, c.len());
@@ -561,6 +576,10 @@ pub fn run_incremental() -> bool {
         // apply, and not saving them would re-read the same stretch of journal
         // every time.
         let _ = index::persist::save(&cache.index, stamps);
+        finish_incremental(
+            progress,
+            &format!("Không có thay đổi nào — {} tệp", cache.index.len()),
+        );
         return true;
     }
 
@@ -627,6 +646,13 @@ pub fn run_incremental() -> bool {
         );
     }
 
+    if let Some(w) = progress.as_mut() {
+        let p = w.state_mut();
+        p.phase = "saving".into();
+        p.message = "Đang lưu chỉ mục…".into();
+        w.flush();
+    }
+
     match index::persist::save(&ix, stamps) {
         Ok(path) => tracing::info!(
             "cập nhật nhanh xong: {} mục, ghi {} [{:.2}s]",
@@ -636,10 +662,48 @@ pub fn run_incremental() -> bool {
         ),
         Err(e) => {
             tracing::error!("không ghi được cache: {e}");
+            // Deliberately not reported as finished: returning false sends the
+            // caller to a full scan, which writes its own progress. Claiming
+            // success here would stop the UI on a run that achieved nothing.
             return false;
         }
     }
+
+    finish_incremental(
+        progress,
+        &format!(
+            "Cập nhật xong: {} tệp (+{} −{})",
+            ix.len(),
+            stats.files_added,
+            stats.files_removed
+        ),
+    );
     true
+}
+
+/// Should this run raise the `finished` flag the UI stops on?
+///
+/// False when the caller has more to do afterwards — a network walk that this
+/// process cannot perform, so it runs in the GUI once this one exits.
+fn announces_finish() -> bool {
+    !std::env::args().any(|a| a == "--no-finish")
+}
+
+/// Mark the run finished, after the cache is safely on disk.
+///
+/// Set last and only here: the UI reloads the moment it sees the flag, so
+/// raising it any earlier would race the file it is about to read.
+fn finish_incremental(mut progress: Option<ipc::elevate::ProgressWriter>, message: &str) {
+    if !announces_finish() {
+        return;
+    }
+    if let Some(w) = progress.as_mut() {
+        let p = w.state_mut();
+        p.phase = "done".into();
+        p.message = message.to_string();
+        p.finished = true;
+        w.flush();
+    }
 }
 
 /// Report what the change journal still remembers being deleted.
@@ -1406,7 +1470,7 @@ pub fn run_indexer() {
     // `finished` is set only now, after the cache is safely on disk. The GUI
     // reloads the moment it sees that flag, so flipping it any earlier would
     // race the file it is about to read.
-    if let Some(p) = progress.as_mut() {
+    if let Some(p) = progress.as_mut().filter(|_| announces_finish()) {
         let st = p.state_mut();
         match outcome {
             Ok(_) => {

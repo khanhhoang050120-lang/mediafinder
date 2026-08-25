@@ -184,11 +184,21 @@ impl Drop for ElevatedChild {
 ///
 /// Returns as soon as the child starts; the caller waits on it elsewhere so the
 /// UI thread is never blocked behind a scan.
-pub fn spawn_elevated_indexer() -> Result<ElevatedChild, ElevateError> {
+/// Start the elevated indexer.
+///
+/// `announce_finish` is false when a second phase follows in this process — a
+/// network walk. The UI stops the moment it sees `finished`, so a child that
+/// raised the flag halfway through would leave the slow half running with
+/// nothing on screen to say so.
+pub fn spawn_elevated_indexer(announce_finish: bool) -> Result<ElevatedChild, ElevateError> {
     let exe = std::env::current_exe().map_err(|_| ElevateError::NoExePath)?;
     let exe = HSTRING::from(exe.as_os_str());
     let verb = HSTRING::from("runas");
-    let args = HSTRING::from("--index");
+    let args = HSTRING::from(if announce_finish {
+        "--index"
+    } else {
+        "--index --no-finish"
+    });
 
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,

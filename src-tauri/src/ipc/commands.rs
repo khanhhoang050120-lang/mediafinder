@@ -226,7 +226,7 @@ pub fn request_scan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // anything cannot show the previous scan's numbers.
     let _ = elevate::clear_progress();
 
-    let child = elevate::spawn_elevated_indexer().map_err(|e| e.to_string())?;
+    let child = elevate::spawn_elevated_indexer(true).map_err(|e| e.to_string())?;
     state.set_scanning(true);
 
     std::thread::spawn(move || {
@@ -260,7 +260,10 @@ pub fn request_scan_with_network(
     }
     let _ = elevate::clear_progress();
 
-    let child = elevate::spawn_elevated_indexer().map_err(|e| e.to_string())?;
+    // The local phase must not announce completion: the network walk comes
+    // after it, and the UI would otherwise stop watching before the slow half
+    // had even started.
+    let child = elevate::spawn_elevated_indexer(false).map_err(|e| e.to_string())?;
     state.set_scanning(true);
     state.request_cancel(false);
 

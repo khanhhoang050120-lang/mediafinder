@@ -741,3 +741,47 @@ không thể đọc được NAS — xem [ISSUE-003](./issue.md#issue-003).
 lặp báo cáo. Nhưng vòng lặp đó chỉ báo cáo những thứ **đã lọt qua bộ lọc trước nó**. Thứ bị loại ở
 bộ lọc sớm hơn thì không có gì báo cáo cả — và không có cách nào biết, vì thiếu vắng không tạo ra
 dấu vết.
+
+---
+
+## BUG-019 🟠 — Cập nhật nhanh chạy thành công nhưng giao diện báo "kết thúc bất thường"
+
+**Giai đoạn:** P9 → P10 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25
+
+**Hiện tượng.** Bấm "Quét lại". Chỉ mục **được cập nhật đúng**, cache ghi xong, mọi thứ trong log
+đều bình thường. Nhưng giao diện hiện:
+
+> Tiến trình quét kết thúc bất thường. Dữ liệu cũ vẫn nguyên.
+
+Câu đó sai ở cả hai vế: tiến trình kết thúc bình thường, và dữ liệu **đã** được cập nhật.
+
+**Nguyên nhân.** Giao diện chỉ theo dõi đúng một thứ: `progress.json`. Nó dừng khi thấy
+`finished: true`, và có một nhánh dự phòng — nếu tiến trình con chết mà chưa báo gì thì hiện lỗi,
+để thanh tiến độ không quay mãi.
+
+Đường **cập nhật nhanh** thêm ở P9 chạy trước `run_indexer` và trả về sớm, nên nó **không ghi
+`progress.json`** một lần nào. Với giao diện, một lượt chạy xong mà chưa bao giờ ghi `finished`
+trông y hệt một lần crash — và nhánh dự phòng làm đúng việc của nó.
+
+**Vì sao lọt.** Suốt P9 tôi chỉ chạy `--index` từ **dòng lệnh**, nơi không có giao diện nào theo
+dõi. Mọi phép đo đều đúng: 0,45 giây, đúng số tệp, cache ghi xong. Chỉ có điều không phép đo nào
+đi qua đúng con đường mà người dùng đi.
+
+**Cách sửa.** Cập nhật nhanh nay ghi tiến độ như bản quét đầy đủ: báo từng ổ khi đọc journal, báo
+`saving` khi ghi cache, và `finished` sau khi cache đã nằm an toàn trên đĩa. Đường ghi cache thất
+bại **cố ý không** báo `finished` — nó trả về `false` để chuyển sang quét đầy đủ, mà quét đầy đủ sẽ
+tự ghi tiến độ của nó.
+
+## Lỗi thứ hai cùng họ, tìm ra khi đang sửa lỗi thứ nhất
+
+Nút **"+ ổ mạng"** chạy hai pha: tiến trình con quét ổ cục bộ, rồi tiến trình GUI duyệt ổ mạng.
+Tiến trình con ghi `finished: true` khi xong **pha một** — nên giao diện tưởng đã xong toàn bộ,
+ngừng theo dõi, và 4,5 phút quét NAS chạy âm thầm không có gì trên màn hình nói rằng nó đang chạy.
+
+Sửa bằng cờ `--no-finish`: pha một không được phép giương cờ kết thúc khi còn pha hai phía sau.
+Nhánh dự phòng vẫn bắt được nếu tiến trình con chết thật, vì cờ `scanning` chỉ hạ khi cả hai pha
+xong.
+
+**Bài học.** Hai lỗi, cùng một gốc: **`progress.json` là hợp đồng, không phải nhật ký.** Ai ghi vào
+đó cũng phải hoàn thành hợp đồng — báo xong đúng một lần, và đúng lúc thật sự xong. Cả hai đều
+không thể tìm ra bằng cách chạy từ dòng lệnh, vì ở đó không có ai đang đọc hợp đồng ấy.
