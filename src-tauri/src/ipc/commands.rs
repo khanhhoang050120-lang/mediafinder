@@ -226,6 +226,19 @@ pub fn request_scan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // anything cannot show the previous scan's numbers.
     let _ = elevate::clear_progress();
 
+    // Prefer the scheduled task: it already has the privileges the journal
+    // read needs, and starting it needs none — so the ordinary refresh costs
+    // no UAC prompt. Falls back to an elevated child when the task is absent,
+    // which is the case for anyone who declined to set it up.
+    if elevate::try_run_scheduled_task() {
+        state.set_scanning(true);
+        std::thread::spawn(move || {
+            wait_for_finish();
+            app.state::<AppState>().set_scanning(false);
+        });
+        return Ok(());
+    }
+
     let child = elevate::spawn_elevated_indexer(true).map_err(|e| e.to_string())?;
     state.set_scanning(true);
 
@@ -238,6 +251,24 @@ pub fn request_scan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     });
 
     Ok(())
+}
+
+/// Wait for a scan started by the scheduled task to report itself finished.
+///
+/// There is no process handle to wait on — the task runs in its own session —
+/// so completion is read from the progress file the indexer writes. The
+/// deadline exists so a task that never reports cannot leave the button
+/// disabled for the rest of the session.
+fn wait_for_finish() {
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(20 * 60);
+    let started = std::time::Instant::now();
+    while started.elapsed() < DEADLINE {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        if elevate::read_progress().is_some_and(|p| p.finished) {
+            return;
+        }
+    }
+    tracing::warn!("tác vụ quét không báo kết thúc sau 20 phút — bỏ theo dõi");
 }
 
 /// Scan the local disks, then walk every mapped network drive.

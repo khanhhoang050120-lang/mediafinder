@@ -184,6 +184,51 @@ impl Drop for ElevatedChild {
 ///
 /// Returns as soon as the child starts; the caller waits on it elsewhere so the
 /// UI thread is never blocked behind a scan.
+/// Name of the optional scheduled task that keeps the index fresh.
+///
+/// Created once by the user, at install time. Must match what created it.
+pub const TASK_NAME: &str = "MediaFinder - cap nhat chi muc";
+
+/// Ask the scheduled task to run now, if it exists.
+///
+/// Worth trying before anything else: the task runs with the privileges the
+/// journal read needs, and starting it needs **none** — so the ordinary
+/// refresh costs the user no UAC prompt at all. Measured from an unelevated
+/// process: `schtasks /Run` returns 0 and the task runs elevated.
+///
+/// Returns false when there is no such task, or Windows declines to start it;
+/// the caller then falls back to launching an elevated child, which does
+/// prompt.
+pub fn try_run_scheduled_task() -> bool {
+    use std::os::windows::process::CommandExt;
+
+    // CREATE_NO_WINDOW: this runs while the user is looking at the app, and a
+    // console flashing up would look like something went wrong.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    match std::process::Command::new("schtasks.exe")
+        .args(["/Run", "/TN", TASK_NAME])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            tracing::info!("quét qua tác vụ đã lên lịch — không cần UAC");
+            true
+        }
+        Ok(out) => {
+            tracing::info!(
+                "không dùng được tác vụ đã lên lịch (mã {:?}), sẽ hỏi quyền",
+                out.status.code()
+            );
+            false
+        }
+        Err(e) => {
+            tracing::info!("không gọi được schtasks: {e}");
+            false
+        }
+    }
+}
+
 /// Start the elevated indexer.
 ///
 /// `announce_finish` is false when a second phase follows in this process — a

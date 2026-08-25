@@ -36,7 +36,7 @@ Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 | Mở phần mềm | `Ctrl+Alt+Space` từ bất kỳ đâu, Start Menu, hoặc bấm biểu tượng ở khay |
 | Ẩn đi | bấm lại đúng phím đó, hoặc đóng cửa sổ |
 | **Tắt hẳn** | chuột phải biểu tượng ở khay → **Thoát** |
-| Cập nhật ổ trong máy | tự động lúc đăng nhập (~0,45 s, không UAC), hoặc nút **Quét lại** |
+| Cập nhật ổ trong máy | tự động lúc đăng nhập, hoặc nút **Quét lại** — cả hai đều **không hỏi quyền** |
 | Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
 
 Ứng dụng khởi động cùng Windows ở chế độ **ẩn**: nó đăng ký phím tắt rồi chờ, không mở cửa sổ nào.
@@ -47,7 +47,11 @@ Vì cùng lý do đó, **đóng cửa sổ chỉ ẩn đi**. Biểu tượng ở
 kiểm chứng là không cản trở quá trình tắt máy.
 
 Tự cập nhật chạy qua một Scheduled Task với quyền cao — đó là cách duy nhất đọc được USN journal
-mà **không** hiện UAC mỗi lần đăng nhập ([CHECK-004](./docs/check.md#check-004)). Tác vụ này không
+mà **không** hiện UAC mỗi lần đăng nhập ([CHECK-004](./docs/check.md#check-004)).
+
+Nút "Quét lại" cũng **kích hoạt chính tác vụ đó** thay vì tự khởi chạy tiến trình elevated: kích
+hoạt một tác vụ đã lên lịch không cần quyền gì, vì chính tác vụ mới mang quyền. Nếu máy chưa tạo
+tác vụ thì nút quay về cách cũ và sẽ hỏi quyền như trước. Tác vụ này không
 đụng tới ổ mạng, và cũng không thể: tiến trình elevated không nhìn thấy ổ mạng
 ([CHECK-007](./docs/check.md#check-007)).
 

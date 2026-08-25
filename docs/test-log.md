@@ -658,3 +658,36 @@ Icons" trong khi vùng ẩn **đang mở**, mà Invoke là phép bật/tắt nê
 phải rơi vào toạ độ cũ sau khi flyout đã đóng. Cùng bài học với [BUG-016](./bug.md#bug-016) — thao
 tác ở cấp hệ thống không tự biết nó đang nhắm vào cái gì, nên phải xác nhận trạng thái ngay trước
 mỗi bước, và gộp cả chuỗi vào một tiến trình.
+
+---
+
+### 2026-08-25 — Tệp vừa tải về có được tìm thấy không
+
+Câu hỏi của người dùng: tải một video từ web về ổ thì lúc tải xong có tìm được ngay không.
+Trả lời: **không**, và việc đo đã chỉ ra hai chỗ cần sửa trước khi làm cho nó gần "ngay".
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ 186 pass, sạch cả bốn |
+| 2 | Chạy khi **không có gì mới** | chạy tác vụ hai lần liên tiếp | ✅ sau khi sửa: cache **không** bị ghi lại |
+| 3 | Chi phí một lần chạy không có gì mới | đo 3 lần | ✅ **1,2–1,8 giây**, không ghi đĩa |
+| 4 | Tạo một `.mp4` 6 MB rồi chạy | như "tải về" | ✅ cache ghi lại sau **7 giây**, tệp có trong index đúng dung lượng |
+| 5 | **Tiến trình quyền thường kích hoạt được tác vụ elevated không** | `schtasks /Run` | ✅ **được**, mã trả về 0 |
+| 6 | Nút "Quét lại" qua tác vụ | bấm nút qua UIA | ✅ tác vụ chạy lúc 11:15:32 mã 0 — **không có UAC** |
+| 7 | Kết quả trên giao diện | nhìn ảnh chụp | ✅ *"quét lúc 11:15:32"*, không lỗi |
+
+**Kết luận:** 7/7 pass sau khi sửa hai chỗ.
+
+**Mục 2 là chỗ suýt gây hại lâu dài.** Khi journal không có gì đáng áp, mã cũ vẫn ghi lại **toàn
+bộ cache 47 MB** chỉ để đẩy con trỏ. Chạy mỗi 5 phút sẽ thành **13,5 GB ghi xuống SSD mỗi ngày cho
+việc không làm gì**. Nay chỉ ghi khi thực sự có mục thay đổi; con trỏ đứng yên và lần sau đọc lại
+cùng đoạn journal — đọc cả vòng journal chỉ mất 0,2 giây, rẻ hơn hẳn cái ghi mà nó tránh được.
+
+**Mục 5 mở ra thứ tôi không ngờ.** Nút "Quét lại" trước đây luôn hiện UAC vì nó tự khởi chạy tiến
+trình elevated. Nhưng **kích hoạt** một tác vụ đã lên lịch thì không cần quyền gì — chính tác vụ
+mới mang quyền. Nên nút nay gọi tác vụ trước, chỉ khi không có tác vụ mới quay về cách cũ. Kết quả:
+thao tác làm mới thường ngày **không còn hỏi quyền một lần nào**.
+
+Không có handle tiến trình để chờ (tác vụ chạy ở phiên riêng), nên hoàn tất được đọc từ chính
+`progress.json` — thứ vừa được sửa ở [BUG-019](./bug.md#bug-019) để đường cập nhật nhanh cũng phải
+báo xong. Hai việc tưởng rời nhau hoá ra là một.

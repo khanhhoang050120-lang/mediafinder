@@ -663,10 +663,6 @@ pub fn run_incremental() -> bool {
             "không có thay đổi nào — chỉ mục vẫn đúng [{:.2}s]",
             started.elapsed().as_secs_f64()
         );
-        // Still worth saving: the cursors moved forward even with nothing to
-        // apply, and not saving them would re-read the same stretch of journal
-        // every time.
-        let _ = index::persist::save(&cache.index, stamps);
         finish_incremental(
             progress,
             &format!("Không có thay đổi nào — {} tệp", cache.index.len()),
@@ -704,6 +700,37 @@ pub fn run_incremental() -> bool {
              trong chỉ mục cho tới lần quét đầy đủ kế tiếp",
             stats.unresolved
         );
+    }
+
+    // Nothing in the index actually moved. Write nothing.
+    //
+    // This is what makes running the update every few minutes reasonable. The
+    // cache is 47 MB; rewriting it every time just to advance a cursor would
+    // be roughly 13 GB of pointless SSD writes a day, for a machine where most
+    // journal traffic is temporary files nobody is searching for.
+    //
+    // The cursor is left where it was as a consequence, so the next run reads
+    // the same stretch of journal again. Measured: the entire ring reads in
+    // 0.2 s, so re-reading is far cheaper than the write it avoids. If enough
+    // happens that the ring wraps past the stored position, `read_batch`
+    // reports it and a full scan follows — which is the correct answer anyway.
+    if stats.files_added == 0
+        && stats.files_removed == 0
+        && stats.files_moved == 0
+        && stats.dirs_added == 0
+        && stats.dirs_removed == 0
+        && stats.dirs_renamed == 0
+    {
+        tracing::info!(
+            "{} bản ghi journal, không mục nào trong chỉ mục thay đổi — không ghi lại cache [{:.2}s]",
+            changes.len(),
+            started.elapsed().as_secs_f64()
+        );
+        finish_incremental(
+            progress,
+            &format!("Không có thay đổi nào — {} tệp", ix.len()),
+        );
+        return true;
     }
 
     // Only the entries the journal could not describe need a disk lookup: a
