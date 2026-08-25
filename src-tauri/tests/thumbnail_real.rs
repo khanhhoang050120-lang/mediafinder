@@ -130,3 +130,77 @@ fn the_cache_makes_a_second_request_far_cheaper() {
         "lần thứ hai phải gần như tức thì, đo được {warm:?}"
     );
 }
+
+/// How well does the shell make thumbnails for files on a network drive?
+///
+/// 87% of this machine's library is on a NAS. If thumbnails do not work there,
+/// the grid view — the whole point of which is finding footage by eye — is
+/// blank for almost everything.
+///
+/// ```text
+/// cargo test --test thumbnail_real -- --ignored network --nocapture
+/// ```
+#[test]
+#[ignore = "cần ổ mạng thật và cache đã có; chạy với --ignored"]
+fn network_thumbnails() {
+    let cache = match persist::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bỏ qua: {e}");
+            return;
+        }
+    };
+    let ix = &cache.index;
+
+    // A spread across the index rather than the first N: the first thousand
+    // entries are all one folder, and one folder is not a sample.
+    let mut paths: Vec<(String, char)> = Vec::new();
+    let step = (ix.len() / 400).max(1);
+    let mut i = 0;
+    while i < ix.len() && paths.len() < 40 {
+        let drive = ix.volume_of(i) as char;
+        if matches!(drive, 'F' | 'Y' | 'Z') {
+            paths.push((ix.full_path(i), drive));
+        }
+        i += step;
+    }
+    if paths.is_empty() {
+        eprintln!("bỏ qua: không có mục nào trên ổ mạng");
+        return;
+    }
+
+    let service = ThumbnailService::new();
+    let mut ok = 0;
+    let mut failed = 0;
+    let mut total_ms = 0.0;
+    let mut slowest = 0.0f64;
+
+    for (n, (path, drive)) in paths.iter().enumerate() {
+        let started = std::time::Instant::now();
+        let result = service.get(n as u64, path, 192);
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        total_ms += ms;
+        slowest = slowest.max(ms);
+        match result {
+            Ok(png) => {
+                ok += 1;
+                if n < 5 {
+                    println!("  {drive}: {:>6} byte {:>7.0}ms  {path}", png.len(), ms);
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                if failed <= 5 {
+                    println!("  {drive}: HỎNG {:>7.0}ms  {e}  {path}", ms);
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nổ mạng: {ok}/{} dựng được thumbnail · trung bình {:.0}ms · chậm nhất {:.0}ms",
+        paths.len(),
+        total_ms / paths.len() as f64,
+        slowest
+    );
+}
