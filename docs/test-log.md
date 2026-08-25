@@ -1011,3 +1011,31 @@ còn đang thoát và vẫn giữ tệp.
 Cả hai lần đều do chính kịch bản chụp hộp thoại khởi động ứng dụng lên rồi để đó. Công cụ cài đặt
 nay **chờ tiến trình biến mất khỏi danh sách tiến trình** chứ không chỉ gọi lệnh tắt, và tự thử lại
 một lần nếu lần đầu không ghi đè được.
+
+### 2026-08-25 — Chạy thật trên máy trắng, có người bấm UAC
+
+**Phép thử duy nhất không tự động hoá được.** Cần một cú bấm vào hộp thoại UAC, và lách hộp thoại
+đó là việc không nên làm. Người dùng ngồi trước máy và thao tác; tôi dựng cảnh và đo kết quả.
+
+**Dựng cảnh cho giống thật:** bộ cài được chép ra Desktop và **gắn Mark-of-the-Web** (`ZoneId=3`).
+Không có bước này thì Windows tin sẵn một tệp vừa dựng tại chỗ, và **màn SmartScreen sẽ không hiện
+ra** — tức là thứ cần kiểm chứng nhất sẽ bị bỏ qua mà không ai biết.
+
+| # | Bước | Người làm | Kết quả |
+|---|---|---|---|
+| 1 | Gỡ cài đặt, kèm UAC để xoá tác vụ | người dùng | ✅ máy sạch |
+| 2 | Cài qua màn SmartScreen (`More info` → `Run anyway`) | người dùng | ✅ cài xong |
+| 3 | `Quét lần đầu` → `Yes` ở UAC | người dùng | ✅ quét xong |
+| 4 | Tác vụ định kỳ có được **tự tạo** không | đo | ✅ `Highest` · tên người dùng đúng · lệnh `--index` · **2 trigger** |
+| 5 | Lối tắt tự khởi động có được **tự tạo** không | đo | ✅ đúng đích, đúng `--minimized` |
+| 6 | **"Quét lại" còn hỏi quyền không** | `schtasks /Run` không elevate | ✅ `SUCCESS`, tác vụ chạy **kết quả 0** |
+| 7 | Chỉ mục dựng từ con số không | mở ứng dụng, tìm thật | ✅ **48.291 tệp · 3.204 thư mục**, **0,4 ms** |
+| 8 | Trả lại chỉ mục đầy đủ của người dùng | sao lưu + tác vụ cập nhật | ✅ **362.237 tệp**, có cả NAS |
+
+**Kết luận: 8/8 pass.** Mục 6 là mục quan trọng nhất — nó quyết định 20–40 người kia có bị hỏi
+quyền mỗi ngày hay không. Câu trả lời: **một lần duy nhất, lúc quét đầu tiên.**
+
+**Điều đáng ghi về cách dựng phép thử.** Nếu chỉ chạy bộ cài từ thư mục dựng, mọi bước vẫn "pass"
+mà **không hề đi qua SmartScreen** — vì Windows không chặn tệp do chính máy tạo ra. Phép thử khi đó
+trông giống hệt phép thử thật nhưng bỏ sót đúng cái màn hình mà người dùng mới sẽ khựng lại. Một
+dòng gắn `ZoneId=3` là khác biệt giữa hai điều đó.

@@ -971,7 +971,7 @@ và kết quả còn tốt hơn dự tính: nhiều tệp xem trước được 
 
 ---
 
-## P15 — Đóng gói để phát hành cho 20–40 máy 🟡
+## P15 — Đóng gói để phát hành cho 20–40 máy ✅
 
 **Người dùng yêu cầu:** đóng gói lại toàn bộ để phát cho khoảng 20–40 người, và **test thật kỹ từng
 bước** để sang máy khác vẫn chạy ổn.
@@ -1078,12 +1078,32 @@ Windows rộng khoảng 50 ký tự và dòng nào dài hơn thì nó **cắt v�
 *"kết thúc bằ / ng"*, bản sau *"nó sẽ tự c / ài"*. Với tiếng Việt thì một chữ bị cắt đôi trông như
 phần mềm lỗi phông. Nay mỗi dòng dưới 46 ký tự, và có test giữ ngưỡng đó khỏi trôi.
 
-### Còn một phép thử cần người bấm
+### Phép thử cuối: chạy thật trên máy trắng, người dùng bấm UAC
 
-Đường "máy chưa có tác vụ → bấm Quét lần đầu → UAC → tiến trình quét tự tạo tác vụ" **không thể tự
-kiểm chứng**: nó cần một cú bấm vào hộp thoại UAC, và cố lách hộp thoại đó là chuyện không nên làm.
-Đây cũng chính xác là thứ người dùng mới sẽ gặp, nên nó phải được thử bằng tay đúng một lần trước
-khi phát hành.
+Đường "máy chưa có gì → bấm Quét lần đầu → UAC → tiến trình quét tự tạo tác vụ" không tự kiểm chứng
+được: nó cần một cú bấm vào hộp thoại UAC, và lách hộp thoại đó là việc không nên làm. Nên nó được
+thử bằng tay, một lần, đúng như người dùng mới sẽ gặp.
+
+**Dựng cảnh cho giống thật.** Bộ cài được chép ra Desktop và **gắn Mark-of-the-Web** (`ZoneId=3`) —
+dấu Windows dành cho tệp tải từ mạng. Không có bước này thì Windows tin sẵn một tệp vừa dựng tại
+chỗ, và màn SmartScreen — thứ cần kiểm chứng nhất — sẽ không hiện ra.
+
+**Người dùng thao tác ba bước:** gỡ cài đặt (kèm UAC để xoá tác vụ) · cài lại qua màn SmartScreen
+(`More info` → `Run anyway`) · bấm `Quét lần đầu` rồi `Yes` ở UAC.
+
+**Kết quả đo được sau đó:**
+
+| Kiểm chứng | Kết quả |
+|---|---|
+| Tác vụ định kỳ — do chính tiến trình quét tạo, không có hộp thoại riêng | ✅ `Highest`, chạy dưới tên người dùng, lệnh `mediafinder.exe --index`, đủ **2 trigger** |
+| Lối tắt tự khởi động — do giao diện tạo, không cần quyền | ✅ đúng đích, đúng `--minimized` |
+| **"Quét lại" còn hỏi quyền nữa không** | ✅ `schtasks /Run` từ tiến trình **không** elevate → `SUCCESS`, tác vụ chạy **kết quả 0** |
+| Chỉ mục dựng được từ con số không | ✅ **48.291 tệp · 3.204 thư mục**, tìm **0,4 ms**, đã có sẵn độ phân giải và thời lượng |
+
+Con số 48.291 chính là thứ một máy mới nhận được: **ổ trong máy thôi**. NAS nằm sau nút `+ ổ mạng`,
+đúng như thiết kế ở [P10](#p10--quét-ổ-mạng--nas-theo-yêu-cầu-).
+
+**Một lần UAC cho tất cả — đã kiểm chứng chứ không còn là thiết kế trên giấy.**
 
 ---
 
