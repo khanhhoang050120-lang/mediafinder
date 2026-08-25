@@ -113,7 +113,7 @@ thẳng từ định danh nội bộ mà không hỏi nó có nghĩa gì với n
 
 ## ISSUE-003 🔴 — Kiến trúc MFT/USN không đọc được NAS, mà thư viện lớn nhất lại nằm ở đó
 
-**Giai đoạn:** P9 · **Trạng thái:** CẦN QUYẾT ĐỊNH · **Ngày:** 2026-08-24
+**Giai đoạn:** P9 → P10 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25
 
 **Vấn đề.** Máy người dùng có ba ổ mạng tổng ~37,9 TB, so với 4,2 TB đĩa cục bộ đang được index.
 Toàn bộ nền tảng kỹ thuật của dự án — đọc MFT qua `FSCTL_ENUM_USN_DATA` — **không áp dụng được**
@@ -159,5 +159,88 @@ cho ổ mạng, thay vì đọc MFT. Phần còn lại của hệ thống không
 | **Cập nhật** | `ReadDirectoryChangesW` **có** hoạt động qua SMB nếu máy chủ hỗ trợ change notify. Cần thử thật trên chính hai NAS này, không được tin vào tài liệu |
 | **Tốc độ của các tính năng khác** | Thumbnail và tìm trùng lặp phải **đọc nội dung tệp qua mạng**. Tìm trùng lặp đọc 64 KB đầu + 64 KB cuối mỗi ứng viên — trên 38 TB qua mạng thì đây là việc hoàn toàn khác về quy mô so với 584 giây đã đo trên đĩa cục bộ |
 
-**Chưa làm gì cả** ngoài việc [nói ra sự thật](./bug.md#bug-018): ứng dụng giờ báo rõ ba ổ mạng bị
-bỏ qua và vì sao. Bước tiếp theo cần chủ dự án quyết định.
+## Đã làm — quét NAS theo yêu cầu, không tự động
+
+**Quyết định của người dùng, và nó đúng:** *"sẽ khá là ít tôi lên NAS để kiếm file… việc cần thiết
+quét là quét ổ trên máy trước, nếu user muốn quét cả trên NAS thì bấm nút."*
+
+Số đo về sau xác nhận: quét ổ trong máy mất **13 giây**, quét NAS mất **4,5 phút**. Bắt trả 4,5
+phút cho mọi lần quét, trong khi phần lớn tìm kiếm là tệp trên máy, là vô lý. Nên có **hai nút**:
+
+| Nút | Phạm vi | Thời gian |
+|---|---|---|
+| **Quét lại** | chỉ ổ gắn trong máy | ~13 giây, hoặc **0,45 s** nếu journal trả lời được |
+| **+ ổ mạng** | ổ trong máy **rồi mới** tới NAS | ~4,5 phút |
+
+Nút thứ hai chỉ hiện khi máy thật sự có ổ mạng được gắn, và tooltip nêu đích danh từng ổ.
+
+Thứ tự trong nút thứ hai là cố ý: làm phần nhanh trước, nên kết quả thường dùng đã có sẵn trước
+khi phần chậm bắt đầu — và nếu người dùng bấm Dừng thì họ vẫn giữ được nó.
+
+### Điều bất ngờ nhất nằm ở chỗ khác: tiến trình elevated không thấy ổ mạng
+
+Đường tự nhiên nhất là nhét bộ quét NAS vào tiến trình `--index` sẵn có. Đem đo thì hỏng ngay:
+ổ mạng gắn theo **phiên đăng nhập**, mà tiến trình elevated chạy dưới token khác — nó không thấy
+F:, Y:, Z: nào cả, kể cả để mà báo là bỏ qua. Xem [CHECK-007](./check.md#check-007).
+
+Nên bộ quét NAS chạy **trong chính tiến trình GUI**, quyền thường. Không mất gì: duyệt thư mục
+không cần quyền nào.
+
+Và nó kéo theo một ràng buộc suýt gây mất dữ liệu: tiến trình elevated dựng lại chỉ mục mà **không
+có ổ mạng trong đó**. Nếu không xử lý, người dùng quét NAS 4,5 phút rồi bấm "Quét lại" là mất
+sạch. Quy tắc đã chọn, viết mà không cần nhắc tới chữ "mạng":
+
+> **Giữ nguyên mọi mục thuộc ổ đĩa không được quét trong lần chạy này.**
+> Lần quét này không có thẩm quyền nói gì về chúng — dù đó là NAS, USB vừa rút, hay ổ mở hỏng.
+
+### Đo được trên NAS thật
+
+| Ổ | Thư mục | Tệp media | Thời gian |
+|---|---|---|---|
+| F: (`\\192.168.1.214\f`) | 3.832 | 144.417 | 11,6 s |
+| Y: (`\\192.168.1.213\padoma 8`) | 7.581 | 150.575 | 237,3 s |
+| Z: (`\\192.168.1.213\padoma 1`) | 958 | 18.953 | 23,8 s |
+| **Tổng** | 12.371 | **313.945** | **272,6 s** |
+
+**313.945 tệp media trên NAS so với 46.700 trên ổ trong máy** — gấp gần **7 lần**. Thư viện thật
+của người dùng nằm chủ yếu ở đó, nên tính năng này không phải phần thêm cho đủ mà là phần lớn nhất
+của thư viện.
+
+Hai NAS chênh nhau rõ rệt: `.214` cho 331 thư mục/giây, `.213` chỉ 32–40. Cùng một đoạn mã, cùng
+một mạng — khác nhau ở máy chủ.
+
+### Ba chi tiết dễ sai
+
+**Bỏ qua reparse point.** Đúng cái bẫy đã hạ gục công cụ kiểm chứng ở [CHECK-005](./check.md#check-005):
+junction biến cây thành đồ thị, khiến vừa đếm trùng vừa chui vào những cây lẽ ra phải loại. Trên
+NAS nó còn có thể tạo vòng lặp thật.
+
+**Tệp qua SMB không có số hiệu (FRN).** Chúng được gán FRN 0, mà `index::update` vốn đã coi 0 là
+"không có định danh" ([BUG-017](./bug.md#bug-017)) nên không bản ghi journal nào khớp được. Đó
+chính là hành vi đúng: journal của ổ cục bộ không biết gì về tệp trên NAS, nên cập nhật nhanh phải
+để nguyên phần NAS.
+
+**Dung lượng đọc kèm ngay trong lúc duyệt.** Trên Windows, `DirEntry::metadata()` dùng lại dữ liệu
+mà chính lần liệt kê thư mục đã trả về — không tốn thêm lời gọi hệ thống nào. Qua SMB thì khác biệt
+đó là quyết định: đo riêng từng tệp sẽ nhân đôi số vòng round trip cho hơn ba trăm nghìn tệp.
+
+### Một cái bẫy chỉ lộ ra sau khi mọi thứ đã chạy đúng
+
+Quét xong, hợp nhất xong, tìm kiếm 2 ms. Nhưng ngay khi khởi động lại, tiến trình enrichment nền
+lặng lẽ bắt đầu **mở từng tệp qua mạng** để đọc độ phân giải — 313.946 tệp ở tốc độ đo được là
+**11 tệp/giây**, tức **7,8 giờ** hành NAS liên tục. Không lỗi, không cảnh báo.
+
+Đã sửa: enrichment bỏ qua ổ mạng, và nói thẳng lý do trong log. Đánh đổi:
+
+| Lọc theo | Tệp ổ cục bộ | Tệp NAS |
+|---|---|---|
+| Dung lượng | ✅ | ✅ (lấy miễn phí lúc duyệt) |
+| Loại (video/ảnh/nhạc) | ✅ | ✅ (từ phần mở rộng) |
+| Độ phân giải, thời lượng | ✅ | ❌ phải mở từng tệp qua mạng |
+
+### Còn lại
+
+Phần NAS **không** được cập nhật gia tăng — không có journal để theo. Muốn cập nhật thì bấm lại
+nút "+ ổ mạng". Với thư viện mà phần lớn là tư liệu đã hoàn thành thì đó là đánh đổi hợp lý; nếu
+sau này thấy phiền, `ReadDirectoryChangesW` **có thể** hoạt động qua SMB khi máy chủ hỗ trợ
+change notify — cần thử thật trên chính hai NAS này, không được tin tài liệu.

@@ -10,7 +10,10 @@
     indexStatus,
     openFile,
     reloadIndex,
+    cancelScan,
+    networkDrives,
     requestScan,
+    requestScanWithNetwork,
     revealInExplorer,
     scanProgress,
     dupeGroups,
@@ -24,6 +27,7 @@
     searchFiles,
     thumbUrl,
     type IndexMeta,
+    type NetworkDrive,
     type MediaKind,
     type DupeGroup,
     type DupeProgress,
@@ -167,11 +171,17 @@
     if (s.scanning) startPolling();
   });
 
-  async function startScan() {
+  // Asked once at startup: drive mappings rarely change mid-session, and this
+  // decides whether the network button exists at all.
+  let netDrives = $state<NetworkDrive[]>([]);
+  networkDrives().then((d) => (netDrives = d));
+
+  async function startScan(withNetwork = false) {
     error = null;
     try {
-      await requestScan();
+      await (withNetwork ? requestScanWithNetwork() : requestScan());
       scanning = true;
+      scanningNetwork = withNetwork;
       scan = null;
       startPolling();
     } catch (e) {
@@ -179,6 +189,12 @@
       // rather than a failure, so show it verbatim.
       error = String(e);
     }
+  }
+
+  let scanningNetwork = $state(false);
+
+  async function stopScan() {
+    await cancelScan();
   }
 
   function startPolling() {
@@ -490,9 +506,26 @@
         onclick={() => (dupeMode ? exitDupes() : startDupes())}
         title="Tìm các tệp trùng lặp trong thư viện"
       >Trùng lặp</button>
-      <button class="chip rescan" onclick={startScan} disabled={scanning}>
+      <button
+        class="chip rescan"
+        onclick={() => startScan(false)}
+        disabled={scanning}
+        title="Quét lại các ổ gắn trong máy — vài giây"
+      >
         {scanning ? "Đang quét…" : "Quét lại"}
       </button>
+      {#if netDrives.length > 0}
+        <button
+          class="chip rescan"
+          onclick={() => startScan(true)}
+          disabled={scanning}
+          title={`Quét ổ trong máy VÀ ${netDrives.length} ổ mạng (${netDrives
+            .map((d) => d.letter + ":")
+            .join(", ")}) — mất vài phút vì phải duyệt qua mạng`}
+        >
+          + ổ mạng
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -549,6 +582,13 @@
         <span>{scan?.message ?? "Đang khởi động tiến trình quét…"}</span>
         {#if scan && scan.volumesTotal > 0}
           <span class="scan-count">ổ {scan.volumesDone + 1}/{scan.volumesTotal}</span>
+        {/if}
+        <!-- Offered only during the network phase, because only that phase can
+             honour it: the local scan runs in a separate elevated process this
+             one has no handle on. A stop button that does nothing is worse
+             than no stop button. -->
+        {#if scanningNetwork && scan?.phase === "network"}
+          <button class="stop" onclick={stopScan}>Dừng</button>
         {/if}
       </div>
       <!-- Indeterminate on purpose: a volume's total record count is not known
@@ -844,6 +884,19 @@
     gap: 12px;
     margin-bottom: 8px;
   }
+  .stop {
+    font: inherit;
+    font-size: 12px;
+    color: inherit;
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: 5px;
+    padding: 1px 8px;
+    cursor: pointer;
+    opacity: 0.75;
+  }
+  .stop:hover { opacity: 1; }
+
   .scan-count { color: var(--text-dim); }
   .scan-bar {
     height: 4px;

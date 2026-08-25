@@ -154,6 +154,29 @@ export function revealInExplorer(path: string): Promise<void> {
   return invoke("reveal_in_explorer", { path });
 }
 
+export interface NetworkDrive {
+  letter: string;
+  remote: string;
+}
+
+/// Mapped network drives, so the UI can name them instead of saying "NAS".
+export function networkDrives(): Promise<NetworkDrive[]> {
+  return invoke<NetworkDrive[]>("network_drives");
+}
+
+/// Scan the local disks and then walk every network drive.
+///
+/// Separate from `requestScan` on purpose: this one takes minutes rather than
+/// seconds, so it must never happen unless the user asked for it.
+export function requestScanWithNetwork(): Promise<void> {
+  return invoke("request_scan_with_network");
+}
+
+/// Ask the running scan to stop. Only the network phase can honour it.
+export function cancelScan(): Promise<void> {
+  return invoke("cancel_scan");
+}
+
 export function indexStatus(): Promise<IndexMeta> {
   return invoke<IndexMeta>("index_status");
 }
@@ -171,7 +194,18 @@ export function hotkeyStatus(): Promise<HotkeyStatus> {
 }
 
 export interface ScanProgress {
-  phase: "volumes" | "scanning" | "resolving" | "indexing" | "saving" | "done" | "error";
+  /// Must match the phases `ScanProgress` in `ipc/elevate.rs` writes. The two
+  /// sides are one contract; adding a phase on one only is how a UI ends up
+  /// silently never showing it.
+  phase:
+    | "volumes"
+    | "scanning"
+    | "resolving"
+    | "indexing"
+    | "network"
+    | "saving"
+    | "done"
+    | "error";
   volume: string;
   records: number;
   mediaFiles: number;

@@ -51,6 +51,12 @@ pub struct AppState {
     /// request issued before the swap is refused rather than answered with a
     /// picture of the wrong file.
     epoch: AtomicU64,
+    /// Set when the user asks the running scan to stop.
+    ///
+    /// Only the network phase can act on it: the local scan runs in a separate
+    /// elevated process that this one has no handle on.
+    cancel: AtomicBool,
+
     /// True while an elevated indexer child is running.
     ///
     /// Guards against a second UAC prompt while the first scan is still going,
@@ -72,6 +78,7 @@ impl AppState {
             meta: RwLock::new(IndexMeta::default()),
             epoch: AtomicU64::new(1),
             scanning: AtomicBool::new(false),
+            cancel: AtomicBool::new(false),
         }
     }
 
@@ -126,6 +133,18 @@ impl AppState {
 
     pub fn is_scanning(&self) -> bool {
         self.scanning.load(Ordering::Relaxed)
+    }
+
+    pub fn request_cancel(&self, on: bool) {
+        self.cancel.store(on, Ordering::Relaxed);
+    }
+
+    pub fn cancel_requested(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    pub fn cancel_flag(&self) -> &AtomicBool {
+        &self.cancel
     }
 
     pub fn set_scanning(&self, on: bool) {

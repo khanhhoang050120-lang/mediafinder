@@ -14,6 +14,7 @@ pub mod ipc;
 pub mod media;
 pub mod ntfs;
 pub mod state;
+pub mod walk;
 
 /// Initialise tracing. Verbosity is controlled by `RUST_LOG`.
 pub fn init_tracing() {
@@ -82,6 +83,9 @@ pub fn run_gui() {
             ipc::commands::open_file,
             ipc::commands::reveal_in_explorer,
             ipc::commands::request_scan,
+            ipc::commands::request_scan_with_network,
+            ipc::commands::cancel_scan,
+            ipc::commands::network_drives,
             ipc::commands::scan_progress,
             ipc::commands::reload_index,
             ipc::commands::enrich_status,
@@ -187,6 +191,200 @@ fn toggle(app: &tauri::AppHandle) {
 ///
 /// `--dry-run` stops after reporting statistics and sample paths, which is how
 /// the scan is validated without needing the rest of the pipeline.
+/// What a network scan did.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkScanOutcome {
+    pub drives: usize,
+    pub files: usize,
+    pub seconds: f64,
+    pub cancelled: bool,
+}
+
+/// Walk every mapped network drive and merge the result into the cache.
+///
+/// Runs **in the GUI process, unelevated**, and that is not a shortcut — it is
+/// the only place it can run. Mapped drives belong to a logon session, so the
+/// elevated indexer cannot see them at all (CHECK-007). Walking directories
+/// needs no privilege, so nothing is lost by it.
+///
+/// Slow by nature: minutes, against seconds for a local scan. That is why it
+/// is a button the user presses rather than something that happens on every
+/// scan — most searches are for files on the local disk, and paying a
+/// ten-minute network walk for them would be absurd.
+pub fn scan_network_volumes(cancel: &std::sync::atomic::AtomicBool) -> NetworkScanOutcome {
+    use ntfs::volume::{self, VolumeKind};
+
+    let started = std::time::Instant::now();
+    let mut outcome = NetworkScanOutcome::default();
+
+    let drives: Vec<char> = volume::list_volumes()
+        .into_iter()
+        .filter(|v| v.kind == VolumeKind::Network)
+        .map(|v| v.letter)
+        .collect();
+
+    if drives.is_empty() {
+        tracing::info!("không có ổ mạng nào được gắn");
+        return outcome;
+    }
+    tracing::info!(
+        "quét ổ mạng: {}",
+        drives
+            .iter()
+            .map(|c| format!("{c}:"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let mut progress = ipc::elevate::ProgressWriter::new().ok();
+    let opts = ntfs::tree::ResolveOptions::default();
+    let mut walked: Vec<(char, ntfs::tree::ResolvedSet, Vec<media::metadata::FileStats>)> =
+        Vec::new();
+
+    for (n, letter) in drives.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            outcome.cancelled = true;
+            break;
+        }
+        let drive_started = std::time::Instant::now();
+        let (set, stats) = walk::walk_volume(*letter, &opts, cancel, |p| {
+            if let Some(w) = progress.as_mut() {
+                let st = w.state_mut();
+                st.phase = "network".into();
+                st.volume = letter.to_string();
+                st.records = p.files_seen as u64;
+                st.media_files = p.media_kept as u64;
+                st.volumes_done = n;
+                st.volumes_total = drives.len();
+                st.message = format!(
+                    "Đang quét ổ mạng {letter}: — {} thư mục, {} tệp media",
+                    p.dirs_done, p.media_kept
+                );
+                w.tick();
+            }
+        });
+        tracing::info!(
+            "ổ {letter}: {} thư mục · {} tệp media  [{:.1}s]",
+            set.dirs.len(),
+            set.files.len(),
+            drive_started.elapsed().as_secs_f64()
+        );
+        outcome.files += set.files.len();
+        walked.push((*letter, set, stats));
+    }
+
+    if walked.is_empty() {
+        return finish_network_scan(outcome, started, progress, "Không quét được ổ mạng nào");
+    }
+
+    // Merge. The rule is the same one the local scan uses in reverse: an entry
+    // belonging to a drive this run did not touch is left exactly as it was.
+    let Ok(previous) = index::persist::load() else {
+        tracing::error!("không nạp được cache để hợp nhất — huỷ, không ghi đè");
+        return finish_network_scan(outcome, started, progress, "Không nạp được chỉ mục");
+    };
+
+    let touched: std::collections::HashSet<u8> = walked
+        .iter()
+        .map(|(letter, _, _)| (*letter as u8).to_ascii_uppercase())
+        .collect();
+
+    let old = &previous.index;
+    let mut builder = index::model::IndexBuilder::new();
+    let mut sizes: Vec<u64> = Vec::with_capacity(old.len());
+    let mut mtimes: Vec<i64> = Vec::with_capacity(old.len());
+    let mut dir_remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+
+    for i in 0..old.len() {
+        if touched.contains(&old.volume_of(i)) {
+            continue;
+        }
+        let old_dir = old.dir_ids()[i];
+        let dir_id = *dir_remap.entry(old_dir).or_insert_with(|| {
+            builder.add_dir(old.dir_path(old_dir as usize), old.dir_frn(old_dir as usize))
+        });
+        builder.add_file(old.name(i), old.kind(i), dir_id, old.frn(i));
+        sizes.push(old.size(i));
+        mtimes.push(old.mtime(i));
+    }
+    let kept = sizes.len();
+
+    for (_, set, stats) in &walked {
+        let remap: Vec<u32> = set
+            .dirs
+            .iter()
+            .map(|d| builder.add_dir(d, 0))
+            .collect();
+        for (f, st) in set.files.iter().zip(stats) {
+            builder.add_file(&f.name, f.kind, remap[f.dir_id as usize], 0);
+            sizes.push(st.size);
+            mtimes.push(st.mtime);
+        }
+    }
+
+    let mut ix = builder.finish();
+    ix.set_file_stats(sizes, mtimes);
+
+    // Volume stamps: the local ones carry journal cursors and must survive
+    // untouched. Network drives get no stamp — there is no journal to record a
+    // position in, and inventing one would make an incremental update think it
+    // could follow them.
+    let stamps: Vec<index::persist::VolumeStamp> = previous
+        .volumes
+        .iter()
+        .filter(|st| !touched.contains(&(st.letter as u8).to_ascii_uppercase()))
+        .cloned()
+        .collect();
+
+    match index::persist::save(&ix, stamps) {
+        Ok(path) => tracing::info!(
+            "hợp nhất xong: {} mục ổ cục bộ + {} mục ổ mạng = {} · ghi {}",
+            kept,
+            outcome.files,
+            ix.len(),
+            path.display()
+        ),
+        Err(e) => {
+            tracing::error!("không ghi được cache: {e}");
+            return finish_network_scan(outcome, started, progress, "Không ghi được chỉ mục");
+        }
+    }
+
+    let message = if outcome.cancelled {
+        format!("Đã dừng — giữ lại {} tệp trên ổ mạng", outcome.files)
+    } else {
+        format!(
+            "Đã quét {} ổ mạng, tìm thấy {} tệp media",
+            walked.len(),
+            outcome.files
+        )
+    };
+    outcome.drives = walked.len();
+    finish_network_scan(outcome, started, progress, &message)
+}
+
+fn finish_network_scan(
+    mut outcome: NetworkScanOutcome,
+    started: std::time::Instant,
+    mut progress: Option<ipc::elevate::ProgressWriter>,
+    message: &str,
+) -> NetworkScanOutcome {
+    outcome.seconds = started.elapsed().as_secs_f64();
+    if let Some(w) = progress.as_mut() {
+        let st = w.state_mut();
+        st.phase = "done".into();
+        st.message = message.to_string();
+        // Set last, and only now: the UI reloads the moment it sees this, so
+        // flipping it before the cache was written would race the file it is
+        // about to read.
+        st.finished = true;
+        w.flush();
+    }
+    tracing::info!("{message} [{:.1}s]", outcome.seconds);
+    outcome
+}
+
 /// Update the cache from the change journals instead of rescanning.
 ///
 /// A full scan walks every MFT record on every volume — 38 seconds on this
@@ -956,6 +1154,70 @@ pub fn run_indexer() {
         });
     }
 
+    // Carry over every entry belonging to a drive this run did not scan.
+    //
+    // Not an optimisation — a correctness rule, and the one place where this
+    // feature could destroy weeks of scanning. The elevated indexer cannot see
+    // mapped network drives at all (CHECK-007), so a plain "Quét lại" rebuilds
+    // the index with no `Z:` in it whatsoever. Without this, a user who spent
+    // twenty minutes indexing a NAS loses all of it by pressing the button
+    // that is supposed to refresh their local disk.
+    //
+    // Stated without mentioning networks on purpose: a drive that was not
+    // scanned is a drive this run has nothing to say about, whether it is a
+    // NAS, an unplugged USB stick, or a disk that failed to open.
+    let scanned: std::collections::HashSet<u8> = stamps
+        .iter()
+        .map(|s| (s.letter as u8).to_ascii_uppercase())
+        .collect();
+    let mut carried: Vec<(u64, i64)> = Vec::new();
+    let mut carried_stamps: Vec<index::persist::VolumeStamp> = Vec::new();
+
+    if let Ok(previous) = index::persist::load() {
+        let old = &previous.index;
+        let mut dir_remap: std::collections::HashMap<u32, u32> =
+            std::collections::HashMap::new();
+
+        for i in 0..old.len() {
+            if scanned.contains(&old.volume_of(i)) {
+                continue;
+            }
+            let old_dir = old.dir_ids()[i];
+            let dir_id = *dir_remap.entry(old_dir).or_insert_with(|| {
+                builder.add_dir(old.dir_path(old_dir as usize), old.dir_frn(old_dir as usize))
+            });
+            builder.add_file(old.name(i), old.kind(i), dir_id, old.frn(i));
+            // Kept rather than re-measured: these files are on a drive this
+            // process cannot reach, and asking about them over the network
+            // would cost more than the whole local scan.
+            carried.push((old.size(i), old.mtime(i)));
+        }
+
+        for st in &previous.volumes {
+            if !scanned.contains(&(st.letter as u8).to_ascii_uppercase()) {
+                carried_stamps.push(st.clone());
+            }
+        }
+
+        if !carried.is_empty() {
+            let drives: std::collections::BTreeSet<char> = carried_stamps
+                .iter()
+                .map(|s| s.letter)
+                .collect();
+            tracing::info!(
+                "giữ lại {} mục từ ổ không quét lần này ({}) — lần quét này không có \
+                 thẩm quyền nói gì về chúng",
+                carried.len(),
+                drives
+                    .iter()
+                    .map(|c| format!("{c}:"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    stamps.extend(carried_stamps);
+
     let mut ix = builder.finish();
 
     // Fast metadata pass: size and modification time for every entry.
@@ -973,11 +1235,17 @@ pub fn run_indexer() {
         }
 
         let stats_started = std::time::Instant::now();
-        let paths: Vec<String> = (0..ix.len()).map(|i| ix.full_path(i)).collect();
-        let stats: Vec<media::metadata::FileStats> = paths
+        // Only what was scanned. The carried entries already have their
+        // figures, and they were appended last so they are exactly the tail.
+        let fresh = ix.len() - carried.len();
+        let paths: Vec<String> = (0..fresh).map(|i| ix.full_path(i)).collect();
+        let mut stats: Vec<media::metadata::FileStats> = paths
             .par_iter()
             .map(|p| media::metadata::file_stats(p).unwrap_or_default())
             .collect();
+        stats.extend(carried.iter().map(|&(size, mtime)| {
+            media::metadata::FileStats { size, mtime }
+        }));
 
         let total_bytes: u64 = stats.iter().map(|s| s.size).sum();
         ix.set_file_stats(

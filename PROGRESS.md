@@ -35,6 +35,7 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` 
 | **P7** | Tìm file trùng | ✅ **XONG** — 124 test, tìm ra 520,7 GB trùng lặp |
 | **P8** | Hoàn thiện (hotkey, bàn phím, USN realtime) | ✅ **XONG** — 126 test, kiểm chứng trên bản release |
 | **P9** | Cập nhật gia tăng qua USN journal | ✅ **giai đoạn 1 XONG** — 0,45s thay cho 13,2s, kiểm chứng trên máy thật |
+| **P10** | Quét ổ mạng / NAS theo yêu cầu | ✅ **XONG** — 313.945 tệp trên NAS, 4,5 phút, có nút riêng |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -663,6 +664,80 @@ bên đang giữ đặc quyền.
 - [ ] Tắt service → ứng dụng vẫn tìm kiếm bình thường trên cache cũ
 - [ ] Gỡ ứng dụng → `sc query` không còn thấy service
 - [ ] Chạy liên tục 24 giờ → RAM không tăng đơn điệu
+
+---
+
+## P10 — Quét ổ mạng / NAS theo yêu cầu ✅
+
+**Vấn đề.** Ba ổ mạng, ~37,9 TB, hoàn toàn không có trong chỉ mục — và cho tới
+[BUG-018](docs/bug.md#bug-018) thì còn không có một dòng thông báo nào. Kiến trúc MFT/USN không đọc
+được chúng, không phải vì thiếu tính năng mà vì bản chất: ổ mạng là một phiên SMB, không phải một
+volume trên máy này.
+
+### Quyết định: nút riêng, không tự động
+
+Người dùng nêu thẳng: *"sẽ khá là ít tôi lên NAS để kiếm file… việc cần thiết quét là quét ổ trên
+máy trước, nếu user muốn quét cả trên NAS thì bấm nút."*
+
+Số đo về sau xác nhận điều đó:
+
+| Nút | Phạm vi | Thời gian |
+|---|---|---|
+| **Quét lại** | chỉ ổ gắn trong máy | ~13 s, hoặc **0,45 s** nếu journal trả lời được |
+| **+ ổ mạng** | ổ trong máy **rồi mới** tới NAS | **~4,5 phút** |
+
+Nút thứ hai chỉ hiện khi máy thật sự có ổ mạng. Thứ tự bên trong nó là cố ý: phần nhanh chạy
+trước, nên kết quả thường dùng đã sẵn sàng trước khi phần chậm bắt đầu — và nếu bấm Dừng thì vẫn
+giữ được nó.
+
+Nút Dừng chỉ hiện trong pha mạng, vì chỉ pha đó dừng được: pha ổ cục bộ chạy trong một tiến trình
+elevated khác mà tiến trình này không cầm handle. Một nút dừng không dừng được gì còn tệ hơn không
+có nút.
+
+### Đo được trên NAS thật
+
+| Ổ | Thư mục | Tệp media | Thời gian | Tốc độ |
+|---|---|---|---|---|
+| F: | 3.832 | 144.417 | 11,6 s | 331 thư mục/giây |
+| Y: | 7.581 | 150.575 | 237,3 s | 32 thư mục/giây |
+| Z: | 958 | 18.953 | 23,8 s | 40 thư mục/giây |
+| **Tổng** | 12.371 | **313.945** | **272,6 s** | |
+
+**313.945 tệp trên NAS so với 46.700 trên ổ trong máy** — gấp gần 7 lần. Đây không phải phần thêm
+cho đủ; đây là phần lớn nhất của thư viện.
+
+### Ba điều quyết định kiến trúc
+
+**1. Tiến trình elevated không nhìn thấy ổ mạng.** Đo được, không phải suy đoán: cùng một hàm
+`list_volumes()`, chạy elevated thấy C:, D:, G:; chạy quyền thường thấy cả sáu ổ. Ổ mạng gắn theo
+phiên đăng nhập. Nên bộ quét NAS chạy **trong tiến trình GUI** — và không mất gì, vì duyệt thư mục
+không cần quyền. Xem [CHECK-007](docs/check.md#check-007).
+
+**2. Quét ổ cục bộ không được xoá phần NAS.** Hệ quả trực tiếp của điều trên: tiến trình elevated
+dựng lại chỉ mục mà không có ổ Z: nào trong đó. Không xử lý thì người dùng quét NAS 4,5 phút rồi
+bấm "Quét lại" là mất sạch. Quy tắc, cố ý viết mà không nhắc tới chữ "mạng":
+
+> **Giữ nguyên mọi mục thuộc ổ đĩa không được quét trong lần chạy này.**
+
+**3. Tệp qua SMB không có FRN.** Gán 0, mà `index::update` vốn đã coi 0 là "không có định danh"
+([BUG-017](docs/bug.md#bug-017)) — nên cập nhật nhanh qua journal không bao giờ đụng vào phần NAS.
+Đúng như phải thế: journal của ổ cục bộ không biết gì về tệp trên NAS.
+
+### Việc đã làm
+
+- [x] `walk.rs` — duyệt thư mục song song theo từng tầng, bỏ qua reparse point, huỷ được
+- [x] Dung lượng và thời gian đọc kèm ngay trong lúc duyệt (`DirEntry::metadata` miễn phí trên Windows)
+- [x] Giữ nguyên mục của ổ không quét, ở cả hai chiều (quét cục bộ giữ NAS, quét NAS giữ cục bộ)
+- [x] Ổ mạng không được cấp mốc journal — có test khoá lại
+- [x] Hai nút tách bạch, nút "+ ổ mạng" chỉ hiện khi có ổ mạng
+- [x] Nút Dừng, chỉ trong pha mạng
+- [x] Kiểm chứng trên chính hai NAS của người dùng
+
+### Còn lại
+
+Phần NAS **không** cập nhật gia tăng — không có journal để theo. Muốn mới thì bấm lại nút.
+`ReadDirectoryChangesW` *có thể* chạy qua SMB nếu máy chủ hỗ trợ change notify, nhưng đó là thứ
+phải thử thật trên chính hai máy này chứ không đọc tài liệu rồi tin.
 
 ---
 

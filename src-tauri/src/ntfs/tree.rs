@@ -109,6 +109,15 @@ impl ResolveOptions {
         path.split('\\').skip(1).any(|c| self.is_excluded(c))
     }
 
+    /// Would a directory with this name be excluded?
+    ///
+    /// Public because the directory walker (`crate::walk`) applies the rules
+    /// one name at a time as it descends, exactly as this module does — the
+    /// two must never drift apart, so they share the one implementation.
+    pub fn excludes_component(&self, name: &str) -> bool {
+        self.is_excluded(name)
+    }
+
     fn is_excluded(&self, name: &str) -> bool {
         if self.skip_dot_directories && name.starts_with('.') {
             return true;

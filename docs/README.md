@@ -36,18 +36,15 @@ Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md
 | [config.md](./config.md) | 5 | 1 | Xung đột cấu hình / phiên bản |
 | [risk.md](./risk.md) | 3 | 0 | Rủi ro chưa xảy ra |
 | [perf.md](./perf.md) | 2 | 0 | Hiệu năng, kèm số đo |
-| [check.md](./check.md) | 6 | 0 | Nghi ngờ đã kiểm chứng |
-| [issue.md](./issue.md) | 3 | 1 | Vấn đề sản phẩm |
+| [check.md](./check.md) | 7 | 0 | Nghi ngờ đã kiểm chứng |
+| [issue.md](./issue.md) | 3 | 0 | Vấn đề sản phẩm |
 | [spec.md](./spec.md) | 2 | 0 | Lỗi của bản đặc tả |
-| **Cộng** | **39** | **2** | |
+| **Cộng** | **40** | **1** | |
 
 ### Mục còn mở
 
 [CONF-005](./config.md#conf-005) — `cargo fmt` chưa từng chạy, nay lệch 51 điểm trên 20 tệp.
 Cần chủ dự án chọn: format một lần, hay nới `max_width` trước rồi mới format.
-
-[ISSUE-003](./issue.md#issue-003) — **~37,9 TB trên ba ổ NAS không index được**: kiến trúc MFT/USN
-chỉ đọc được đĩa gắn trực tiếp. Cần quyết định có làm bộ quét thứ hai (duyệt thư mục song song) hay không.
 
 Ba mục ở trạng thái `WORKAROUND` — đã có cách xử lý, chưa sửa triệt để:
 [BUG-001](./bug.md#bug-001) (dùng `EnumWindows` thay `MainWindowHandle`),

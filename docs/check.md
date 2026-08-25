@@ -295,3 +295,44 @@ thời điểm 15h giờ địa phương mà journal ghi lại. Không có dữ 
 **đã bị xoá** — bằng cách đi ngược chuỗi cha qua chính các bản ghi xoá, cho tới khi gặp một thư mục
 còn tồn tại trong index. Không có nó thì câu trả lời dừng ở "70.000 tệp mất ở đâu đó"; có nó thì
 câu trả lời là một đường dẫn cụ thể và một mốc giờ.
+
+---
+
+## CHECK-007 ✅ — Tiến trình elevated có nhìn thấy ổ mạng không?
+
+**Giai đoạn:** P10 · **Trạng thái:** KHÔNG PHẢI LỖI (một sự thật về Windows) · **Ngày:** 2026-08-25
+
+**Nghi ngờ.** Trước khi thiết kế phần quét NAS: đặt nó vào đâu? Đường tự nhiên nhất là nhét vào
+tiến trình `--index` sẵn có — nó đã quét ổ đĩa rồi. Nhưng tiến trình đó chạy elevated.
+
+**Cách đo.** Cùng một hàm `list_volumes()`, chạy ở hai mức quyền:
+
+| | Ổ nhìn thấy |
+|---|---|
+| Elevated (`--index --full`) | C:, D:, G: |
+| Quyền thường | C:, D:, **F:**, G:, **Y:**, **Z:** |
+
+Ba ổ mạng **không xuất hiện** trong lần chạy elevated — không phải bị bỏ qua, mà là không tồn tại
+đối với nó. Cả dòng cảnh báo "bỏ qua ổ mạng" cũng không có gì để in.
+
+**Nguyên nhân.** Ổ mạng được gắn theo **phiên đăng nhập**, không phải theo máy. Tiến trình elevated
+chạy dưới một token khác, nên nó không thừa hưởng các ánh xạ ổ đĩa của người dùng. Đây là hành vi
+cố ý của Windows, không phải lỗi cấu hình.
+
+**Hệ quả với kiến trúc, và nó lớn.**
+
+1. Tiến trình quét MFT **vĩnh viễn** không quét được NAS, dù có sửa gì đi nữa. Không phải vì SMB
+   không có MFT (điều đó cũng đúng, xem [ISSUE-003](./issue.md#issue-003)) mà vì nó còn không thấy
+   ổ đĩa để mà thử.
+2. Ngược lại, việc đó **không sao cả**: duyệt thư mục qua SMB không cần quyền gì. Nên bộ quét NAS
+   thuộc về **tiến trình GUI**, nơi vốn chạy quyền thường và nhìn đủ ổ.
+3. Và đây là điều dễ gây mất dữ liệu nhất: **một lần quét ổ cục bộ không được phép xoá phần NAS
+   trong chỉ mục.** Tiến trình elevated không thấy ổ Z: nên sẽ dựng lại chỉ mục không có nó — nếu
+   không giữ lại, người dùng quét NAS 20 phút rồi bấm "Quét lại" là mất sạch.
+
+Quy tắc đã chọn: **giữ nguyên mọi mục thuộc ổ đĩa không được quét trong lần chạy này.** Không cần
+biết ổ đó là mạng hay là USB vừa rút ra — nếu không quét thì không có thẩm quyền nói gì về nó.
+
+**Nếu đã tin vào linh cảm thay vì đo.** Tôi đã định đặt bộ quét NAS vào tiến trình `--index`. Nó sẽ
+chạy, không báo lỗi, và im lặng không tìm thấy ổ mạng nào — đúng loại hỏng mà dự án này đã gặp
+nhiều lần.

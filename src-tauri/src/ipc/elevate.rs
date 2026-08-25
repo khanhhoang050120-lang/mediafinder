@@ -46,7 +46,12 @@ pub enum ElevateError {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanProgress {
-    /// `volumes` · `scanning` · `resolving` · `indexing` · `saving` · `done` · `error`
+    /// `volumes` · `scanning` · `resolving` · `indexing` · `network` · `saving`
+    /// · `done` · `error`
+    ///
+    /// Mirrored by a union type in `src/lib/search.ts`. Adding one here only
+    /// means the UI never shows it — the type checker catches that, which is
+    /// why the union is spelled out rather than left as `string`.
     pub phase: String,
     /// Drive letter currently being read, e.g. `"C"`.
     pub volume: String,

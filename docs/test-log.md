@@ -470,3 +470,54 @@ sẽ có một lỗ hổng rộng đúng bằng tính năng vừa thêm. Không 
 câu: ký tự nối dòng `\` trong chuỗi Rust bị Python nuốt mất lúc tôi ghi file. Chỉ lộ ra khi **đọc
 dòng log thật**, không assertion nào chạm tới. Nhân đó tách luôn cảnh báo `unresolved` ra khỏi dòng
 `excluded` — gộp hai con số vào một câu chính là cách giấu con số quan trọng sau con số bình thường.
+
+
+---
+
+### 2026-08-25 — Lượt test P10 (quét ổ mạng / NAS)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Unit test toàn bộ | `cargo test` | ✅ **186/186 pass** |
+| 2 | Chất lượng code | `cargo clippy --all-targets` | ✅ sạch |
+| 3 | Type-check frontend | `npm run check` | ✅ 106 tệp, 0 lỗi |
+| 4 | Tiến trình elevated có thấy ổ mạng không | so hai mức quyền | ✅ **không** — quyết định cả kiến trúc ([CHECK-007](./check.md#check-007)) |
+| 5 | Tìm media, bỏ qua thứ khác | thư mục tạm | ✅ chỉ `.mp4`/`.jpg`, không lấy `.txt`/`.exe` |
+| 6 | Đi sâu nhiều tầng, đường dẫn đúng | thư mục tạm | ✅ `a\b\c\sâu.mp4` |
+| 7 | Bỏ qua thư mục cấm và mọi thứ dưới nó | `node_modules`, `.recycle_bin` | ✅ |
+| 8 | Thư mục không đọc được không làm dừng cả lượt | thư mục không tồn tại | ✅ đánh dấu rồi đi tiếp |
+| 9 | Cây rỗng | thư mục tạm | ✅ trả kết quả rỗng, không lỗi |
+| 10 | Mục ổ mạng không có FRN | unit test | ✅ toàn bộ bằng 0 |
+| 11 | Dung lượng lấy ngay trong lúc duyệt | unit test | ✅ song song với danh sách tệp, đúng 4096 byte |
+| 12 | **Duyệt NAS thật** | ba ổ, 37,9 TB | ✅ **313.945 tệp media / 272,6 s** |
+| 13 | Huỷ giữa chừng | bấm dừng sau 200 thư mục | ✅ dừng trong **0,1 s** |
+| 14 | **Hợp nhất vào cache thật** | quét NAS rồi đọc lại cache | ✅ 46.700 → **360.646** mục |
+| 15 | Mục ổ cục bộ có bị đụng không | so từng ổ trước/sau | ✅ C: 583 và D: 46.117 **không đổi một con số** |
+| 16 | Mốc journal | kiểm tra sau khi hợp nhất | ✅ chỉ C: và D: có; ổ mạng **không** được cấp |
+| 17 | Nạp cache 47,4 MB lúc khởi động | bản release | ✅ **128 ms** |
+| 18 | Tìm kiếm trên 360.646 mục | gõ `shamrock` | ✅ **21 kết quả · 2,0 ms**, toàn bộ từ ổ F: |
+| 19 | Dung lượng hiện đúng cho tệp NAS | nhìn ảnh chụp | ✅ 79 MB … 405,7 MB |
+| 20 | Nút "+ ổ mạng" chỉ hiện khi có ổ mạng | nhìn ảnh chụp | ✅ |
+| 21 | Enrichment với 313.946 tệp NAS | đo tốc độ ghi `metadata.bin` | ❌ **tìm ra vấn đề** — 11 tệp/giây → **7,8 giờ** liên tục hành NAS |
+
+**Kết luận:** 20/21 pass, 1 vấn đề tìm ra và đã xử lý.
+
+**Mục 21 là mục quan trọng nhất, và không test nào nhắm vào nó.** Mọi thứ đều "chạy đúng": quét
+xong, hợp nhất xong, tìm kiếm 2 ms. Nhưng ngay sau khi khởi động, tiến trình enrichment nền lặng lẽ
+bắt đầu **mở từng tệp một qua mạng** để đọc độ phân giải — 313.946 tệp ở tốc độ đo được là 11
+tệp/giây, tức **7,8 giờ** hành NAS liên tục. Không lỗi, không cảnh báo, chỉ là một tiến trình nền
+chăm chỉ làm việc sai.
+
+Nó lộ ra vì tôi đọc **một dòng log không liên quan tới thứ đang test**:
+`enrichment: 46700/360646 mục đã có sẵn`. Con số 46.700 đúng bằng số tệp ổ cục bộ — nghĩa là 313.946
+tệp còn lại sắp được xử lý, mà chúng đều nằm trên mạng.
+
+**Đã sửa:** enrichment bỏ qua ổ mạng. Đánh đổi được nêu thẳng trong log — lọc theo độ phân giải và
+thời lượng không áp dụng cho tệp NAS, còn lọc theo **dung lượng vẫn được**, vì dung lượng đã lấy
+miễn phí trong lúc duyệt. Bộ đếm tiến độ cũng trừ đi phần bỏ qua, nếu không thanh tiến độ sẽ đứng
+mãi ở một con số không bao giờ tới đích.
+
+**Mục 15 là thứ suýt gây mất dữ liệu.** Tiến trình elevated không nhìn thấy ổ mạng, nên nó dựng lại
+chỉ mục **không có ổ Z: nào trong đó**. Nếu không có quy tắc "giữ nguyên mục của ổ không quét", thì
+quét NAS 4,5 phút rồi bấm "Quét lại" là mất sạch — và mất một cách hoàn toàn im lặng, vì đứng từ
+phía tiến trình đó thì nó đã làm đúng mọi thứ.

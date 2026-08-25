@@ -166,9 +166,43 @@ impl EnrichService {
         }
 
         let props = self.props.load();
+        let network = network_letters();
+        let mut skipped = 0usize;
         let mut queue: Vec<u32> = (0..total as u32)
             .filter(|&i| props[i as usize].is_empty())
+            .filter(|&i| {
+                // Reading properties means opening the file. Over SMB that is
+                // measured at 11 files/second on this machine — 313 946 files
+                // on the user's NAS would be 7.8 hours of continuous network
+                // load, for filters they may never use on those files.
+                //
+                // Size and modification time are already known: the directory
+                // walk gets both for free, so size filters still work on
+                // network files. Only resolution and duration are given up.
+                if network.contains(&index.volume_of(i as usize)) {
+                    skipped += 1;
+                    false
+                } else {
+                    true
+                }
+            })
             .collect();
+
+        if skipped > 0 {
+            tracing::info!(
+                "bỏ qua {skipped} tệp trên ổ mạng: đọc thuộc tính phải mở từng tệp qua \
+                 mạng (~11 tệp/giây), nên lọc theo độ phân giải và thời lượng không áp \
+                 dụng cho chúng — lọc theo dung lượng thì vẫn được"
+            );
+            // The counter must describe work that will actually happen, or the
+            // progress indicator would stall short of its own total for ever.
+            self.total.store(total - skipped, Ordering::Relaxed);
+        }
+
+        if queue.is_empty() {
+            self.running.store(false, Ordering::Relaxed);
+            return;
+        }
         order_queue(&mut queue, |i| index.kind(i as usize));
 
         self.running.store(true, Ordering::Relaxed);
@@ -313,6 +347,19 @@ fn publish(ctx: &WorkerCtx, pending: &mut Vec<(u32, MediaProps)>) {
 /// Video leads because resolution and duration are what video gets filtered
 /// by. Images have dimensions but are rarely filtered on them, and an audio
 /// file's dimensions are always zero.
+/// Drive letters that are mapped network shares, uppercased.
+///
+/// Asked once per start rather than per file: mappings do not change while a
+/// scan runs, and this is consulted a third of a million times.
+fn network_letters() -> std::collections::HashSet<u8> {
+    use crate::ntfs::volume::{self, VolumeKind};
+    volume::list_volumes()
+        .into_iter()
+        .filter(|v| v.kind == VolumeKind::Network)
+        .map(|v| (v.letter as u8).to_ascii_uppercase())
+        .collect()
+}
+
 fn order_queue(queue: &mut [u32], kind_of: impl Fn(u32) -> MediaKind) {
     queue.sort_by_key(|&i| match kind_of(i) {
         MediaKind::Audio => 0u8,

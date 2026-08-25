@@ -240,6 +240,77 @@ pub fn request_scan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// Scan the local disks, then walk every mapped network drive.
+///
+/// Two phases, in that order and deliberately so: the local scan is seconds
+/// and covers where most files are, the network walk is minutes. Doing the
+/// local part first means the fast, common result is already in place before
+/// the slow part begins — and if the user cancels, they still have it.
+///
+/// The network walk runs **here, in the GUI process**. It has to: mapped
+/// drives belong to a logon session and the elevated indexer cannot see them
+/// (CHECK-007). It needs no privilege, so nothing is given up.
+#[tauri::command]
+pub fn request_scan_with_network(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if state.is_scanning() {
+        return Err("Đang có một lượt quét chạy rồi.".into());
+    }
+    let _ = elevate::clear_progress();
+
+    let child = elevate::spawn_elevated_indexer().map_err(|e| e.to_string())?;
+    state.set_scanning(true);
+    state.request_cancel(false);
+
+    std::thread::spawn(move || {
+        // Phase one: the elevated child does the local disks and writes the
+        // cache. Waited for rather than run alongside, because both phases
+        // write the same file.
+        child.wait();
+
+        let st = app.state::<AppState>();
+        if !st.cancel_requested() {
+            // Phase two, in this process.
+            crate::scan_network_volumes(st.cancel_flag());
+        }
+        st.set_scanning(false);
+    });
+
+    Ok(())
+}
+
+/// Ask the running scan to stop.
+///
+/// Only the network phase can honour this — the local scan happens in another
+/// process entirely. Said plainly in the UI rather than pretending otherwise.
+#[tauri::command]
+pub fn cancel_scan(state: State<'_, AppState>) {
+    state.request_cancel(true);
+}
+
+/// Which mapped network drives exist, for the UI to name in the button.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkDrive {
+    pub letter: String,
+    pub remote: String,
+}
+
+#[tauri::command]
+pub fn network_drives() -> Vec<NetworkDrive> {
+    use crate::ntfs::volume::{self, VolumeKind};
+    volume::list_volumes()
+        .into_iter()
+        .filter(|v| v.kind == VolumeKind::Network)
+        .map(|v| NetworkDrive {
+            letter: v.letter.to_string(),
+            remote: v.remote.unwrap_or_default(),
+        })
+        .collect()
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanStatus {
