@@ -34,14 +34,6 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Kéo tệp từ kết quả tìm kiếm ra ngoài, thả vào CapCut / Explorer / ô upload.
-#
-# WebView2 chỉ đặt được các kiểu dữ liệu của web; mọi ứng dụng nhận tệp đều chờ
-# CF_HDROP của shell Windows. Crate này dựng đúng phần đó: một IDataObject thật
-# mang DROPFILES, chạy qua DoDragDrop. Tự viết là vài trăm dòng COM với vài chỗ
-# cấp phát HGLOBAL rất dễ sai.
-drag = "2"
-
 # --- Core index + search (P2) ---
 rayon = "1"
 memchr = "2"
@@ -66,6 +58,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 
 [dev-dependencies]
+# Chỉ dùng trong test: tái hiện đúng bước chuẩn hoá đường dẫn mà crate `drag`
+# làm bên trong, thay vì đoán.
+dunce = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
@@ -73,6 +68,9 @@ name = "search"
 harness = false
 
 [target.'cfg(windows)'.dependencies]
+# `#[implement]` sinh mã tham chiếu tới `windows_core` theo tên, nên crate đó
+# phải có mặt trực tiếp chứ không chỉ qua re-export của `windows`.
+windows-core = "0.61"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -88,6 +86,9 @@ windows = { version = "0.61", features = [
     "Win32_Graphics_Gdi",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
+    # DoDragDrop + IDropSource: kéo tệp ra ngoài như một nguồn kéo OLE gốc.
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
     # WNetGetConnectionW: cho biết một ổ mạng đang trỏ tới đâu, để thông báo
     # nêu được tên máy chủ chứ không chỉ nêu chữ cái ổ đĩa.
     "Win32_NetworkManagement_WNet",

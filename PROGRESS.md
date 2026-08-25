@@ -797,7 +797,12 @@ sẽ trông như tính năng bị hỏng chứ không như một giới hạn.
 
 Nên phải làm **nguồn kéo OLE gốc**: `IDataObject` thật mang `DROPFILES`, chạy qua `DoDragDrop`.
 
-### Dùng crate `drag` thay vì tự viết
+### Dùng crate `drag` thay vì tự viết — *quyết định này đã bị đảo ngược ở P13*
+
+> **Đọc mục này với một dấu sao.** Crate làm tắt phăng ứng dụng khi kéo tệp trên ổ mạng
+> ([BUG-020](docs/bug.md#bug-020)) và đã bị bỏ. Phần bên dưới giữ nguyên vì lý lẽ dẫn tới quyết
+> định sai cũng đáng đọc như quyết định đúng — xem [CONF-006](docs/config.md#conf-006).
+
 
 Phần khó đã có sẵn: `#[implement(IDataObject)]`, `CF_HDROP` + `DROPFILES`, `IDropSource`,
 `IDragSourceHelper` cho ảnh kéo. Tự viết là khoảng ba trăm dòng COM `unsafe`, và chỗ cấp phát
@@ -833,6 +838,59 @@ Một shell data object đầy đủ — đúng thứ CapCut, Explorer và ô up
 
 Thả vào ứng dụng chạy quyền Administrator sẽ bị Windows chặn (UIPI). Đó là ràng buộc bảo mật của
 hệ điều hành, không sửa được từ phía ứng dụng.
+
+---
+
+## P13 — Chọn nhiều, kéo nhiều, sắp theo thời gian ✅
+
+**Người dùng chọn:** *"Chọn nhiều + kéo nhiều, và sắp theo thời gian"*.
+
+### Ba việc, một nguyên tắc chung
+
+**Chọn nhiều.** Ctrl+click thêm/bớt từng hàng, Shift+click chọn cả dải, Shift+↑↓ mở rộng từ chỗ
+neo. Giữ `selection` **bên cạnh** `selected` chứ không thay thế nó: `selected` là chỗ bàn phím đang
+đứng, `selection` là thứ lệnh sẽ tác động. Gộp hai thứ vào một thì không diễn đạt được Shift+click.
+
+**Kéo nhiều.** Kéo một hàng **nằm trong** lựa chọn thì mang cả lựa chọn; kéo một hàng **ngoài** lựa
+chọn thì chỉ mang hàng đó — nếu không, một cú click lạc chỗ sẽ âm thầm kéo đi những tệp người dùng
+còn không nhìn thấy. Explorer cư xử đúng như vậy.
+
+**Sắp theo thời gian.** Nút "Liên quan" / "Mới nhất" cộng với chip lọc 7 / 30 / 365 ngày. Sắp theo
+thời gian phải là **một khoá sắp xếp thật**, không phải sắp lại 5.000 kết quả đã cắt: nếu cắt theo
+điểm liên quan rồi mới sắp theo ngày thì tệp mới nhất có thể đã bị cắt mất từ trước. Nên `Hit` mang
+sẵn `key` và heap top-K so sánh bằng chính khoá đó.
+
+### Lỗi lớn nhất của giai đoạn không nằm ở tính năng nào
+
+Kéo bất kỳ tệp NAS nào → **ứng dụng tắt ngay lập tức**. Crate `drag` chuẩn hoá đường dẫn thành UNC
+verbatim, shell từ chối dạng đó, crate `.unwrap()` cái `None` — và vì chỗ đó nằm trong window
+procedure nên panic **không unwind được**, runtime `abort()` cả tiến trình.
+
+87% thư viện của người dùng nằm trên NAS. Chi tiết: [BUG-020](docs/bug.md#bug-020).
+
+Đã bỏ crate và tự viết [`ipc/drag_source.rs`](src-tauri/src/ipc/drag_source.rs). Hoá ra nhỏ hơn
+nhiều so với ước lượng cũ, vì **`IDataObject` là do chính shell dựng** —
+`SHCreateShellItemArrayFromIDLists` + `BindToHandler(BHID_DataObject)`. Chỉ còn `IDropSource` với
+ba phương thức. Bỏ được luôn bản `windows` 0.52 thừa ([CONF-006](docs/config.md#conf-006)).
+
+### Kiểm chứng
+
+Cửa sổ nhận thả tự dựng, báo lại đúng những gì nhận được:
+
+```
+các định dạng: Shell IDList Array, FileDrop, FileNameW, FileName,
+               FileContents, FileGroupDescriptorW, ZoneIdentifier
+CF_HDROP: CÓ
+  tệp: D:\TÀI NGUYÊN DEEP SEA\Sinh vật phù du\Gen\Create_a_highly_202601071441_5luao.mp4
+  tệp: D:\TÀI NGUYÊN DEEP SEA\Sinh vật phù du\Gen\Create_a_highly_202601071453_n1nvn.mp4
+  tệp: F:\AutoEdit\library\deepsea\Sinh vat phu du\Gen\Create a highly 202601071441 5luao.mp4
+```
+
+Ba tệp một lượt, **trộn ổ cục bộ với ổ mạng**, đường dẫn có dấu tiếng Việt — đúng ca trước đây làm
+sập ứng dụng. Ba lần chạy liên tiếp đều đủ ba tệp.
+
+Chi tiết cả lượt test, kể cả hai lần kéo không khởi động mà tôi **chưa giải thích được**:
+[test-log](docs/test-log.md).
 
 ---
 

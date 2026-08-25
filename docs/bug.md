@@ -785,3 +785,59 @@ xong.
 **Bài học.** Hai lỗi, cùng một gốc: **`progress.json` là hợp đồng, không phải nhật ký.** Ai ghi vào
 đó cũng phải hoàn thành hợp đồng — báo xong đúng một lần, và đúng lúc thật sự xong. Cả hai đều
 không thể tìm ra bằng cách chạy từ dòng lệnh, vì ở đó không có ai đang đọc hợp đồng ấy.
+
+## BUG-020 🔴 — Kéo một tệp trên NAS làm **tắt phăng cả ứng dụng**
+
+**Giai đoạn:** P13 · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-25
+
+**Hiện tượng.** Kéo một tệp bất kỳ nằm trên ổ mạng. Ứng dụng biến mất — không bảng lỗi, không
+cửa sổ báo, không kịp thấy gì. Trong console:
+
+```
+thread 'main' panicked at drag-2.1.1\src\platform_impl\windows\mod.rs:370:60:
+called `Option::unwrap()` on a `None` value
+panic in a function that cannot unwind → aborting
+```
+
+**Nguyên nhân.** Crate `drag` gọi `dunce::canonicalize` lên mọi đường dẫn trước khi đưa cho shell.
+Với ổ mạng đã ánh xạ, hàm đó trả về dạng UNC verbatim — và `ILCreateFromPathW` **từ chối** dạng ấy.
+Đo bằng một test Rust:
+
+```
+gốc:        F:\132 mốc  168 commit, từ 2026-07-01.txt   → shell nhận: true
+chuẩn hoá:  \?\UNC\192.168.1.214\f\132 mốc  ...        → shell nhận: false
+```
+
+`dunce` làm vậy **có chủ đích**: `is_safe_to_strip_unc` chỉ rút gọn `Prefix::VerbatimDisk`, vì
+đường dẫn UNC hiểu `..` theo nghĩa đen nên rút gọn có thể đổi ý nghĩa. Đây là chỗ hai thư viện
+đúng riêng lẻ nhưng sai khi ghép: dunce giữ nguyên UNC cho an toàn, shell không nhận UNC verbatim,
+và crate `.unwrap()` cái `None` ở giữa.
+
+Điều biến nó từ lỗi thành thảm hoạ là **chỗ** panic xảy ra: bên trong window procedure, nơi Windows
+gọi ngược vào mã Rust qua ranh giới FFI. Panic ở đó **không unwind được**, nên runtime `abort()`
+toàn tiến trình. Không có `catch_unwind` nào cứu được, và không có cách nào bắt lỗi từ bên gọi.
+
+**Mức nghiêm trọng thật.** 87% thư viện của người dùng nằm trên NAS — 311.951 trên 360.655 tệp.
+Nên đây không phải trường hợp biên: với người dùng này, **kéo tệp là thao tác làm sập ứng dụng**.
+
+**Vì sao lọt qua P12.** Lượt test P12 tự tạo tệp thử trong `C:\Users\Padoma1\Videos` — ổ cục bộ.
+Sáu mục test đều pass, và mục quan trọng nhất ("thả thật vào ứng dụng khác") pass thật. Cả sáu chỉ
+chưa bao giờ đi qua một đường dẫn mạng. Đây là lần thứ hai một lỗi lọt vì dữ liệu thử là dữ liệu
+tôi tự tạo chứ không phải dữ liệu người dùng có — lần trước là [BUG-018](#bug-018).
+
+**Cách sửa: bỏ crate, tự viết** — [`ipc/drag_source.rs`](../src-tauri/src/ipc/drag_source.rs).
+
+Khi mổ ra thì phần thật sự phải tự viết **nhỏ hơn nhiều** so với ước lượng ở [CONF-006](./config.md#conf-006):
+`SHCreateShellItemArrayFromIDLists` + `BindToHandler(BHID_DataObject)` cho ra một `IDataObject`
+đầy đủ do **chính shell dựng** — `CF_HDROP`, `Shell IDList Array`, `FileNameW`, `FileContents`.
+Không phải tự cấp phát `HGLOBAL`, không phải tự xếp `DROPFILES`. Chỉ còn `IDropSource` với ba
+phương thức ngắn.
+
+Và bản tự viết **không chuẩn hoá đường dẫn** — nó đưa shell đúng dạng `F:\…` mà chỉ mục đang giữ,
+tức đúng dạng shell biết phân giải.
+
+**Bài học.** Một `.unwrap()` trong thư viện của người khác vẫn là rủi ro của mình, và mức rủi ro
+phụ thuộc vào **nơi nó chạy**: cùng một panic, ở luồng thường thì mất một thao tác, trong window
+procedure thì mất cả ứng dụng. Khi đánh giá "dùng crate hay tự viết" ở CONF-006 tôi đã cân kích
+thước binary và số dòng `unsafe`, mà không hỏi câu quan trọng hơn: *code này chạy ở đâu, và nếu nó
+panic ở đó thì mất gì.*

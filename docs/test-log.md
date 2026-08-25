@@ -737,3 +737,82 @@ chỉ cửa sổ tự dựng mới trả lời được.
 **Bài học lặp lại lần thứ ba:** nhận diện cửa sổ theo tên lớp là không đủ. Lần này là VS Code đội
 lốt WebView2; [BUG-001](./bug.md#bug-001) là cửa sổ ẩn của tao đội lốt cửa sổ chính. PID và handle
 thì không nói dối.
+
+### 2026-08-25 — Lượt test P13 (chọn nhiều, kéo nhiều, sắp theo thời gian)
+
+| # | Nội dung test | Cách làm | Kết quả |
+|---|---|---|---|
+| 1 | Vòng kiểm tra | test · clippy · fmt · npm | ✅ **196 pass**, sạch cả bốn |
+| 2 | Sắp theo thời gian không bị cắt trước khi sắp | unit test | ✅ `newest_order_still_ranks_by_time_when_the_limit_cuts_the_list` |
+| 3 | Kéo tệp NAS **không** làm sập ứng dụng | kéo thật, tệp trên F: | ✅ 1 tệp sang đúng, tiến trình còn sống |
+| 4 | Kéo nhiều tệp cùng lúc | Ctrl+click 3 hàng rồi kéo | ✅ đủ 3 tệp, đúng dung lượng |
+| 5 | Trộn ổ cục bộ với ổ mạng trong một lượt kéo | 2 tệp D: + 1 tệp F: | ✅ đủ 3 tệp — **ba lần chạy liên tiếp** |
+| 6 | Đường dẫn có dấu tiếng Việt | `D:\TÀI NGUYÊN DEEP SEA\Sinh vật phù du\` | ✅ sang đúng, không hỏng ký tự |
+| 7 | Shell dựng được data object cho đường dẫn mạng | test Rust, không cần chuột | ✅ `the_shell_builds_a_data_object_for_a_file_on_a_network_drive` |
+| 8 | Thời gian dựng data object | test Rust, đo 2 lần mỗi ca | ✅ cục bộ 9,4 → 0,2 ms · ổ mạng **4,3 → 0,2 ms** |
+| 9 | Chọn dải bằng Shift+click | click hàng 0, Shift+click hàng 2 | ✅ đúng 3 tệp |
+| 10 | Bỏ crate rồi graph có sạch không | `cargo tree --duplicates` | ✅ **0 dòng `windows`** trùng, exe 10,14 MB |
+
+**Kết luận:** 10/10 pass. Tìm ra [BUG-020](./bug.md#bug-020) 🔴 — mục 3 chính là ca đã làm sập
+ứng dụng hai lần trước khi sửa.
+
+#### Cách tìm ra BUG-020, và vì sao P12 không thấy
+
+Không phải do đọc code. Đang **kiểm chứng tính năng chọn nhiều** thì ứng dụng biến mất giữa chừng,
+hai lần liên tiếp. Console để lại đúng một dấu vết: `panic in a function that cannot unwind`.
+
+Tách nguyên nhân bằng một test Rust chứ không đoán — hỏi shell trực tiếp:
+
+```
+gốc:        F:\132 mốc  168 commit, từ 2026-07-01.txt   → shell nhận: true
+chuẩn hoá:  \?\UNC\192.168.1.214\f\132 mốc  ...        → shell nhận: false
+```
+
+Lượt test P12 pass 6/6 và mục quan trọng nhất ("thả thật vào ứng dụng khác") pass thật. Nó chỉ dùng
+tệp tự tạo trong `C:\Users\Padoma1\Videos`. **Dữ liệu thử do tôi tạo không bao giờ nằm trên NAS,
+trong khi 87% dữ liệu thật thì có.** Đây là lần thứ hai đúng cái sai này lọt lưới — lần trước là
+[BUG-018](./bug.md#bug-018), ổ mạng bị bỏ qua im lặng.
+
+#### Bốn giả thuyết sai, ghi lại vì mỗi cái đều bị một phép đo bác bỏ
+
+Sau khi sửa, ca "2 tệp D: + 1 tệp F:" **vẫn không thả được gì** hai lần. Không sập, không bảng lỗi,
+không dòng log nào. Lần lượt:
+
+| Giả thuyết | Phép đo | Kết quả |
+|---|---|---|
+| Shell từ chối đường dẫn mạng | test dựng data object cho tệp F: | ❌ dựng được |
+| Shell từ chối tập **trộn nhiều ổ** | test dựng cho `[D:…, F:…]` | ❌ dựng được |
+| Dựng quá chậm nên cử chỉ chuột đã kết thúc | đo thời gian | ❌ 4,3 ms |
+| Chuyển hướng stdout/stderr phá thao tác kéo | chạy lại có chuyển hướng | ❌ vẫn chạy tốt |
+
+Cả bốn sai. Điều dứt điểm được: nhật ký cho thấy `start_file_drag` **chưa từng được gọi** trong hai
+lần đó — nên lỗi nằm ở cử chỉ/`dragstart`, không phải ở tầng shell. Sau khi dựng lại và cài lại,
+đúng ca đó chạy đúng **năm lần liên tiếp** (3 lần bản cài + 2 lần có chuyển hướng).
+
+**Tôi không giải thích được hai lần hỏng đó**, nên ghi thành [RISK-005](./risk.md#risk-005) thay vì
+coi như đã xong. Tỉ lệ quan sát được: 2 hỏng / ~12 lần kéo, toàn bộ đều bằng chuột tổng hợp.
+
+#### Hai lỗi của chính kịch bản test, không phải của ứng dụng
+
+**Toạ độ hàng cố định gặp khung cảnh báo.** Khi truy vấn chỉ khớp một phần, khung *"Không có tệp
+nào khớp đủ 3 từ"* đẩy cả danh sách xuống ~46px; điểm bắt đầu kéo rơi vào chính khung đó nên không
+có thao tác kéo nào bắt đầu. Kịch bản báo "không nhận được gì" — trông y hệt lỗi ứng dụng.
+
+**Bản gỡ lỗi không có giao diện.** Chạy `cargo run` để lấy nhật ký thì cửa sổ chỉ hiện
+*"localhost refused to connect"* — bản debug trỏ vào máy chủ vite. Hai lượt chạy sau đó kiểm tra
+đúng một trang lỗi trắng, và tôi suýt kết luận "bản gỡ lỗi cũng hỏng". Phải `npm run tauri dev`.
+
+Cùng một bài học với [BUG-016](./bug.md#bug-016): **kịch bản test phải tự chứng minh nó đang nhìn
+đúng thứ cần nhìn.** Ảnh chụp màn hình là thứ bác bỏ cả hai — không có nó thì cả hai đều bị ghi
+thành lỗi ứng dụng.
+
+#### Một chỗ hụt do phím tổng hợp, không phải do logic
+
+Shift+↓ hai lần chỉ chọn được 2 hàng thay vì 3, ổn định qua nhiều lần chạy. Ba phép đo:
+
+1. `keybd_event` gửi Shift+↓ → WebView2 nhận phím ↓ nhưng **không thấy Shift**, chỉ nhảy tiêu điểm.
+2. Đổi sang `SendKeys('+{DOWN}')` → lựa chọn mở rộng đúng, nhưng `N` lần nhấn cho `N` hàng.
+3. **Shift+click** cùng dải (chuột, đường vào đáng tin hơn) → **đúng `N+1` hàng**.
+
+Phép đo 3 cho thấy logic chọn dải đúng; chỗ hụt là phím tổng hợp đầu tiên bị rơi sau khi tiêu điểm
+vừa đổi. Đã ghi vào kịch bản test để lần sau không truy lại từ đầu.

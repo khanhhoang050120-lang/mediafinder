@@ -253,6 +253,12 @@ impl Index {
         self.str_at(self.dirs[dir_id])
     }
 
+    /// Every modification time, so the search loop can order and filter by
+    /// recency without a bounds check per entry.
+    pub fn mtimes(&self) -> &[i64] {
+        &self.mtime
+    }
+
     pub fn sizes(&self) -> &[u64] {
         &self.size
     }

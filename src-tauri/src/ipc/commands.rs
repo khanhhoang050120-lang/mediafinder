@@ -63,6 +63,22 @@ pub struct SearchResponse {
     pub epoch: u64,
 }
 
+/// Everything about how to run one search, apart from its id.
+///
+/// Grouped rather than passed as separate arguments: the list had grown to
+/// eight and every addition made the call site harder to read. The id stays
+/// outside because it is not part of the question being asked — it is how a
+/// superseded answer gets recognised.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Query {
+    pub query: String,
+    pub kinds: Vec<String>,
+    pub limit: usize,
+    pub filters: Filters,
+    pub order: crate::index::search::Order,
+}
+
 /// The property filters, grouped rather than passed as loose arguments.
 ///
 /// Three more parameters on a command that already had six is the point at
@@ -75,6 +91,26 @@ pub struct Filters {
     pub min_height: u32,
     pub min_duration_ms: u64,
     pub max_duration_ms: u64,
+    /// How recently the file was modified, in days back from now; `0`
+    /// disables. Sent as a number of days rather than a timestamp so the
+    /// window is always relative to *now* — a search left open overnight
+    /// should still mean "the last seven days" in the morning.
+    pub within_days: u32,
+}
+
+/// Turn "within N days" into a Unix timestamp, or 0 for no limit.
+fn cutoff_for(days: u32) -> i64 {
+    if days == 0 {
+        return 0;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    // Never negative: a clock set before 1970 would otherwise turn the filter
+    // into "modified after some point in the past", which quietly matches
+    // everything instead of failing.
+    (now - days as i64 * 86_400).max(0)
 }
 
 fn parse_kinds(kinds: &[String]) -> Vec<MediaKind> {
@@ -99,17 +135,23 @@ pub async fn search(
     state: State<'_, AppState>,
     state_enrich: State<'_, crate::media::enrich::EnrichService>,
     id: u64,
-    query: String,
-    kinds: Vec<String>,
-    limit: usize,
-    filters: Filters,
+    req: Query,
 ) -> Result<SearchResponse, String> {
+    let Query {
+        query,
+        kinds,
+        limit,
+        filters,
+        order,
+    } = req;
     state.begin_query(id);
 
     // Snapshot, then release the shared cell immediately — see `state.rs`.
     let index = state.snapshot();
     let opts = SearchOptions {
         limit: limit.clamp(1, 20_000),
+        order,
+        modified_after: cutoff_for(filters.within_days),
         kinds: parse_kinds(&kinds),
         min_height: filters.min_height,
         min_duration_ms: filters.min_duration_ms,
@@ -195,66 +237,51 @@ pub fn enrich_status(
 /// takes files wants `CF_HDROP`, the shell's own structure. CapCut, Explorer
 /// and a browser's upload field all ignore what a WebView drag provides.
 ///
-/// So the drag is started natively instead: a real `IDataObject` carrying
-/// `DROPFILES`, handed to `DoDragDrop`. The frontend's only job is to cancel
-/// its own drag and call this.
+/// See `ipc::drag_source` for how the native drag is built, and for why it is
+/// written here rather than taken from a crate.
 ///
 /// **Blocks the window until the drop finishes.** `DoDragDrop` runs its own
 /// modal loop and does not return until the user releases the button, which is
 /// why this has to be on the UI thread and why the window sits still while a
 /// drag is in flight. Explorer behaves the same way.
 #[tauri::command]
-pub fn start_file_drag(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-    thumbs: State<'_, crate::media::thumbnail::ThumbnailService>,
-    paths: Vec<String>,
-) -> Result<(), String> {
+pub fn start_file_drag(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Err("Không có tệp nào để kéo.".into());
     }
 
-    // Missing files are dropped rather than refused: a drag of five files
-    // should not fail because one of them was deleted a moment ago.
+    // Filtered on the shell's own opinion rather than `Path::exists`: the drag
+    // is built from shell items, so anything the shell will not carry has to go
+    // before it reaches that code — and a file deleted since the last scan
+    // should not fail a drag of four others.
     let files: Vec<std::path::PathBuf> = paths
         .iter()
         .map(std::path::PathBuf::from)
-        .filter(|p| p.exists())
+        .filter(|p| crate::ipc::drag_source::shell_accepts(p))
         .collect();
     if files.is_empty() {
-        return Err("Tệp không còn ở đó nữa.".into());
+        return Err("Tệp không còn ở đó nữa — thử quét lại.".into());
+    }
+    if files.len() < paths.len() {
+        tracing::warn!(
+            "bỏ {} tệp không còn tồn tại khỏi thao tác kéo",
+            paths.len() - files.len()
+        );
     }
 
-    // The picture that follows the cursor. Rendered here rather than passing
-    // the file itself: `Image::File` on a 500 MB video would try to decode the
-    // video as a picture, and the thumbnail already exists.
-    let image = thumbs
-        .get(0, &files[0].to_string_lossy(), 96)
-        .ok()
-        .map(|png| drag::Image::Raw(png.as_slice().to_vec()))
-        // Falls back to the file itself, which works for images and quietly
-        // yields no drag image for anything else — better than refusing to
-        // drag at all.
-        .unwrap_or_else(|| drag::Image::File(files[0].clone()));
+    tracing::info!(
+        "bắt đầu kéo {} tệp: {}",
+        files.len(),
+        files
+            .iter()
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    );
 
-    let count = files.len();
     app.run_on_main_thread(move || {
-        let result = drag::start_drag(
-            &window,
-            drag::DragItem::Files(files),
-            image,
-            move |result, _cursor| {
-                tracing::debug!("kéo {count} tệp: {result:?}");
-            },
-            // Copy, never move: a search tool has no business relocating the
-            // files it found. Dropping into a folder should leave the original
-            // exactly where it was.
-            drag::Options {
-                mode: drag::DragMode::Copy,
-                ..Default::default()
-            },
-        );
-        if let Err(e) = result {
+        let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
+        if let Err(e) = crate::ipc::drag_source::drag_files(&refs) {
             tracing::warn!("không bắt đầu được thao tác kéo: {e}");
         }
     })

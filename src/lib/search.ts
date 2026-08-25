@@ -53,13 +53,25 @@ export interface Filters {
   minHeight: number;
   minDurationMs: number;
   maxDurationMs: number;
+  /**
+   * Only files modified within this many days; 0 disables.
+   *
+   * Days rather than a timestamp, so the window stays relative to now — a
+   * window left open overnight should still mean "the last seven days" in the
+   * morning, not "the seven days ending yesterday evening".
+   */
+  withinDays: number;
 }
 
 export const NO_FILTERS: Filters = {
   minHeight: 0,
   minDurationMs: 0,
   maxDurationMs: 0,
+  withinDays: 0,
 };
+
+/** What the result list is ordered by. Mirrors `search::Order` in Rust. */
+export type Order = "relevance" | "newest";
 
 export interface EnrichStatus {
   running: boolean;
@@ -117,16 +129,18 @@ export async function searchFiles(
   kinds: MediaKind[],
   filters: Filters = NO_FILTERS,
   limit = 5000,
+  order: Order = "relevance",
 ): Promise<SearchResponse | null> {
   const id = ++nextId;
   latestId = id;
 
+  // Grouped into one `req` because the backend takes it that way: the argument
+  // list had grown to eight and every addition made it harder to read. `id`
+  // stays outside — it is not part of the question, it is how a superseded
+  // answer gets recognised.
   const res = await invoke<SearchResponse>("search", {
     id,
-    query,
-    kinds,
-    limit,
-    filters,
+    req: { query, kinds, limit, filters, order },
   });
   return res.id === latestId ? res : null;
 }

@@ -104,6 +104,17 @@ pub struct Hit {
     pub score: i32,
     /// How many of the query's tokens this entry actually contains.
     pub matched: u16,
+    /// What the ordering actually compares.
+    ///
+    /// Separate from `score` because the two answer different questions:
+    /// `score` is how well the entry matches and is shown to the user, while
+    /// this is whatever the chosen order ranks by — the score in the usual
+    /// case, the modification time when the user asked for newest first.
+    ///
+    /// Keeping it a field rather than a branch inside `cmp` matters: the
+    /// comparison runs inside the top-K heap for every candidate in a 360 000
+    /// entry index, and it must stay a single integer compare.
+    pub key: i64,
 }
 
 // Ordered so a `BinaryHeap<Reverse<Hit>>` keeps the *worst* hit at the top and
@@ -111,8 +122,8 @@ pub struct Hit {
 // what makes results reproducible across runs and across thread counts.
 impl Ord for Hit {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score
-            .cmp(&other.score)
+        self.key
+            .cmp(&other.key)
             .then_with(|| other.index.cmp(&self.index))
     }
 }
@@ -123,9 +134,29 @@ impl PartialOrd for Hit {
     }
 }
 
+/// What the result list is ordered by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Order {
+    /// How well each entry matches the query.
+    #[default]
+    Relevance,
+    /// Most recently modified first.
+    ///
+    /// Not a re-sort of the relevant results — the top-K selection itself
+    /// ranks by time. Sorting afterwards would show the newest *among the five
+    /// thousand most relevant*, which for a broad query is not the newest at
+    /// all.
+    Newest,
+}
+
 #[derive(Debug, Clone)]
 pub struct SearchOptions {
     pub limit: usize,
+    pub order: Order,
+    /// Unix seconds. Only entries modified at or after this are kept; `0`
+    /// disables the filter.
+    pub modified_after: i64,
     /// Restrict to these kinds. Empty means no restriction.
     pub kinds: Vec<MediaKind>,
     /// Shortest side, in pixels. `0` disables the filter.
@@ -144,6 +175,8 @@ impl Default for SearchOptions {
     fn default() -> Self {
         Self {
             limit: 5_000,
+            order: Order::default(),
+            modified_after: 0,
             kinds: Vec::new(),
             min_height: 0,
             min_duration_ms: 0,
@@ -307,6 +340,7 @@ fn run_pass(
     let finders: Vec<Finder> = tokens.iter().map(|t| Finder::new(t.as_bytes())).collect();
     let kinds = index.kinds();
     let dir_ids = index.dir_ids();
+    let mtimes = index.mtimes();
 
     // Score every directory once, up front.
     //
@@ -346,6 +380,14 @@ fn run_pass(
                 if !opts.kinds.is_empty() && !opts.kinds.contains(&kinds[i]) {
                     continue;
                 }
+                // Before the text match, like the other cheap rejections: an
+                // integer comparison costs nothing next to running the
+                // substring finders.
+                if opts.modified_after != 0
+                    && mtimes.get(i).copied().unwrap_or(0) < opts.modified_after
+                {
+                    continue;
+                }
                 // Checked before the text match: rejecting on a cheap integer
                 // comparison avoids running the substring finders at all.
                 if check_props && !opts.accepts(props.get(i).unwrap_or(&EMPTY_PROPS)) {
@@ -357,14 +399,19 @@ fn run_pass(
                 else {
                     continue;
                 };
+                // Token count dominates so a file matching more of the query
+                // always wins. In the strict pass every hit matched every
+                // token, so this is a constant offset there and leaves the
+                // ordering untouched.
+                let score = matched as i32 * MATCHED_TOKEN_WEIGHT + score;
                 let hit = Hit {
                     index: i as u32,
-                    // Token count dominates so a file matching more of the
-                    // query always wins. In the strict pass every hit matched
-                    // every token, so this is a constant offset there and
-                    // leaves the ordering untouched.
-                    score: matched as i32 * MATCHED_TOKEN_WEIGHT + score,
+                    score,
                     matched,
+                    key: match opts.order {
+                        Order::Relevance => score as i64,
+                        Order::Newest => mtimes.get(i).copied().unwrap_or(0),
+                    },
                 };
                 if heap.len() < opts.limit {
                     heap.push(Reverse(hit));
@@ -510,6 +557,132 @@ fn length_bonus(len: usize) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A library where the best match is the oldest file, so ordering by time
+    /// and ordering by relevance disagree — which is the only way to tell that
+    /// the order is being honoured at all.
+    fn dated_library() -> Index {
+        let mut b = IndexBuilder::new();
+        let d = b.add_dir(r"D:\Phim", 10);
+        b.add_file("holiday.mp4", MediaKind::Video, d, 1); // khớp hoàn hảo, cũ nhất
+        b.add_file("holiday backup 2019.mp4", MediaKind::Video, d, 2);
+        b.add_file("my holiday clips edited.mp4", MediaKind::Video, d, 3); // mới nhất
+        let mut ix = b.finish();
+        // 2020-01-01, 2023-01-01, 2026-01-01
+        ix.set_file_stats(
+            vec![10, 20, 30],
+            vec![1_577_836_800, 1_672_531_200, 1_767_225_600],
+        );
+        ix
+    }
+
+    fn names_in_order(ix: &Index, opts: &SearchOptions, query: &str) -> Vec<String> {
+        let cancel = AtomicU64::new(0);
+        search(ix, query, opts, &[], &cancel, 0)
+            .hits
+            .into_iter()
+            .map(|h| ix.name(h.index as usize).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn relevance_order_puts_the_best_match_first() {
+        let ix = dated_library();
+        let got = names_in_order(&ix, &SearchOptions::default(), "holiday");
+        assert_eq!(got[0], "holiday.mp4", "{got:?}");
+    }
+
+    #[test]
+    fn newest_order_puts_the_most_recent_first_even_when_it_matches_worst() {
+        // The whole point: the best match is also the oldest file here, so a
+        // list that still starts with `holiday.mp4` would mean the order was
+        // ignored — and with a real library that would be invisible, because
+        // relevance and recency usually agree enough to look right.
+        let ix = dated_library();
+        let opts = SearchOptions {
+            order: Order::Newest,
+            ..Default::default()
+        };
+        let got = names_in_order(&ix, &opts, "holiday");
+        assert_eq!(
+            got,
+            vec![
+                "my holiday clips edited.mp4".to_string(),
+                "holiday backup 2019.mp4".to_string(),
+                "holiday.mp4".to_string(),
+            ],
+            "phải xếp theo thời gian giảm dần"
+        );
+    }
+
+    #[test]
+    fn newest_order_still_ranks_by_time_when_the_limit_cuts_the_list() {
+        // The reason the order is applied inside the top-K selection rather
+        // than as a final sort: with a limit of one, sorting afterwards would
+        // return the most *relevant* entry and call it the newest.
+        let ix = dated_library();
+        let opts = SearchOptions {
+            order: Order::Newest,
+            limit: 1,
+            ..Default::default()
+        };
+        let got = names_in_order(&ix, &opts, "holiday");
+        assert_eq!(got, vec!["my holiday clips edited.mp4".to_string()]);
+    }
+
+    #[test]
+    fn the_recency_filter_keeps_only_what_falls_inside_the_window() {
+        let ix = dated_library();
+        let opts = SearchOptions {
+            // Anything modified after 2022.
+            modified_after: 1_640_995_200,
+            ..Default::default()
+        };
+        let mut got = names_in_order(&ix, &opts, "holiday");
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "holiday backup 2019.mp4".to_string(),
+                "my holiday clips edited.mp4".to_string(),
+            ],
+            "tệp năm 2020 phải bị loại dù tên khớp hoàn hảo"
+        );
+    }
+
+    #[test]
+    fn the_recency_filter_and_the_order_are_independent() {
+        // Filtering by time while ordering by relevance is a real combination:
+        // "the best match among this week's files".
+        let ix = dated_library();
+        let opts = SearchOptions {
+            order: Order::Relevance,
+            modified_after: 1_640_995_200,
+            ..Default::default()
+        };
+        let got = names_in_order(&ix, &opts, "holiday");
+        assert_eq!(got[0], "holiday backup 2019.mp4", "{got:?}");
+    }
+
+    #[test]
+    fn an_entry_with_no_known_time_never_outranks_one_that_has_one() {
+        // Network entries carry no modification time until the walk fills it
+        // in, and a missing value must not read as "the beginning of time is
+        // the newest thing here".
+        let mut b = IndexBuilder::new();
+        let d = b.add_dir(r"D:\Phim", 10);
+        b.add_file("holiday khong ro.mp4", MediaKind::Video, d, 1);
+        b.add_file("holiday co ngay.mp4", MediaKind::Video, d, 2);
+        let mut ix = b.finish();
+        ix.set_file_stats(vec![10, 20], vec![0, 1_767_225_600]);
+
+        let opts = SearchOptions {
+            order: Order::Newest,
+            ..Default::default()
+        };
+        let got = names_in_order(&ix, &opts, "holiday");
+        assert_eq!(got[0], "holiday co ngay.mp4", "{got:?}");
+    }
     use crate::index::model::IndexBuilder;
 
     fn build(names: &[&str]) -> Index {

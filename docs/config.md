@@ -217,7 +217,7 @@ trong đó assert đúng từng chuỗi tiếng Việt, nên nếu định dạn
 
 ## CONF-006 🟡 — Crate `drag` kéo theo `windows` 0.52 bên cạnh 0.61 của dự án
 
-**Giai đoạn:** P12 · **Trạng thái:** ĐÃ ĐO, CHẤP NHẬN · **Ngày:** 2026-08-25
+**Giai đoạn:** P12 → P13 · **Trạng thái:** ĐÃ ĐẢO NGƯỢC — bỏ crate · **Ngày:** 2026-08-25
 
 **Tình huống.** Thêm `drag = "2"` để kéo tệp ra ngoài. Nó phụ thuộc `windows` 0.52, trong khi dự án
 và Tauri dùng 0.61:
@@ -252,3 +252,36 @@ CrabNebula viết — cùng nhóm làm Tauri — nên nó theo sát vòng đời
 
 **Việc cần làm khi nâng cấp:** nếu `drag` ra bản dùng `windows` 0.61 thì nâng, và đo lại hai con
 số trên.
+
+### Đảo ngược ở P13: đã bỏ crate
+
+Quyết định trên **sai**, và sai vì cân nhầm thứ cần cân.
+
+Crate làm **tắt phăng ứng dụng** khi kéo bất kỳ tệp nào trên ổ mạng — [BUG-020](./bug.md#bug-020).
+Không phải lỗi hiếm gặp: 87% thư viện của người dùng nằm trên NAS.
+
+Khi mổ crate ra để tìm nguyên nhân thì lộ ra ước lượng "khoảng ba trăm dòng COM `unsafe`" ở trên là
+**sai hẳn một bậc**. Tôi tưởng phải tự cài `IDataObject`, tự cấp phát `HGLOBAL`, tự xếp `DROPFILES`.
+Không cần: `SHCreateShellItemArrayFromIDLists` + `BindToHandler(BHID_DataObject)` cho ra một
+`IDataObject` đầy đủ **do chính shell dựng**. Phần phải tự viết chỉ còn `IDropSource` — ba phương
+thức, mỗi cái vài dòng.
+
+**Đã đo lại sau khi bỏ:**
+
+| | Có crate | Bỏ crate, tự viết |
+|---|---|---|
+| Kích thước exe release | 10,15 MB | **10,14 MB** |
+| Số bản `windows` trong graph | 0.52 **và** 0.61 | **chỉ 0.61** |
+| `cargo tree --duplicates` (dòng `windows`) | 2 | **0** |
+| Số dòng phải tự bảo trì | 0 | **~60** (`ipc/drag_source.rs`, phần mã thật) |
+
+Cả hai lý do nêu ở trên để giữ crate đều tan: 456 KB không còn, và ba trăm dòng `unsafe` hoá ra là
+sáu mươi.
+
+**Bài học cho lần sau.** Khi cân "dùng crate hay tự viết", hai câu hỏi tôi bỏ sót:
+
+1. **Crate chạy ở đâu?** Code trong window procedure không unwind được, nên một `.unwrap()` ở đó
+   không mất một thao tác mà mất cả tiến trình. Cùng dòng code ấy ở luồng thường thì hoàn toàn khác.
+2. **Phần tự viết thật sự là bao nhiêu?** Tôi ước lượng bằng cách nhìn *toàn bộ* crate, trong khi
+   thứ cần là phần *mình dùng*. Crate còn làm ảnh kéo, kéo dữ liệu ngoài tệp, hỗ trợ đa nền tảng —
+   không dùng đến thứ nào.

@@ -34,6 +34,7 @@
     type DupeProgress,
     type EnrichStatus,
     type Filters,
+    type Order,
     type HotkeyStatus,
     type RelaxedInfo,
     type ScanProgress,
@@ -118,12 +119,77 @@
     return out;
   });
 
+  const RECENCY: { label: string; days: number }[] = [
+    { label: "7 ngày", days: 7 },
+    { label: "30 ngày", days: 30 },
+    { label: "1 năm", days: 365 },
+  ];
+  let recencyChoice = $state(-1);
+
+  let order = $state<Order>("relevance");
+
   const filters = $derived<Filters>({
     minHeight,
     minDurationMs: durationChoice >= 0 ? DURATIONS[durationChoice].min : 0,
     maxDurationMs: durationChoice >= 0 ? DURATIONS[durationChoice].max : 0,
+    withinDays: recencyChoice >= 0 ? RECENCY[recencyChoice].days : 0,
   });
-  const filtersActive = $derived(minHeight > 0 || durationChoice >= 0);
+  const filtersActive = $derived(
+    minHeight > 0 || durationChoice >= 0 || recencyChoice >= 0,
+  );
+
+  /// Rows the user has picked out, by position in `hits`.
+  ///
+  /// Kept beside `selected` rather than replacing it: `selected` is where the
+  /// keyboard is, and the set is what a command acts on. Every list in Windows
+  /// works that way, and collapsing the two would make Shift-click impossible
+  /// to express.
+  let selection = $state<Set<number>>(new Set([0]));
+  /// Where a Shift-click measures from.
+  let anchor = $state(0);
+
+  function selectOnly(i: number) {
+    selected = i;
+    anchor = i;
+    selection = new Set([i]);
+  }
+
+  function onRowClick(e: MouseEvent, i: number) {
+    if (e.shiftKey) {
+      const [lo, hi] = anchor <= i ? [anchor, i] : [i, anchor];
+      const next = new Set<number>();
+      for (let n = lo; n <= hi; n++) next.add(n);
+      selection = next;
+      selected = i;
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      const next = new Set(selection);
+      // Toggling off the last one would leave nothing selected and nothing to
+      // drag, so the final row stays.
+      if (next.has(i) && next.size > 1) next.delete(i);
+      else next.add(i);
+      selection = next;
+      selected = i;
+      anchor = i;
+      return;
+    }
+    selectOnly(i);
+  }
+
+  /// The files a command should act on: the picked set if the row is part of
+  /// it, otherwise just the row itself.
+  ///
+  /// Dragging a row that is *not* in the selection has to mean that row alone
+  /// — otherwise a stray click somewhere else would silently drag files the
+  /// user is not even looking at.
+  function targetsFor(i: number): string[] {
+    const set = selection.has(i) ? [...selection] : [i];
+    return set
+      .sort((a, b) => a - b)
+      .map((n) => hits[n]?.path)
+      .filter((p): p is string => !!p);
+  }
 
   let inputEl: HTMLInputElement | undefined = $state();
   let listRef = $state<ReturnType<typeof VirtualList> | undefined>();
@@ -224,10 +290,11 @@
   /// the cursor stuck and nothing dropped. What replaces it is a native drag
   /// carrying the shell's own file format, which is the only thing CapCut or
   /// an upload field will accept.
-  function onDragStart(e: DragEvent, hit: SearchHit) {
+  function onDragStart(e: DragEvent, i: number) {
     e.preventDefault();
-    selected = hits.indexOf(hit);
-    startFileDrag([hit.path]).catch((err) => (error = String(err)));
+    const paths = targetsFor(i);
+    if (!selection.has(i)) selectOnly(i);
+    startFileDrag(paths).catch((err) => (error = String(err)));
   }
 
   function startPolling() {
@@ -290,6 +357,7 @@
   function clearFilters() {
     minHeight = 0;
     durationChoice = -1;
+    recencyChoice = -1;
     runSearch();
   }
 
@@ -356,7 +424,7 @@
       return;
     }
     searching = true;
-    searchFiles(q, activeKinds, filters)
+    searchFiles(q, activeKinds, filters, 5000, order)
       .then((res) => {
         // `null` means a newer keystroke already superseded this one.
         if (!res) return;
@@ -364,7 +432,7 @@
         epoch = res.epoch;
         relaxed = res.relaxed;
         elapsedMs = res.elapsedMs;
-        selected = 0;
+        selectOnly(0);
         listRef?.scrollToTop();
       })
       .catch((e) => (error = String(e)))
@@ -410,11 +478,24 @@
     menu = { x: e.clientX, y: e.clientY, hit: hits[i] };
   }
 
-  function move(delta: number) {
+  function move(step: number, extend = false) {
     if (!hits.length) return;
-    selected = Math.max(0, Math.min(hits.length - 1, selected + delta));
-    listRef?.scrollToIndex(selected);
+    const next = Math.max(0, Math.min(hits.length - 1, selected + step));
+    selected = next;
+    if (extend) {
+      // Shift + mũi tên mở rộng dải tính từ chỗ neo, giống mọi danh sách khác
+      // của Windows — không phải là thêm từng dòng một vào tập đang có.
+      const [lo, hi] = anchor <= next ? [anchor, next] : [next, anchor];
+      const set = new Set<number>();
+      for (let n = lo; n <= hi; n++) set.add(n);
+      selection = set;
+    } else {
+      anchor = next;
+      selection = new Set([next]);
+    }
+    listRef?.scrollToIndex(next);
   }
+
 
   function onKeydown(e: KeyboardEvent) {
     // While the context menu is up it owns the keyboard. Both components listen
@@ -426,11 +507,11 @@
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        move(columns);
+        move(columns, e.shiftKey);
         break;
       case "ArrowUp":
         e.preventDefault();
-        move(-columns);
+        move(-columns, e.shiftKey);
         break;
       case "ArrowRight":
         if (grid) {
@@ -533,6 +614,21 @@
         onclick={() => (showFilters = !showFilters)}
         title="Lọc theo độ phân giải và thời lượng"
       >Lọc{filtersActive ? " ●" : ""}</button>
+      <!--
+        Sắp xếp là một nút bật/tắt chứ không phải hộp chọn: chỉ có hai cách sắp
+        và cách thứ hai trả lời đúng một câu hỏi — "tôi vừa tải gì về".
+      -->
+      <button
+        class="chip"
+        class:on={order === "newest"}
+        onclick={() => {
+          order = order === "newest" ? "relevance" : "newest";
+          if (query.trim()) runSearch();
+        }}
+        title={order === "newest"
+          ? "Đang xếp theo thời gian sửa đổi — bấm để quay về xếp theo mức độ khớp"
+          : "Xếp mới nhất lên đầu"}
+      >{order === "newest" ? "Mới nhất" : "Liên quan"}</button>
       <button
         class="chip"
         class:on={dupeMode}
@@ -581,6 +677,19 @@
           class:on={durationChoice === i}
           onclick={() => setDuration(i)}
         >{d.label}</button>
+      {/each}
+
+      <span class="fsep"></span>
+      <span class="flabel">Sửa đổi trong</span>
+      {#each RECENCY as r, i (r.days)}
+        <button
+          class="chip small"
+          class:on={recencyChoice === i}
+          onclick={() => {
+            recencyChoice = recencyChoice === i ? -1 : i;
+            if (query.trim()) runSearch();
+          }}
+        >{r.label}</button>
       {/each}
 
       {#if filtersActive}
@@ -728,16 +837,17 @@
         {#snippet row(hit: SearchHit, i: number)}
           <div
             class="row"
-            class:sel={i === selected}
+            class:sel={selection.has(i)}
+            class:focused={i === selected}
             role="option"
-            aria-selected={i === selected}
+            aria-selected={selection.has(i)}
             tabindex="-1"
-            onclick={() => (selected = i)}
+            onclick={(e) => onRowClick(e, i)}
             ondblclick={() => open(hit)}
             oncontextmenu={(e) => onContextMenu(e, i)}
             onkeydown={() => {}}
             draggable="true"
-            ondragstart={(e) => onDragStart(e, hit)}
+            ondragstart={(e) => onDragStart(e, i)}
           >
             <!--
               `loading="lazy"` matters even here: the virtualiser keeps a few
@@ -1096,6 +1206,13 @@
   }
   .row:hover { background: #262a33; }
   .row.sel { background: #2f3a4f; }
+  /* Trong một dải nhiều dòng, "đang chọn" và "con trỏ bàn phím đang ở đâu" là
+     hai thứ khác nhau: nền cho cái thứ nhất, viền cho cái thứ hai. Dùng chung
+     một dấu hiệu thì Shift+mũi tên trở nên không đọc được. */
+  .row.focused {
+    outline: 1px solid #4c8dff;
+    outline-offset: -1px;
+  }
 
   .thumb {
     flex: 0 0 auto;

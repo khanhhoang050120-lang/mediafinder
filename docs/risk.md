@@ -217,3 +217,28 @@ của việc sửa thì không.
 **Việc cần làm khi nâng cấp Tauri:** đọc lại `Section Uninstall` trong `installer.nsi` mới sinh và
 kiểm tra `RMDir` có mọc thêm `/r` không. Nếu có thì phải chuyển cache sang thư mục khác trước khi
 phát hành.
+
+## RISK-005 ⚪ — Thao tác kéo thỉnh thoảng không khởi động, chưa rõ nguyên nhân
+
+**Giai đoạn:** P13 · **Trạng thái:** ĐANG THEO DÕI · **Ngày:** 2026-08-25
+
+**Hiện tượng.** Trong lượt test P13, hai lần kéo không mang được gì sang cửa sổ nhận thả. Không
+sập, không bảng lỗi, không dòng log nào. Sau khi dựng lại và cài lại, **đúng ca đó chạy đúng 5 lần
+liên tiếp**. Tỉ lệ quan sát được: **2 hỏng / ~12 lần kéo**.
+
+**Điều đã xác định được.** Nhật ký cho thấy `start_file_drag` **chưa từng được gọi** trong hai lần
+đó. Nên lỗi nằm ở phía cửa sổ — sự kiện `dragstart` không nổ — chứ **không** ở tầng shell. Tầng
+shell đã được loại trừ bằng bốn phép đo riêng, ghi ở [test-log](./test-log.md).
+
+**Điều chưa xác định được.** Vì sao `dragstart` không nổ. Bốn giả thuyết đã bị bác bỏ bằng đo đạc:
+đường dẫn mạng, tập trộn nhiều ổ, thời gian dựng data object, và chuyển hướng stdout/stderr.
+
+**Vì sao để ở mức ⚪ chứ không nâng lên bug.** Cả hai lần đều dùng **chuột tổng hợp**
+(`SetCursorPos` + `mouse_event`), và Chromium có ngưỡng khoảng cách/thời gian riêng để quyết định
+một cử chỉ là kéo hay là click. Nhiều khả năng đây là giới hạn của cách test chứ không phải của
+ứng dụng — nhưng **tôi chưa chứng minh được**, nên không đóng.
+
+**Cách theo dõi.** Người dùng gặp lần nào "kéo mà không ra tệp" thì ghi lại vào
+[test-log](./test-log.md): kéo từ hàng nào, đang chọn mấy hàng, đích thả là gì. Nếu xuất hiện với
+chuột thật thì nâng thành bug và thêm log ở `onDragStart` phía giao diện để biết sự kiện có nổ hay
+không.
