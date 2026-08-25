@@ -14,6 +14,23 @@ fn main() {
     //                                 against a real volume rather than only
     //                                 against hand-built records
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Run by the uninstaller: take the Startup shortcut and the scheduled task
+    // with us. Leaving a task that launches a program which no longer exists is
+    // the kind of litter that outlives the app on someone else's machine.
+    if args.iter().any(|a| a == "--remove-setup") {
+        // `--quiet` comes from a silent uninstall, where nobody is there to
+        // answer a permission dialog.
+        let may_prompt = !args.iter().any(|a| a == "--quiet");
+        mediafinder::setup::remove_setup(may_prompt);
+        return;
+    }
+
+    // The elevated half of the above: nothing but the task deletion.
+    if args.iter().any(|a| a == "--remove-task") {
+        mediafinder::setup::remove_task_only();
+        return;
+    }
+
     if args.iter().any(|a| a == "--index") {
         mediafinder::run_indexer();
     } else if args.iter().any(|a| a == "--watch") {

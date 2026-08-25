@@ -971,6 +971,89 @@ và kết quả còn tốt hơn dự tính: nhiều tệp xem trước được 
 
 ---
 
+## P15 — Đóng gói để phát hành cho 20–40 máy 🟡
+
+**Người dùng yêu cầu:** đóng gói lại toàn bộ để phát cho khoảng 20–40 người, và **test thật kỹ từng
+bước** để sang máy khác vẫn chạy ổn.
+
+**Ba câu hỏi đã chốt trước khi làm:** người dùng đều là Administrator máy mình · chấp nhận cảnh báo
+SmartScreen thay vì mua chứng chỉ · máy họ **có** dùng chung NAS.
+
+### Rà soát trước, phá sau
+
+Rà soát tìm ra bốn thứ chỉ đúng trên máy này, tất cả trước khi chạy phép thử nào:
+
+| # | Vấn đề | Vì sao chỉ lộ ra khi phát hành |
+|---|---|---|
+| 1 | **Bộ cài không thiết lập gì cả** | Lối tắt tự khởi động và tác vụ định kỳ trên máy gốc là do tôi tạo tay bằng PowerShell. Máy mới: không tự khởi động, và "Quét lại" hỏi UAC **mỗi lần bấm** |
+| 2 | **WebView2 chưa cấu hình** | Mặc định tải bootstrapper lúc cài → máy thiếu WebView2 mà không có mạng thì ra ứng dụng mở lên trắng, không báo gì |
+| 3 | **Không tên nhà phát hành, không mô tả** | Mục trong Apps & features ghi `mediafinder` viết thường, không có gì để nhận diện |
+| 4 | **Màn hình lần đầu trông như phần mềm hỏng** | Giữa màn hình ghi *"Không tìm thấy kết quả nào"*; lý do thật nằm ở một dòng xám nhỏ dưới đáy |
+
+Điểm 4 chỉ thấy được bằng cách **mô phỏng máy chưa từng chạy**: cất chỉ mục đi rồi mở lên xem người
+lạ thấy gì.
+
+### Một lần UAC cho tất cả
+
+Thiết kế xoay quanh một ràng buộc cứng: đọc bảng tệp NTFS **bắt buộc** có quyền Administrator
+([CHECK-004](docs/check.md#check-004)), và đăng ký tác vụ với `HighestAvailable` cũng vậy — đã đo
+lại: `schtasks /Create` không elevate trả về `Access is denied`.
+
+Nên không có cách nào tránh được một lần xin quyền. Nhưng có cách để **chỉ tốn đúng một lần**:
+
+- **Tác vụ định kỳ** do chính tiến trình quét tạo ra — tiến trình đó vốn đã elevate vì người dùng
+  vừa bấm "Quét lần đầu". Không tốn thêm hộp thoại nào.
+- **Lối tắt tự khởi động** không cần quyền gì: một tệp trong hồ sơ người dùng. Giao diện tự ghi.
+
+Sau lần đó tác vụ mang quyền, nên "Quét lại" vĩnh viễn không hỏi nữa.
+
+Cả hai đều **kiểm tra trước khi tạo**: ai xoá lối tắt vì không muốn chạy lúc đăng nhập, hoặc sửa
+tác vụ sang giờ khác, thì giữ được lựa chọn đó.
+
+### Gỡ cài đặt phải dọn sạch
+
+Đo thật: gỡ xong thì thư mục cài, chỉ mục 45 MB, lối tắt và mục trong Apps & features **đều biến
+mất**. Riêng tác vụ định kỳ **còn sót** vì xoá nó cần quyền Administrator.
+
+Trên một máy thì bỏ qua được. Trên bốn mươi máy đó là bốn mươi tác vụ chạy mỗi ngày để khởi động
+một chương trình không còn tồn tại. Nên bộ gỡ nay **tự xin quyền đúng cho việc đó** — từ chối cũng
+không sao, việc gỡ vẫn tiếp tục và hướng dẫn có nêu câu lệnh dọn nốt.
+
+Gỡ im lặng thì truyền `--quiet` và bỏ qua bước xin quyền: một hộp thoại không ai bấm sẽ treo cả
+tiến trình gỡ.
+
+### Bộ cài 208 MB, và vì sao chấp nhận
+
+Nhúng hẳn bộ cài WebView2 vào (`offlineInstaller`) làm bộ cài phình từ **2,4 MB lên 208 MB**.
+
+Đổi lại: cài được ở mọi nơi, kể cả máy vừa cài lại Windows và không có mạng. Kiểu hỏng mà nó loại
+bỏ là kiểu tệ nhất — ứng dụng mở lên không thấy gì và **không có thông báo nào giải thích**. Với
+một đội chuyển hàng gigabyte footage mỗi ngày thì 208 MB chuyển một lần không phải vấn đề.
+
+Đổi lại được nếu muốn: `embedBootstrapper` cho bộ cài ~4 MB nhưng cần mạng trên máy thiếu WebView2.
+
+### Đã kiểm chứng
+
+| # | Nội dung | Kết quả |
+|---|---|---|
+| 1 | Không còn đường dẫn cứng của máy gốc trong mã chạy thật | ✅ chỉ có trong test |
+| 2 | Nâng cấp 0.1.0 → 1.0.0 | ✅ một mục duy nhất trong Apps, đúng tên nhà phát hành |
+| 3 | Ứng dụng tự tạo lối tắt tự khởi động | ✅ đúng đích, đúng `--minimized`, có mô tả |
+| 4 | Màn hình lần đầu | ✅ nói rõ cần gì, mất bao lâu, và tự phát hiện 4 ổ mạng |
+| 5 | Gỡ cài đặt dọn sạch | ✅ 3/4 tự động; tác vụ định kỳ nay có bước xin quyền riêng |
+| 6 | Windows Defender | ✅ không bị báo là mối đe doạ |
+| 7 | **Phần mềm có gửi gì ra ngoài không** | ✅ **0** gói mạng trong toàn bộ cây phụ thuộc, 0 lời gọi HTTP trong mã |
+| 8 | Vòng kiểm tra | ✅ **206 test**, sạch cả bốn |
+
+### Còn một phép thử cần người bấm
+
+Đường "máy chưa có tác vụ → bấm Quét lần đầu → UAC → tiến trình quét tự tạo tác vụ" **không thể tự
+kiểm chứng**: nó cần một cú bấm vào hộp thoại UAC, và cố lách hộp thoại đó là chuyện không nên làm.
+Đây cũng chính xác là thứ người dùng mới sẽ gặp, nên nó phải được thử bằng tay đúng một lần trước
+khi phát hành.
+
+---
+
 ## BT — Bảo trì sau phát hành 🟢
 
 Không phải một giai đoạn có điểm kết thúc. Quy tắc số 5 vẫn nguyên hiệu lực: **mọi vấn đề gặp trong

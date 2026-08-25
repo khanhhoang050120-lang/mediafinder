@@ -13,6 +13,7 @@ pub mod index;
 pub mod ipc;
 pub mod media;
 pub mod ntfs;
+pub mod setup;
 pub mod state;
 pub mod walk;
 
@@ -81,6 +82,11 @@ pub fn run_gui() {
                     let _ = window.set_focus();
                 }
             }
+
+            // Needs no privilege: a file in the user's own profile. Checked
+            // rather than rewritten, so someone who deletes it keeps that
+            // decision.
+            setup::ensure_startup_shortcut();
 
             register_hotkey(app.handle());
             watch_cache(app.handle());
@@ -1206,6 +1212,15 @@ pub fn run_indexer() {
     let dry_run = std::env::args().any(|a| a == "--dry-run");
     let full = std::env::args().any(|a| a == "--full");
     tracing::info!(dry_run, full, "indexer starting");
+
+    // This process is elevated — the user approved that for the scan they asked
+    // for. Registering the refresh task here means it costs no second prompt,
+    // and after this the task carries the privilege so nothing prompts again.
+    //
+    // `--dry-run` is a developer path and must not touch the machine.
+    if !dry_run {
+        setup::ensure_scheduled_task();
+    }
 
     // Try the journal first. It answers in well under a second when it can,
     // and a full scan is 38 — but it cannot always answer, so this is an

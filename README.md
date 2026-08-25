@@ -88,7 +88,7 @@ Unregister-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc' -Confirm:$fa
 Bốn lệnh, chạy trước mỗi lần commit:
 
 ```bash
-cd src-tauri && cargo test            # 186 test
+cd src-tauri && cargo test            # 206 test
 cd src-tauri && cargo clippy --all-targets
 cd src-tauri && cargo fmt --check     # phải im lặng
 npm run check                         # type-check frontend
