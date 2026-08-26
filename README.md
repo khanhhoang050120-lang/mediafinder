@@ -95,8 +95,12 @@ git push origin edit
 ```
 
 Mỗi lần đẩy lên `edit`, GitHub tự chạy `.github/workflows/check.yml`: type-check
-frontend, `cargo fmt --check`, clippy, và toàn bộ test — khoảng 10 phút. Nó
-**không** đóng gói bộ cài, nên nhanh hơn hẳn lúc phát hành.
+frontend, `cargo fmt --check`, clippy, và toàn bộ test. Nó **không** đóng gói bộ
+cài — việc đó chỉ xảy ra lúc phát hành.
+
+Lần chạy đầu trên một nhánh mới mất khoảng **19 phút** vì cache trống; clippy và
+test mỗi bên tự biên dịch lại từ đầu (clippy dùng cờ riêng nên không dùng chung
+được artifact với `cargo test`). Những lần sau nhanh hơn nhiều nhờ cache.
 
 Khi `edit` chạy ổn, mở **Pull Request** từ `edit` sang `master` trên GitHub. PR
 hiện luôn kết quả kiểm tra; xanh thì bấm Merge. Sau khi gộp xong mới gắn tag
@@ -112,7 +116,7 @@ rồi đăng lên GitHub Releases dưới dạng **draft**. Người dùng tải
 `https://github.com/khanhhoang050120-lang/mediafinder/releases/latest` — địa chỉ này cũng nằm trong
 [HUONG-DAN-CAI-DAT.md](./HUONG-DAN-CAI-DAT.md).
 
-**Version phải khớp ở bốn chỗ.** Tauri lấy số từ `tauri.conf.json` để đặt tên bộ cài; ba chỗ
+**Version phải khớp ở năm chỗ.** Tauri lấy số từ `tauri.conf.json` để đặt tên bộ cài; những chỗ
 còn lại phải theo, nếu không `npm ci` sẽ fail trên CI và tên file sẽ nói sai phiên bản:
 
 | File | Ghi chú |
@@ -120,14 +124,18 @@ còn lại phải theo, nếu không `npm ci` sẽ fail trên CI và tên file s
 | `src-tauri/tauri.conf.json` | **nguồn sự thật** — Tauri đọc file này |
 | `package.json` | `npm ci` đối chiếu với lock file |
 | `package-lock.json` | hai chỗ: key `version` ở gốc và trong `packages[""]` |
-| `src-tauri/Cargo.toml` | và dòng `version` của crate `mediafinder` trong `Cargo.lock` |
+| `src-tauri/Cargo.toml` | |
+| `src-tauri/Cargo.lock` | dòng `version` ngay dưới `name = "mediafinder"` |
 
 Các bước:
 
 ```bash
-# 1. sua version o bon file tren cho khop nhau
-# 2. kiem tra tai cho — dung ba lenh CI se chay
-npm ci && npm run check && cargo test --manifest-path src-tauri/Cargo.toml
+# 1. sua version o nam cho tren cho khop nhau
+# 2. kiem tra tai cho — dung nhung lenh CI se chay
+npm ci && npm run check \
+  && cargo fmt --manifest-path src-tauri/Cargo.toml --check \
+  && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets \
+  && cargo test --manifest-path src-tauri/Cargo.toml
 
 # 3. commit va gan tag
 git commit -am "v1.0.1"
@@ -153,7 +161,7 @@ Phần mềm **không tự kiểm tra cập nhật**: không có `tauri-plugin-u
 Bốn lệnh, chạy trước mỗi lần commit:
 
 ```bash
-cd src-tauri && cargo test            # 206 test
+cd src-tauri && cargo test            # 212 test
 cd src-tauri && cargo clippy --all-targets
 cd src-tauri && cargo fmt --check     # phải im lặng
 npm run check                         # type-check frontend
