@@ -83,6 +83,28 @@ Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'MediaFinder.ln
 Unregister-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc' -Confirm:$false
 ```
 
+## Quy trình làm việc
+
+Nhánh `master` giữ mã đã ổn định — nó là nơi bộ cài được phát hành ra. Mọi
+việc dở dang (thêm tính năng, sửa lỗi, thử nghiệm) diễn ra trên nhánh `edit`.
+
+```bash
+git checkout edit
+# ... sửa code, commit ...
+git push origin edit
+```
+
+Mỗi lần đẩy lên `edit`, GitHub tự chạy `.github/workflows/check.yml`: type-check
+frontend, `cargo fmt --check`, clippy, và toàn bộ test — khoảng 10 phút. Nó
+**không** đóng gói bộ cài, nên nhanh hơn hẳn lúc phát hành.
+
+Khi `edit` chạy ổn, mở **Pull Request** từ `edit` sang `master` trên GitHub. PR
+hiện luôn kết quả kiểm tra; xanh thì bấm Merge. Sau khi gộp xong mới gắn tag
+để phát hành (xem mục dưới).
+
+Đẩy code lên `master` **không** kích hoạt build bộ cài — chỉ tag `v*` mới làm
+điều đó. Nên gộp PR xong vẫn chưa có gì phát hành cho tới khi bạn gắn tag.
+
 ## Phát hành bản mới
 
 Bộ cài được build bởi GitHub Actions (`.github/workflows/release.yml`) trên `windows-latest`,
@@ -113,7 +135,8 @@ git tag v1.0.1
 git push origin master --tags
 ```
 
-Đẩy tag lên là workflow chạy. Xong (khoảng 10–20 phút) vào tab **Releases**, kiểm tra
+Đẩy tag lên là workflow chạy — khoảng 8 phút khi cache còn nóng, 20–25 phút nếu
+phải build Rust từ đầu. Xong thì vào tab **Releases**, kiểm tra
 bản draft rồi bấm **Publish release** thì người dùng mới thấy.
 
 > Tag chỉ quyết định *thời điểm* workflow chạy; tên Release lấy từ `tauri.conf.json`.

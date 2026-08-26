@@ -1,0 +1,59 @@
+# Kiểm tra mã nguồn mỗi khi đẩy lên nhánh `edit` hoặc mở Pull Request.
+#
+# Đây là bốn lệnh trong "Vòng kiểm tra" của README, chạy trên máy sạch của
+# GitHub thay vì máy bạn. Nó KHÔNG đóng gói bộ cài — việc đó chỉ xảy ra khi
+# phát hành (xem release.yml), nên vòng này nhanh hơn nhiều.
+name: Kiểm tra
+
+on:
+  push:
+    branches:
+      - edit
+  # Chạy lại khi mở PR sang master, để biết nhánh có an toàn để gộp không.
+  pull_request:
+    branches:
+      - master
+
+# Đẩy commit mới lên khi lần chạy trước chưa xong thì huỷ lần cũ đi —
+# kết quả của commit đã bị thay thế không còn giá trị gì.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Cùng nền tảng với lúc phát hành: mã nguồn gọi thẳng Win32 API nên
+    # kiểm tra trên Linux sẽ không biên dịch được.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cài dependency frontend
+        run: npm ci
+
+      - name: Type-check frontend
+        run: npm run check
+
+      # Định dạng chạy trước vì nó nhanh nhất và hỏng thì sửa dễ nhất.
+      - name: Định dạng Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
