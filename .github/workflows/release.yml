@@ -86,3 +86,5 @@ jobs:
           # nếu muốn Release hiện ra công khai ngay khi build xong.
           releaseDraft: true
           prerelease: false
+
+# Đăng ký lại workflow với GitHub.
