@@ -24,11 +24,23 @@ lại Windows và **không có mạng** vẫn cài được.
 
 ---
 
-## Bước 1 — Chạy bộ cài
+## Bước 1 — Tải bộ cài
 
-Mở tệp **`MediaFinder_1.0.0_x64-setup.exe`**.
+Vào trang phát hành:
 
-## Bước 2 — Vượt qua cảnh báo của Windows
+**https://github.com/Padoma1/mediafinder/releases/latest**
+
+Trong mục **Assets**, bấm vào tệp có tên dạng **`MediaFinder_<phiên bản>_x64-setup.exe`**
+để tải về. Tệp khoảng 200 MB nên tuỳ mạng có thể mất vài phút.
+
+Trang này luôn là bản mới nhất. Muốn cập nhật về sau, quay lại đúng địa chỉ trên,
+tải bản mới rồi cài đè lên — không cần gỡ bản cũ, chỉ mục đã quét vẫn giữ nguyên.
+
+## Bước 2 — Chạy bộ cài
+
+Mở tệp vừa tải về.
+
+## Bước 3 — Vượt qua cảnh báo của Windows
 
 Windows sẽ hiện một màn hình xanh:
 
@@ -46,7 +58,7 @@ Cách qua:
 
 Nếu muốn tự kiểm tra trước cho yên tâm: chuột phải vào tệp cài → **Scan with Microsoft Defender**.
 
-## Bước 3 — Cài
+## Bước 4 — Cài
 
 Bộ cài chạy thẳng, không hỏi gì. Nó cài vào thư mục cá nhân của bạn nên **không hỏi quyền
 Administrator** ở bước này.
@@ -167,3 +179,6 @@ Không. MediaFinder **không kết nối mạng** để làm bất cứ việc g
 cập nhật, không tải gì về. Chỉ mục nằm trong thư mục cá nhân của bạn và không rời khỏi máy.
 
 Ổ mạng là ngoại lệ hiển nhiên duy nhất — và chỉ khi bạn tự bấm nút quét nó.
+
+Hệ quả: phần mềm **không tự báo khi có bản mới**. Muốn biết, bạn tự vào trang phát hành ở
+[Bước 1](#bước-1--tải-bộ-cài) xem — đây là cái giá của việc không cho phần mềm tự gọi ra ngoài.

@@ -1,0 +1,88 @@
+# Build bộ cài MediaFinder và đăng lên GitHub Releases.
+#
+# Cách phát hành một bản mới:
+#   1. Sửa version cho khớp nhau ở tất cả các chỗ sau:
+#        src-tauri/tauri.conf.json   <- nguồn sự thật, Tauri đọc file này
+#        package.json
+#        package-lock.json           <- hai chỗ; lệch là `npm ci` fail ngay
+#        src-tauri/Cargo.toml
+#        src-tauri/Cargo.lock        <- dòng version của crate `mediafinder`
+#   2. git commit
+#   3. git tag v1.0.1 && git push origin master --tags
+#
+# Đẩy tag lên là workflow tự chạy. Khoảng 10-20 phút sau, bản Release có sẵn
+# file .exe cho người dùng tải.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Cho phép bấm chạy tay từ tab Actions để thử build. Khi chạy tay, workflow
+  # CHỈ build rồi dừng — không tạo Release, không tạo tag (xem bước cuối).
+  workflow_dispatch:
+
+# tauri-action cần quyền này để tạo Release và đính kèm file vào đó.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Bắt buộc là Windows: MediaFinder gọi thẳng Win32 API và đóng gói bằng NSIS.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Rust build lâu nhất trong các bước; cache giúp lần chạy sau nhanh hơn nhiều.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cài dependency frontend
+        run: npm ci
+
+      # Chặn ngay tại đây nếu mã nguồn hỏng, thay vì để build chạy 15 phút rồi mới lỗi.
+      - name: Type-check frontend
+        run: npm run check
+
+      - name: Test backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # Chạy tay (workflow_dispatch): chỉ build để kiểm tra là mọi thứ biên dịch
+      # được. Không truyền tagName nên action không tạo Release và không tự gắn
+      # tag lên commit hiện tại.
+      - name: Build thử (chạy tay, không đăng Release)
+        if: github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Đẩy tag lên: build rồi tạo Release ở dạng draft.
+      - name: Build bộ cài và đăng Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # __VERSION__ được thay bằng version trong tauri.conf.json.
+          tagName: v__VERSION__
+          releaseName: MediaFinder v__VERSION__
+          releaseBody: |
+            Tải tệp `.exe` bên dưới rồi chạy để cài.
+
+            Windows sẽ hiện cảnh báo màu xanh "Windows protected your PC" vì phần
+            mềm chưa mua chứng chỉ ký số. Bấm **More info** rồi **Run anyway**.
+
+            Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ nguyên.
+          # Để nháp: bạn vào xem, thấy ổn thì tự bấm Publish. Đổi thành false
+          # nếu muốn Release hiện ra công khai ngay khi build xong.
+          releaseDraft: true
+          prerelease: false

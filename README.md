@@ -83,6 +83,48 @@ Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'MediaFinder.ln
 Unregister-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc' -Confirm:$false
 ```
 
+## Phát hành bản mới
+
+Bộ cài được build bởi GitHub Actions (`.github/workflows/release.yml`) trên `windows-latest`,
+rồi đăng lên GitHub Releases dưới dạng **draft**. Người dùng tải từ
+`https://github.com/Padoma1/mediafinder/releases/latest` — địa chỉ này cũng nằm trong
+[HUONG-DAN-CAI-DAT.md](./HUONG-DAN-CAI-DAT.md).
+
+**Version phải khớp ở bốn chỗ.** Tauri lấy số từ `tauri.conf.json` để đặt tên bộ cài; ba chỗ
+còn lại phải theo, nếu không `npm ci` sẽ fail trên CI và tên file sẽ nói sai phiên bản:
+
+| File | Ghi chú |
+|---|---|
+| `src-tauri/tauri.conf.json` | **nguồn sự thật** — Tauri đọc file này |
+| `package.json` | `npm ci` đối chiếu với lock file |
+| `package-lock.json` | hai chỗ: key `version` ở gốc và trong `packages[""]` |
+| `src-tauri/Cargo.toml` | và dòng `version` của crate `mediafinder` trong `Cargo.lock` |
+
+Các bước:
+
+```bash
+# 1. sua version o bon file tren cho khop nhau
+# 2. kiem tra tai cho — dung ba lenh CI se chay
+npm ci && npm run check && cargo test --manifest-path src-tauri/Cargo.toml
+
+# 3. commit va gan tag
+git commit -am "v1.0.1"
+git tag v1.0.1
+git push origin master --tags
+```
+
+Đẩy tag lên là workflow chạy. Xong (khoảng 10–20 phút) vào tab **Releases**, kiểm tra
+bản draft rồi bấm **Publish release** thì người dùng mới thấy.
+
+> Tag chỉ quyết định *thời điểm* workflow chạy; tên Release lấy từ `tauri.conf.json`.
+> Gắn tag `v1.0.1` mà quên sửa file config thì Release vẫn ra tên `v1.0.0`.
+
+Bộ cài chưa được ký số nên Windows hiện cảnh báo SmartScreen — đã nói rõ cách vượt qua
+trong tài liệu người dùng. Muốn hết cảnh báo phải mua chứng chỉ ký số (phí thường niên).
+
+Phần mềm **không tự kiểm tra cập nhật**: không có `tauri-plugin-updater`, và
+`capabilities/default.json` không cấp quyền mạng nào. Người dùng tự vào trang Releases xem.
+
 ## Vòng kiểm tra
 
 Bốn lệnh, chạy trước mỗi lần commit:
