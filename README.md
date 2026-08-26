@@ -211,6 +211,10 @@ Những điểm dưới đây là **cố ý**. Đọc trước khi định "sử
 Nếu một ứng dụng khác đã chiếm `Ctrl+Alt+Space`, MediaFinder vẫn khởi động bình thường và
 nói rõ trên màn hình trống rằng phím tắt không dùng được.
 
+## Giấy phép
+
+[Apache License 2.0](./LICENSE).
+
 ## Bố cục
 
 ```
