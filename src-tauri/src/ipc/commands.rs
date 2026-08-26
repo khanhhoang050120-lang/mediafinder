@@ -312,6 +312,15 @@ pub fn hotkey_status() -> HotkeyStatus {
     }
 }
 
+/// Report whether a newer release exists, so the UI can offer the update.
+///
+/// Reads what the startup check already found; it never touches the network
+/// itself, so the UI may poll it as often as it likes.
+#[tauri::command]
+pub fn update_status() -> crate::update::UpdateStatus {
+    crate::update::status()
+}
+
 /// Start a rescan in an elevated child process.
 ///
 /// Returns as soon as the child is running. The scan itself takes tens of

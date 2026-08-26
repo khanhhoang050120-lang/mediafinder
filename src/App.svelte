@@ -25,6 +25,8 @@
     formatDuration,
     formatResolution,
     hotkeyStatus,
+    installUpdate,
+    updateStatus,
     searchFiles,
     startFileDrag,
     thumbUrl,
@@ -40,6 +42,7 @@
     type RelaxedInfo,
     type ScanProgress,
     type SearchHit,
+    type UpdateStatus,
   } from "./lib/search";
 
   const KINDS: { key: MediaKind; label: string }[] = [
@@ -286,6 +289,35 @@
   // decides whether the network button exists at all.
   let netDrives = $state<NetworkDrive[]>([]);
   networkDrives().then((d) => (netDrives = d));
+
+  // Bản mới, nếu backend đã tìm thấy một bản lúc khởi động. Chỉ đọc kết quả
+  // có sẵn — việc hỏi máy chủ xảy ra một lần ở Rust, không phải mỗi lần mở
+  // cửa sổ.
+  //
+  // Ứng dụng thường khởi động ẩn lúc đăng nhập, nên tới lúc cửa sổ mở ra thì
+  // câu trả lời gần như luôn có sẵn rồi.
+  let update = $state<UpdateStatus | null>(null);
+  let updating = $state(false);
+  let updatePercent = $state(0);
+  let updateError = $state<string | null>(null);
+  let updateDismissed = $state(false);
+  updateStatus()
+    .then((u) => (update = u))
+    .catch(() => {});
+
+  async function runUpdate() {
+    updating = true;
+    updateError = null;
+    updatePercent = 0;
+    try {
+      // Không có gì chạy sau lệnh này khi mọi thứ suôn sẻ: bộ cài chạy xong
+      // thì ứng dụng tự khởi động lại.
+      await installUpdate((p) => (updatePercent = p));
+    } catch (e) {
+      updating = false;
+      updateError = String(e);
+    }
+  }
 
   async function startScan(withNetwork = false) {
     error = null;
@@ -752,6 +784,33 @@
           Đã đọc thuộc tính {formatCount(enrich.done)}/{formatCount(enrich.total)} tệp
           {enrich.running ? "· đang tiếp tục" : "· tạm dừng"}
         </span>
+      {/if}
+    </div>
+  {/if}
+
+  {#if update?.available && !updateDismissed}
+    <div class="update" role="status">
+      {#if updating}
+        <span>
+          Đang tải bản {update.available}…
+          {#if updatePercent > 0}{updatePercent}%{/if}
+        </span>
+        <span class="update-note">Ứng dụng sẽ tự khởi động lại khi xong.</span>
+      {:else if updateError}
+        <span>Không tải được bản mới: {updateError}</span>
+        <button class="update-go" onclick={runUpdate}>Thử lại</button>
+        <button class="dismiss" onclick={() => (updateDismissed = true)}>
+          Để sau
+        </button>
+      {:else}
+        <span>
+          Có bản <strong>{update.available}</strong> — bạn đang dùng
+          {update.current}.
+        </span>
+        <button class="update-go" onclick={runUpdate}>Cập nhật</button>
+        <button class="dismiss" onclick={() => (updateDismissed = true)}>
+          Để sau
+        </button>
       {/if}
     </div>
   {/if}
@@ -1277,6 +1336,35 @@
     border-radius: 8px;
   }
   .error span { flex: 1; }
+
+  /* Cùng hình dạng với thanh lỗi nhưng màu xanh: đây là tin tốt, không phải
+     sự cố, và không nên đọc thoáng qua mà tưởng là hỏng hóc. */
+  .update {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #cfe6ff;
+    background: #1e3350;
+    border: 1px solid #2d4a6b;
+    border-radius: 8px;
+  }
+  .update > span:first-child { flex: 1; }
+  .update-note {
+    font-size: 12px;
+    opacity: 0.75;
+  }
+  .update-go {
+    font: inherit;
+    padding: 4px 12px;
+    color: #0d1b2a;
+    background: #7fb8ff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .update-go:hover { background: #9ac8ff; }
   .dismiss {
     font: inherit;
     font-size: 12px;

@@ -39,6 +39,7 @@ Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 | Kéo tệp sang phần mềm khác | kéo thẳng kết quả vào CapCut, Explorer, ô upload của trang web |
 | Cập nhật ổ trong máy | tự động khi đăng nhập và lúc 13:00 hằng ngày, hoặc nút **Quét lại** — không hỏi quyền |
 | Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
+| Lên bản mới của **phần mềm** | ứng dụng tự báo lúc khởi động, bấm **Cập nhật** thì tải và cài |
 
 Ứng dụng khởi động cùng Windows ở chế độ **ẩn**: nó đăng ký phím tắt rồi chờ, không mở cửa sổ nào.
 Phím tắt chỉ hoạt động khi ứng dụng đang chạy, nên đây là điều kiện để nó dùng được.
@@ -153,8 +154,42 @@ bản draft rồi bấm **Publish release** thì người dùng mới thấy.
 Bộ cài chưa được ký số nên Windows hiện cảnh báo SmartScreen — đã nói rõ cách vượt qua
 trong tài liệu người dùng. Muốn hết cảnh báo phải mua chứng chỉ ký số (phí thường niên).
 
-Phần mềm **không tự kiểm tra cập nhật**: không có `tauri-plugin-updater`, và
-`capabilities/default.json` không cấp quyền mạng nào. Người dùng tự vào trang Releases xem.
+### Tự cập nhật
+
+Ứng dụng hỏi `releases/latest/download/latest.json` mỗi lần khởi động và báo khi có bản mới.
+`tauri-action` sinh sẵn tệp đó cùng chữ ký, không phải làm tay.
+
+**Chữ ký là thứ giữ cho việc này an toàn.** Ứng dụng chỉ cài bản khớp với khoá công khai đã nhúng
+trong `tauri.conf.json`, nên kể cả khi ai đó chiếm được trang Releases và thay tệp cài, bản giả
+vẫn bị từ chối.
+
+⚠️ **Khoá riêng nằm ở `~/.tauri/mediafinder.key` và ở GitHub Secrets
+(`TAURI_SIGNING_PRIVATE_KEY`). Mất nó là không bao giờ đẩy được bản cập nhật cho những máy đã
+cài** — khoá công khai đã nằm trong ứng dụng của họ, nên khoá mới sẽ bị coi là giả mạo và mọi
+người phải gỡ ra cài lại tay. Giữ thêm một bản sao ngoài hai chỗ trên.
+
+⚠️ **Bước ký thất bại trong im lặng.** Thiếu biến môi trường thì build vẫn báo thành công và vẫn
+ra bộ cài — chỉ là không kèm `.sig`, và không máy nào cập nhật lên được. Không có thông báo lỗi
+nào cả. Sau mỗi lần build, kiểm tra dòng cuối:
+
+```
+Finished 1 updater signature at:
+    ...\MediaFinder_1.0.0_x64-setup.exe.sig
+```
+
+Không thấy dòng đó là chưa ký. Cần **cả hai** biến — khoá sinh ra không đặt mật khẩu, nhưng
+`rsign` vẫn mã hoá tệp khoá nên vẫn đòi biến mật khẩu, dù là chuỗi rỗng:
+
+```bash
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/mediafinder.key)" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+  npx tauri build
+```
+
+Việc kiểm tra nằm ở `src-tauri/src/update.rs`, gọi từ `.setup()` trong `lib.rs`. Nó **chỉ kiểm
+tra, không tự tải**: hơn 200 MB là đường truyền của người dùng, nên frontend hỏi trước
+(`App.svelte`, thanh `.update`). Vì ứng dụng khởi động ẩn lúc đăng nhập, tin báo đi vào tooltip
+khay hệ thống thay vì hộp thoại — không có gì bật lên từ hư không.
 
 ## Vòng kiểm tra
 
@@ -228,6 +263,16 @@ Những điểm dưới đây là **cố ý**. Đọc trước khi định "sử
     kiện `summon` để giao diện đặt con trỏ vào ô tìm kiếm và bôi đen nội dung cũ. Hiện cửa
     sổ mà con trỏ nằm chỗ khác thì phím tắt gần như vô dụng — xem
     [`docs/bug.md`](./docs/bug.md#bug-015).
+
+11. **Kiểm tra cập nhật ở Rust, không ở frontend.** Ứng dụng khởi động cùng Windows với cờ
+    `--minimized` và không hiện cửa sổ nào, nhưng WebView vẫn được tạo và mã frontend **vẫn
+    chạy**. Đặt phần kiểm tra ở đó thì mỗi lần đăng nhập sẽ có một hộp thoại bật lên không
+    gắn với cửa sổ nào nhìn thấy được. Nên nó nằm ở `update.rs` gọi từ `.setup()`, và tin
+    báo đi vào tooltip khay — chỗ duy nhất nhìn thấy được khi chưa có cửa sổ.
+
+12. **Chỉ kiểm tra, không tự tải.** Bộ cài hơn 200 MB. Tự tải là tiêu băng thông của người
+    dùng mà không hỏi, trên một đường truyền có thể đang tính theo dung lượng. Backend dừng
+    ở chỗ ghi lại phiên bản tìm được; việc tải chỉ bắt đầu khi người dùng bấm nút.
 
 ## Cách dùng
 

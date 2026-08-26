@@ -2,3 +2,8 @@ node_modules/
 dist/
 target/
 .vite/
+
+# Khoá ký bản cập nhật. Khoá thật nằm ngoài repo (~/.tauri/), dòng này chỉ
+# để một bản sao lạc vào đây không bị commit nhầm.
+*.key
+*.key.pub

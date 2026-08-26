@@ -64,6 +64,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       # Đẩy tag lên: build rồi tạo Release ở dạng draft.
       - name: Build bộ cài và đăng Release
@@ -71,12 +73,25 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Khoá riêng ký bộ cài. Ứng dụng đang chạy trên máy người dùng chỉ
+          # nhận bản cập nhật khớp với khoá công khai trong `tauri.conf.json`,
+          # nên thiếu biến này thì build ra một bộ cài mà không ai cập nhật
+          # lên được. Đặt ở Settings → Secrets and variables → Actions.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # Khoá được sinh không đặt mật khẩu, nhưng `rsign` vẫn mã hoá tệp
+          # khoá và vẫn đòi biến này. Thiếu nó thì bước ký bị **bỏ qua trong
+          # im lặng**: build báo thành công, ra bộ cài bình thường, chỉ là
+          # không kèm chữ ký — và không máy nào cập nhật lên được.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           # __VERSION__ được thay bằng version trong tauri.conf.json.
           tagName: v__VERSION__
           releaseName: MediaFinder v__VERSION__
           releaseBody: |
-            Tải tệp `.exe` bên dưới rồi chạy để cài.
+            **Đang dùng MediaFinder rồi?** Không cần tải gì ở đây — mở ứng dụng
+            lên, nó sẽ báo có bản mới và tự cập nhật khi bạn đồng ý.
+
+            **Cài lần đầu:** tải tệp `.exe` bên dưới rồi chạy.
 
             Windows sẽ hiện cảnh báo màu xanh "Windows protected your PC" vì phần
             mềm chưa mua chứng chỉ ký số. Bấm **More info** rồi **Run anyway**.
