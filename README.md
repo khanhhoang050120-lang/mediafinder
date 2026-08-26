@@ -39,6 +39,7 @@ Chi tiết: [`docs/config.md`](./docs/config.md#conf-003)
 | Kéo tệp sang phần mềm khác | kéo thẳng kết quả vào CapCut, Explorer, ô upload của trang web |
 | Cập nhật ổ trong máy | tự động khi đăng nhập và lúc 13:00 hằng ngày, hoặc nút **Quét lại** — không hỏi quyền |
 | Cập nhật ổ mạng / NAS | nút **+ ổ mạng** — vài phút, chỉ khi bạn bấm |
+| Lên bản mới của **phần mềm** | ứng dụng tự báo lúc khởi động, bấm **Cập nhật** thì tải và cài |
 
 Ứng dụng khởi động cùng Windows ở chế độ **ẩn**: nó đăng ký phím tắt rồi chờ, không mở cửa sổ nào.
 Phím tắt chỉ hoạt động khi ứng dụng đang chạy, nên đây là điều kiện để nó dùng được.
@@ -83,6 +84,32 @@ Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'MediaFinder.ln
 Unregister-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc' -Confirm:$false
 ```
 
+## Quy trình làm việc
+
+Nhánh `master` giữ mã đã ổn định — nó là nơi bộ cài được phát hành ra. Mọi
+việc dở dang (thêm tính năng, sửa lỗi, thử nghiệm) diễn ra trên nhánh `edit`.
+
+```bash
+git checkout edit
+# ... sửa code, commit ...
+git push origin edit
+```
+
+Mỗi lần đẩy lên `edit`, GitHub tự chạy `.github/workflows/check.yml`: type-check
+frontend, `cargo fmt --check`, clippy, và toàn bộ test. Nó **không** đóng gói bộ
+cài — việc đó chỉ xảy ra lúc phát hành.
+
+Lần chạy đầu trên một nhánh mới mất khoảng **19 phút** vì cache trống; clippy và
+test mỗi bên tự biên dịch lại từ đầu (clippy dùng cờ riêng nên không dùng chung
+được artifact với `cargo test`). Những lần sau nhanh hơn nhiều nhờ cache.
+
+Khi `edit` chạy ổn, mở **Pull Request** từ `edit` sang `master` trên GitHub. PR
+hiện luôn kết quả kiểm tra; xanh thì bấm Merge. Sau khi gộp xong mới gắn tag
+để phát hành (xem mục dưới).
+
+Đẩy code lên `master` **không** kích hoạt build bộ cài — chỉ tag `v*` mới làm
+điều đó. Nên gộp PR xong vẫn chưa có gì phát hành cho tới khi bạn gắn tag.
+
 ## Phát hành bản mới
 
 Bộ cài được build bởi GitHub Actions (`.github/workflows/release.yml`) trên `windows-latest`,
@@ -90,7 +117,7 @@ rồi đăng lên GitHub Releases dưới dạng **draft**. Người dùng tải
 `https://github.com/khanhhoang050120-lang/mediafinder/releases/latest` — địa chỉ này cũng nằm trong
 [HUONG-DAN-CAI-DAT.md](./HUONG-DAN-CAI-DAT.md).
 
-**Version phải khớp ở bốn chỗ.** Tauri lấy số từ `tauri.conf.json` để đặt tên bộ cài; ba chỗ
+**Version phải khớp ở năm chỗ.** Tauri lấy số từ `tauri.conf.json` để đặt tên bộ cài; những chỗ
 còn lại phải theo, nếu không `npm ci` sẽ fail trên CI và tên file sẽ nói sai phiên bản:
 
 | File | Ghi chú |
@@ -98,14 +125,18 @@ còn lại phải theo, nếu không `npm ci` sẽ fail trên CI và tên file s
 | `src-tauri/tauri.conf.json` | **nguồn sự thật** — Tauri đọc file này |
 | `package.json` | `npm ci` đối chiếu với lock file |
 | `package-lock.json` | hai chỗ: key `version` ở gốc và trong `packages[""]` |
-| `src-tauri/Cargo.toml` | và dòng `version` của crate `mediafinder` trong `Cargo.lock` |
+| `src-tauri/Cargo.toml` | |
+| `src-tauri/Cargo.lock` | dòng `version` ngay dưới `name = "mediafinder"` |
 
 Các bước:
 
 ```bash
-# 1. sua version o bon file tren cho khop nhau
-# 2. kiem tra tai cho — dung ba lenh CI se chay
-npm ci && npm run check && cargo test --manifest-path src-tauri/Cargo.toml
+# 1. sua version o nam cho tren cho khop nhau
+# 2. kiem tra tai cho — dung nhung lenh CI se chay
+npm ci && npm run check \
+  && cargo fmt --manifest-path src-tauri/Cargo.toml --check \
+  && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets \
+  && cargo test --manifest-path src-tauri/Cargo.toml
 
 # 3. commit va gan tag
 git commit -am "v1.0.1"
@@ -113,7 +144,8 @@ git tag v1.0.1
 git push origin master --tags
 ```
 
-Đẩy tag lên là workflow chạy. Xong (khoảng 10–20 phút) vào tab **Releases**, kiểm tra
+Đẩy tag lên là workflow chạy — khoảng 8 phút khi cache còn nóng, 20–25 phút nếu
+phải build Rust từ đầu. Xong thì vào tab **Releases**, kiểm tra
 bản draft rồi bấm **Publish release** thì người dùng mới thấy.
 
 > Tag chỉ quyết định *thời điểm* workflow chạy; tên Release lấy từ `tauri.conf.json`.
@@ -122,15 +154,49 @@ bản draft rồi bấm **Publish release** thì người dùng mới thấy.
 Bộ cài chưa được ký số nên Windows hiện cảnh báo SmartScreen — đã nói rõ cách vượt qua
 trong tài liệu người dùng. Muốn hết cảnh báo phải mua chứng chỉ ký số (phí thường niên).
 
-Phần mềm **không tự kiểm tra cập nhật**: không có `tauri-plugin-updater`, và
-`capabilities/default.json` không cấp quyền mạng nào. Người dùng tự vào trang Releases xem.
+### Tự cập nhật
+
+Ứng dụng hỏi `releases/latest/download/latest.json` mỗi lần khởi động và báo khi có bản mới.
+`tauri-action` sinh sẵn tệp đó cùng chữ ký, không phải làm tay.
+
+**Chữ ký là thứ giữ cho việc này an toàn.** Ứng dụng chỉ cài bản khớp với khoá công khai đã nhúng
+trong `tauri.conf.json`, nên kể cả khi ai đó chiếm được trang Releases và thay tệp cài, bản giả
+vẫn bị từ chối.
+
+⚠️ **Khoá riêng nằm ở `~/.tauri/mediafinder.key` và ở GitHub Secrets
+(`TAURI_SIGNING_PRIVATE_KEY`). Mất nó là không bao giờ đẩy được bản cập nhật cho những máy đã
+cài** — khoá công khai đã nằm trong ứng dụng của họ, nên khoá mới sẽ bị coi là giả mạo và mọi
+người phải gỡ ra cài lại tay. Giữ thêm một bản sao ngoài hai chỗ trên.
+
+⚠️ **Bước ký thất bại trong im lặng.** Thiếu biến môi trường thì build vẫn báo thành công và vẫn
+ra bộ cài — chỉ là không kèm `.sig`, và không máy nào cập nhật lên được. Không có thông báo lỗi
+nào cả. Sau mỗi lần build, kiểm tra dòng cuối:
+
+```
+Finished 1 updater signature at:
+    ...\MediaFinder_1.0.0_x64-setup.exe.sig
+```
+
+Không thấy dòng đó là chưa ký. Cần **cả hai** biến — khoá sinh ra không đặt mật khẩu, nhưng
+`rsign` vẫn mã hoá tệp khoá nên vẫn đòi biến mật khẩu, dù là chuỗi rỗng:
+
+```bash
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/mediafinder.key)" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+  npx tauri build
+```
+
+Việc kiểm tra nằm ở `src-tauri/src/update.rs`, gọi từ `.setup()` trong `lib.rs`. Nó **chỉ kiểm
+tra, không tự tải**: hơn 200 MB là đường truyền của người dùng, nên frontend hỏi trước
+(`App.svelte`, thanh `.update`). Vì ứng dụng khởi động ẩn lúc đăng nhập, tin báo đi vào tooltip
+khay hệ thống thay vì hộp thoại — không có gì bật lên từ hư không.
 
 ## Vòng kiểm tra
 
 Bốn lệnh, chạy trước mỗi lần commit:
 
 ```bash
-cd src-tauri && cargo test            # 206 test
+cd src-tauri && cargo test            # 212 test
 cd src-tauri && cargo clippy --all-targets
 cd src-tauri && cargo fmt --check     # phải im lặng
 npm run check                         # type-check frontend
@@ -197,6 +263,16 @@ Những điểm dưới đây là **cố ý**. Đọc trước khi định "sử
     kiện `summon` để giao diện đặt con trỏ vào ô tìm kiếm và bôi đen nội dung cũ. Hiện cửa
     sổ mà con trỏ nằm chỗ khác thì phím tắt gần như vô dụng — xem
     [`docs/bug.md`](./docs/bug.md#bug-015).
+
+11. **Kiểm tra cập nhật ở Rust, không ở frontend.** Ứng dụng khởi động cùng Windows với cờ
+    `--minimized` và không hiện cửa sổ nào, nhưng WebView vẫn được tạo và mã frontend **vẫn
+    chạy**. Đặt phần kiểm tra ở đó thì mỗi lần đăng nhập sẽ có một hộp thoại bật lên không
+    gắn với cửa sổ nào nhìn thấy được. Nên nó nằm ở `update.rs` gọi từ `.setup()`, và tin
+    báo đi vào tooltip khay — chỗ duy nhất nhìn thấy được khi chưa có cửa sổ.
+
+12. **Chỉ kiểm tra, không tự tải.** Bộ cài hơn 200 MB. Tự tải là tiêu băng thông của người
+    dùng mà không hỏi, trên một đường truyền có thể đang tính theo dung lượng. Backend dừng
+    ở chỗ ghi lại phiên bản tìm được; việc tải chỉ bắt đầu khi người dùng bấm nút.
 
 ## Cách dùng
 

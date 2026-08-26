@@ -348,3 +348,53 @@ export function formatWhen(unix: number): string {
 export function mediaUrl(epoch: number, index: number): string {
   return convertFileSrc(`${epoch}_${index}`, "media");
 }
+
+export interface UpdateStatus {
+  /** Đã hỏi máy chủ xong chưa. `false` nghĩa là chưa biết, không phải là không có bản mới. */
+  checked: boolean;
+  /** Phiên bản mới nếu có, ví dụ `"1.1.0"`. */
+  available: string | null;
+  /** Phiên bản đang chạy. */
+  current: string;
+}
+
+/**
+ * Tình hình cập nhật mà lần kiểm tra lúc khởi động đã tìm ra.
+ *
+ * Chỉ đọc thứ backend ghi sẵn — không gọi mạng, nên gọi bao nhiêu lần cũng rẻ.
+ */
+export function updateStatus(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("update_status");
+}
+
+/**
+ * Tải bản mới về và cài, rồi khởi động lại.
+ *
+ * Chỉ gọi khi người dùng đã đồng ý: bộ cài hơn 200 MB và đây là đường truyền
+ * của họ. Trong lúc tải, `onProgress` cho biết đã được bao nhiêu phần trăm —
+ * không có nó thì màn hình đứng im hàng phút và trông như bị treo.
+ */
+export async function installUpdate(
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+
+  const update = await check();
+  if (!update) return;
+
+  let total = 0;
+  let got = 0;
+  await update.downloadAndInstall((e) => {
+    if (e.event === "Started") {
+      total = e.data.contentLength ?? 0;
+    } else if (e.event === "Progress") {
+      got += e.data.chunkLength;
+      // Máy chủ không phải lúc nào cũng nói trước tổng dung lượng; khi
+      // không biết thì thà không hiện phần trăm còn hơn hiện số sai.
+      if (total > 0) onProgress(Math.round((got / total) * 100));
+    }
+  });
+
+  await relaunch();
+}

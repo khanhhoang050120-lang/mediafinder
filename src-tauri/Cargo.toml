@@ -1,6 +1,6 @@
 [package]
 name = "mediafinder"
-version = "1.0.0"
+version = "1.0.1"
 description = "Công cụ tìm kiếm media siêu tốc cho Windows/NTFS"
 edition = "2021"
 rust-version = "1.77"
@@ -55,6 +55,19 @@ blake3 = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- Tự cập nhật ---
+# Bộ cài nặng hơn 200 MB và không nằm ở đâu ngoài trang Releases, nên nếu
+# người dùng không tự đi tìm thì họ ở lại bản cũ mãi. Plugin này để chính
+# ứng dụng nói cho họ biết có bản mới.
+#
+# Nó chỉ tải về những gì đã ký bằng khoá riêng của dự án (khoá công khai nằm
+# trong `tauri.conf.json`), nên kể cả khi ai đó chiếm được trang Releases và
+# thay tệp cài, bản giả vẫn bị từ chối.
+tauri-plugin-updater = "2"
+# Sau khi cài xong phải khởi động lại thì bản mới mới có hiệu lực; đây là
+# thứ cung cấp lệnh restart đó.
+tauri-plugin-process = "2"
 
 
 [dev-dependencies]

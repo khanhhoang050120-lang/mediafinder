@@ -6,6 +6,7 @@
 //!   `media`  — thumbnails, metadata enrichment, duplicate detection
 //!   `ipc`    — Tauri commands, the `thumb://` protocol, elevation plumbing
 //!   `state`  — shared application state (ArcSwap index + search generation)
+//!   `update` — checking whether a newer release exists
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16,6 +17,7 @@ pub mod ntfs;
 pub mod preflight;
 pub mod setup;
 pub mod state;
+pub mod update;
 pub mod walk;
 
 /// Initialise tracing. Verbosity is controlled by `RUST_LOG`.
@@ -67,6 +69,8 @@ pub fn run_gui() {
             summon(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             use tauri::Manager;
 
@@ -92,6 +96,15 @@ pub fn run_gui() {
             register_hotkey(app.handle());
             watch_cache(app.handle());
             build_tray(app.handle());
+
+            // Sau `build_tray`: nếu có bản mới thì tin báo đi vào tooltip của
+            // khay, và cái khay đó phải tồn tại trước đã.
+            //
+            // Chạy cả khi khởi động ẩn — lúc đăng nhập là dịp tốt nhất để hỏi,
+            // và vì phần này chỉ báo tin chứ không tự tải, nó không làm phiền
+            // ai: không có hộp thoại nào bật lên từ hư không.
+            update::check_in_background(app.handle().clone());
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -141,6 +154,7 @@ pub fn run_gui() {
             ipc::commands::dupe_progress,
             ipc::commands::dupe_groups,
             ipc::commands::hotkey_status,
+            ipc::commands::update_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");

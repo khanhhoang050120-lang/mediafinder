@@ -33,8 +33,8 @@ Vào trang phát hành:
 Trong mục **Assets**, bấm vào tệp có tên dạng **`MediaFinder_<phiên bản>_x64-setup.exe`**
 để tải về. Tệp khoảng 200 MB nên tuỳ mạng có thể mất vài phút.
 
-Trang này luôn là bản mới nhất. Muốn cập nhật về sau, quay lại đúng địa chỉ trên,
-tải bản mới rồi cài đè lên — không cần gỡ bản cũ, chỉ mục đã quét vẫn giữ nguyên.
+Đây là việc chỉ làm **một lần**. Từ đó về sau phần mềm tự báo khi có bản mới và tự cập nhật khi
+bạn đồng ý — xem mục [Lên bản mới của phần mềm](#lên-bản-mới-của-phần-mềm).
 
 ## Bước 2 — Chạy bộ cài
 
@@ -124,6 +124,23 @@ Riêng **ổ mạng không nằm trong lịch tự động** — phải bấm `+
 
 ---
 
+## Lên bản mới của phần mềm
+
+Khác với mục trên — mục trên nói về **danh sách tệp**, mục này nói về **chính phần mềm**.
+
+Mỗi lần khởi động, MediaFinder xem thử có bản mới không. Có thì hiện một dòng màu xanh ở đầu cửa
+sổ: *"Có bản 1.1.0 — bạn đang dùng 1.0.0"*, kèm nút **`Cập nhật`**.
+
+Bấm nút đó là nó tự tải và cài, rồi khởi động lại. Mất vài phút vì tệp khá nặng. Không bấm cũng
+không sao — bấm **`Để sau`** thì dòng đó biến mất, lần mở sau lại hiện.
+
+Nếu máy chạy ẩn từ lúc đăng nhập (không mở cửa sổ), tin báo nằm ở biểu tượng khay hệ thống: rê
+chuột lên đó sẽ thấy dòng chữ *"có bản … , mở để cập nhật"*.
+
+Cập nhật xong, chỉ mục đã quét vẫn giữ nguyên — không phải quét lại.
+
+---
+
 ## Gặp vấn đề
 
 **Gõ mà không ra gì, dù chắc chắn có tệp đó.**
@@ -175,10 +192,25 @@ cần quyền Administrator để xoá — nếu nó còn sót lại, dùng lệ
 
 ## Phần mềm này có gửi gì ra ngoài không
 
-Không. MediaFinder **không kết nối mạng** để làm bất cứ việc gì: không gửi thống kê, không kiểm tra
-cập nhật, không tải gì về. Chỉ mục nằm trong thư mục cá nhân của bạn và không rời khỏi máy.
+**Không gửi gì về bạn.** Không thống kê, không lịch sử tìm kiếm, không tên tệp. Chỉ mục nằm trong
+thư mục cá nhân của bạn và không rời khỏi máy.
 
-Ổ mạng là ngoại lệ hiển nhiên duy nhất — và chỉ khi bạn tự bấm nút quét nó.
+Phần mềm chỉ ra ngoài đúng **một** việc: mỗi lần khởi động, nó hỏi trang phát hành xem phiên bản
+mới nhất là số mấy. Câu hỏi đó không kèm theo bất cứ thông tin gì về bạn hay máy bạn — chỉ là tải
+về một tệp nhỏ ghi số hiệu phiên bản, giống như mở một trang web.
 
-Hệ quả: phần mềm **không tự báo khi có bản mới**. Muốn biết, bạn tự vào trang phát hành ở
-[Bước 1](#bước-1--tải-bộ-cài) xem — đây là cái giá của việc không cho phần mềm tự gọi ra ngoài.
+Nếu có bản mới, phần mềm **hỏi bạn trước**. Không đồng ý thì không tải gì cả.
+
+Ổ mạng là ngoại lệ còn lại — và chỉ khi bạn tự bấm nút quét nó.
+
+### Muốn tắt hẳn phần kiểm tra cập nhật
+
+Chặn phần mềm ra mạng bằng Windows Firewall:
+
+```powershell
+New-NetFirewallRule -DisplayName 'MediaFinder - chan ra mang' -Direction Outbound `
+  -Program "$env:LOCALAPPDATA\MediaFinder\mediafinder.exe" -Action Block
+```
+
+Sau đó phần mềm vẫn chạy bình thường, chỉ là không biết có bản mới. Muốn cập nhật thì tự vào trang
+phát hành ở [Bước 1](#bước-1--tải-bộ-cài) tải về.
