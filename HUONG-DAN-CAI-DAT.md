@@ -28,7 +28,7 @@ lại Windows và **không có mạng** vẫn cài được.
 
 Vào trang phát hành:
 
-**https://github.com/Padoma1/mediafinder/releases/latest**
+**https://github.com/khanhhoang050120-lang/mediafinder/releases/latest**
 
 Trong mục **Assets**, bấm vào tệp có tên dạng **`MediaFinder_<phiên bản>_x64-setup.exe`**
 để tải về. Tệp khoảng 200 MB nên tuỳ mạng có thể mất vài phút.

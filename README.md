@@ -87,7 +87,7 @@ Unregister-ScheduledTask -TaskName 'MediaFinder - cap nhat chi muc' -Confirm:$fa
 
 Bộ cài được build bởi GitHub Actions (`.github/workflows/release.yml`) trên `windows-latest`,
 rồi đăng lên GitHub Releases dưới dạng **draft**. Người dùng tải từ
-`https://github.com/Padoma1/mediafinder/releases/latest` — địa chỉ này cũng nằm trong
+`https://github.com/khanhhoang050120-lang/mediafinder/releases/latest` — địa chỉ này cũng nằm trong
 [HUONG-DAN-CAI-DAT.md](./HUONG-DAN-CAI-DAT.md).
 
 **Version phải khớp ở bốn chỗ.** Tauri lấy số từ `tauri.conf.json` để đặt tên bộ cài; ba chỗ
