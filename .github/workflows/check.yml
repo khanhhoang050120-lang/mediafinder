@@ -16,8 +16,13 @@ on:
 
 # Đẩy commit mới lên khi lần chạy trước chưa xong thì huỷ lần cũ đi —
 # kết quả của commit đã bị thay thế không còn giá trị gì.
+#
+# Gom theo **commit** chứ không theo nhánh: một commit trên `edit` đã mở PR
+# sang `master` sẽ kích hoạt cả `push` lẫn `pull_request`. Gom theo nhánh thì
+# hai sự kiện đó có ref khác nhau nên không huỷ được nhau, và cùng một mã
+# nguồn phải build hai lần, mỗi lần hơn mười phút.
 concurrency:
-  group: check-${{ github.ref }}
+  group: check-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
