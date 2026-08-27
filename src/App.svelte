@@ -9,7 +9,7 @@
   import Preview from "./lib/Preview.svelte";
   import ScanStatusBar from "./lib/ScanStatusBar.svelte";
   import SearchBar from "./lib/SearchBar.svelte";
-  import UpdateBanner from "./lib/UpdateBanner.svelte";
+  import UpdateNotice from "./lib/UpdateNotice.svelte";
   import VirtualList from "./lib/VirtualList.svelte";
   import { loadPrefs, savePrefs } from "./lib/prefs";
   import { prefetchThumb } from "./lib/thumbQueue";
@@ -297,6 +297,22 @@
     .then((u) => (update = u))
     .catch(() => {});
 
+  /// Hộp thoại cập nhật đang mở. App giữ nó (thay vì component tự giữ) vì bàn
+  /// phím toàn cục phải biết mà nhường, và mũi tên mở-lại sống ở footer.
+  let updateNoticeOpen = $state(false);
+  /// Bản đã tự bật hộp thoại một lần — nhịp hỏi lại mỗi ngày của backend bắn
+  /// sự kiện cho CÙNG một bản thì không dựng người ta dậy lần nữa; bản mới
+  /// hơn nữa thì có.
+  let noticeShownFor: string | null = null;
+
+  $effect(() => {
+    const v = update?.available?.version;
+    if (v && v !== noticeShownFor) {
+      noticeShownFor = v;
+      updateNoticeOpen = true;
+    }
+  });
+
   // Tin cập nhật có thể về SAU khi cửa sổ đã mở: app khởi động cùng Windows
   // trước khi mạng kịp kết nối, backend giờ thử lại tới khi hỏi được và bắn
   // sự kiện này khi có bản mới — không nghe thì cửa sổ đang mở cứ im lặng
@@ -455,7 +471,7 @@
     // component đều nghe trên `window`, và `stopPropagation` không chặn được
     // một trình nghe anh em trên cùng một đích — thiếu chốt chặn này thì
     // Escape sẽ vừa đóng trình đơn *vừa* xoá ô tìm kiếm trong cùng một phím.
-    if (menu || preview) return;
+    if (menu || preview || updateNoticeOpen) return;
 
     // Chế độ trùng lặp có danh sách riêng, nhưng bàn phím vẫn xử lý ở đây —
     // một chủ sở hữu duy nhất, vì hai trình nghe anh em trên `window` không
@@ -623,10 +639,6 @@
     <FilterPanel {enrich} onchange={applyFilters} />
   {/if}
 
-  {#if update?.available}
-    <UpdateBanner {update} />
-  {/if}
-
   {#if error}
     <div class="error" role="alert">
       <span>{error}</span>
@@ -736,6 +748,27 @@
 
   <div class="status">
     <span>{statusLine}</span>
+    {#if update?.available && !updateNoticeOpen}
+      <!-- Lời mời đã bị "Để sau" thu về đây: đứng giữa chân cửa sổ, đủ thấy
+           mà không chắn việc, và bấm vào là hộp thoại quay lại. -->
+      <button
+        class="update-arrow"
+        title={`Có bản ${update.available.version} — bấm để cập nhật`}
+        aria-label="Mở thông báo cập nhật"
+        onclick={() => (updateNoticeOpen = true)}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path
+            d="M8 12.5v-9M4 7l4-3.5L12 7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+    {/if}
     {#if hits.length && !dupeMode}
       <span class="timing">{formatCount(hits.length)} kết quả · {elapsedMs.toFixed(1)} ms</span>
     {/if}
@@ -752,6 +785,10 @@
     onstep={previewStep}
     onopen={() => open(hits[selected])}
   />
+{/if}
+
+{#if update?.available}
+  <UpdateNotice {update} bind:open={updateNoticeOpen} />
 {/if}
 
 {#if menu}
@@ -894,12 +931,31 @@
   }
 
   .status {
+    position: relative; /* mỏ neo cho mũi tên cập nhật đứng chính giữa */
     display: flex;
     justify-content: space-between;
     gap: 12px;
     font-size: 12px;
     color: var(--text-dim);
     padding: 0 3px;
+  }
+  .update-arrow {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 20px;
+    padding: 0;
+    color: #7fb8ff;
+    background: #1e3350;
+    border: 1px solid #2d4a6b;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .update-arrow:hover {
+    background: #27436a;
   }
   .timing { flex: 0 0 auto; }
 </style>

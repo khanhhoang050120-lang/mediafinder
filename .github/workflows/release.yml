@@ -1,6 +1,9 @@
 # Build bộ cài MediaFinder và đăng lên GitHub Releases.
 #
 # Cách phát hành một bản mới:
+#   0. Viết "có gì mới" vào RELEASE_NOTES.md (ở gốc repo). Nội dung này đi
+#      vào latest.json và ứng dụng cũ HIỆN NÓ trong hộp thoại mời cập nhật —
+#      viết cho người dùng đọc, không phải cho lập trình viên.
 #   1. Sửa version cho khớp nhau ở tất cả các chỗ sau:
 #        src-tauri/tauri.conf.json   <- nguồn sự thật, Tauri đọc file này
 #        package.json
@@ -56,6 +59,32 @@ jobs:
       - name: Test backend
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # Ghi chú phát hành = changelog trong RELEASE_NOTES.md + vạch --- +
+      # hướng dẫn cài cho người tải tay từ trang Releases. HỢP ĐỒNG với
+      # UpdateNotice.svelte: ứng dụng cắt ở vạch --- và chỉ hiện phần trước —
+      # người đang đứng trong app không cần ai dạy cách chạy bộ cài.
+      - name: Đọc ghi chú phát hành
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<NOTES_EOF'
+            cat RELEASE_NOTES.md
+            echo ''
+            echo '---'
+            echo ''
+            echo '**Đang dùng MediaFinder rồi?** Không cần tải gì ở đây — mở ứng dụng'
+            echo 'lên, nó sẽ báo có bản mới và tự cập nhật khi bạn đồng ý.'
+            echo ''
+            echo '**Cài lần đầu:** tải tệp `.exe` bên dưới rồi chạy.'
+            echo ''
+            echo 'Windows sẽ hiện cảnh báo màu xanh "Windows protected your PC" vì phần'
+            echo 'mềm chưa mua chứng chỉ ký số. Bấm **More info** rồi **Run anyway**.'
+            echo ''
+            echo 'Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ nguyên.'
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # Chạy tay (workflow_dispatch): chỉ build để kiểm tra là mọi thứ biên dịch
       # được. Không truyền tagName nên action không tạo Release và không tự gắn
       # tag lên commit hiện tại.
@@ -87,16 +116,7 @@ jobs:
           # __VERSION__ được thay bằng version trong tauri.conf.json.
           tagName: v__VERSION__
           releaseName: MediaFinder v__VERSION__
-          releaseBody: |
-            **Đang dùng MediaFinder rồi?** Không cần tải gì ở đây — mở ứng dụng
-            lên, nó sẽ báo có bản mới và tự cập nhật khi bạn đồng ý.
-
-            **Cài lần đầu:** tải tệp `.exe` bên dưới rồi chạy.
-
-            Windows sẽ hiện cảnh báo màu xanh "Windows protected your PC" vì phần
-            mềm chưa mua chứng chỉ ký số. Bấm **More info** rồi **Run anyway**.
-
-            Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ nguyên.
+          releaseBody: ${{ steps.notes.outputs.body }}
           # Để nháp: bạn vào xem, thấy ổn thì tự bấm Publish. Đổi thành false
           # nếu muốn Release hiện ra công khai ngay khi build xong.
           releaseDraft: true

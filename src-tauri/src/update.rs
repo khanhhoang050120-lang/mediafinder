@@ -18,9 +18,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use serde::Serialize;
 
-/// Phiên bản mới nhất tìm được, nếu có. Frontend đọc qua lệnh
+/// Bản mới tìm được: số hiệu và ghi chú phát hành đi cùng nhau — ghi chú mô
+/// tả *bản mới*, nên chỉ máy chủ mới biết; app đang chạy không thể tự bịa.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Found {
+    pub version: String,
+    /// Nội dung "có gì mới" từ latest.json, nếu máy chủ gửi kèm.
+    pub notes: Option<String>,
+}
+
+/// Bản mới nhất tìm được, nếu có. Frontend đọc qua lệnh
 /// [`crate::ipc::commands::update_status`].
-static AVAILABLE: Mutex<Option<String>> = Mutex::new(None);
+static AVAILABLE: Mutex<Option<Found>> = Mutex::new(None);
 
 /// Đã kiểm tra xong lần này chưa — để giao diện phân biệt "chưa biết" với
 /// "đã hỏi rồi, không có gì mới".
@@ -32,8 +41,8 @@ pub struct UpdateStatus {
     /// Đã hỏi máy chủ xong chưa. Sai nghĩa là chưa có câu trả lời, không phải
     /// là không có bản mới.
     pub checked: bool,
-    /// Phiên bản mới, ví dụ `"1.1.0"`. `None` khi đang chạy bản mới nhất.
-    pub available: Option<String>,
+    /// Bản mới kèm ghi chú, `None` khi đang chạy bản mới nhất.
+    pub available: Option<Found>,
     /// Phiên bản đang chạy, để giao diện nói "1.0.0 → 1.1.0".
     pub current: String,
 }
@@ -55,11 +64,12 @@ pub fn status() -> UpdateStatus {
 /// Ghi lại kết quả một lần kiểm tra và cập nhật tooltip khay hệ thống.
 ///
 /// Tách riêng khỏi phần gọi mạng để test được mà không cần máy chủ thật.
-pub fn record(app: &tauri::AppHandle, version: Option<String>) {
-    *AVAILABLE.lock() = version.clone();
+pub fn record(app: &tauri::AppHandle, found: Option<Found>) {
+    *AVAILABLE.lock() = found.clone();
     CHECKED.store(true, Ordering::Relaxed);
 
-    if let Some(v) = version {
+    if let Some(f) = found {
+        let v = &f.version;
         tracing::info!("có bản mới: {v}");
         set_tray_tooltip(app, &format!("MediaFinder — có bản {v}, mở để cập nhật"));
     } else {
@@ -128,9 +138,12 @@ pub fn check_in_background(app: tauri::AppHandle) {
 
                 let wait = match tauri::async_runtime::block_on(updater.check()) {
                     Ok(found) => {
-                        let version = found.map(|u| u.version.clone());
-                        let had_news = version.is_some();
-                        record(&app, version);
+                        let found = found.map(|u| Found {
+                            version: u.version.clone(),
+                            notes: u.body.clone(),
+                        });
+                        let had_news = found.is_some();
+                        record(&app, found);
                         failures = 0;
                         if had_news {
                             // Cửa sổ có thể đang mở sẵn từ trước khi tin về —
@@ -214,11 +227,16 @@ mod tests {
         assert!(s.checked);
         assert_eq!(s.available, None);
 
-        // Có bản mới.
-        *AVAILABLE.lock() = Some("9.9.9".into());
+        // Có bản mới, kèm ghi chú.
+        *AVAILABLE.lock() = Some(Found {
+            version: "9.9.9".into(),
+            notes: Some("- Sửa lỗi A".into()),
+        });
         let s = status();
         assert!(s.checked);
-        assert_eq!(s.available.as_deref(), Some("9.9.9"));
+        let f = s.available.expect("phải có bản mới");
+        assert_eq!(f.version, "9.9.9");
+        assert_eq!(f.notes.as_deref(), Some("- Sửa lỗi A"));
         assert_eq!(s.current, current_version());
 
         reset();

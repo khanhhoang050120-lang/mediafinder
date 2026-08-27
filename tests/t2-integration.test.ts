@@ -436,26 +436,35 @@ function click(el) {
 }
 
 // ---------------------------------------------------------------- TC-2.15
-// Băng cập nhật chỉ hiện khi có bản mới.
+// Thông báo cập nhật: hộp thoại tự hiện, "Để sau" thu về mũi tên giữa footer.
+// Chiều sâu của UX này nằm ở nhóm 9; ở đây chỉ giữ đường xương sống.
 {
   baseHandlers(ipc);
   ipc.reset();
   const { div, cleanup } = await mountApp();
-  check("TC-2.15a không có bản mới thì không hiện băng", !$(div, ".update"));
+  check("TC-2.15a không có bản mới thì không hiện hộp thoại", !document.querySelector("[role=dialog]"));
+  check("TC-2.15b không có bản mới thì không có mũi tên", !div.querySelector(".update-arrow"));
   cleanup();
 
-  ipc.on("update_status", { available: "1.0.2", current: "1.0.1" });
+  ipc.on("update_status", {
+    checked: true,
+    available: { version: "1.0.2", notes: "- Sửa lỗi cuộn" },
+    current: "1.0.1",
+  });
   const two = await mountApp();
-  check("TC-2.15b có bản mới thì hiện băng", !!$(two.div, ".update"));
-  const txt = $(two.div, ".update")?.textContent ?? "";
-  check("TC-2.15c băng nêu số hiệu bản mới", txt.includes("1.0.2"), txt.slice(0, 80));
-  const dismiss = $$(two.div, ".update .dismiss")[0];
-  check("TC-2.15d có nút Để sau", !!dismiss);
-  if (dismiss) {
-    click(dismiss);
-    await settle(60);
-    check("TC-2.15e bấm Để sau thì băng biến mất", !$(two.div, ".update"));
-  }
+  const dlg = document.querySelector("[role=dialog]");
+  check("TC-2.15c có bản mới thì hộp thoại tự hiện", !!dlg);
+  check("TC-2.15d hộp thoại nêu số hiệu bản mới", (dlg?.textContent ?? "").includes("1.0.2"));
+  const later = [...document.querySelectorAll("[role=dialog] button")].find((b) =>
+    b.textContent.trim().startsWith("Để sau"),
+  );
+  check("TC-2.15e có nút Để sau", !!later);
+  later?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await settle(60);
+  check(
+    "TC-2.15f Để sau: hộp thoại đóng, mũi tên hiện giữa chân cửa sổ",
+    !document.querySelector("[role=dialog]") && !!two.div.querySelector(".update-arrow"),
+  );
   two.cleanup();
   baseHandlers(ipc);
 }
