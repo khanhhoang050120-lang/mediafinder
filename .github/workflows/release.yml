@@ -4,6 +4,8 @@
 #   0. Viết "có gì mới" vào RELEASE_NOTES.md (ở gốc repo). Nội dung này đi
 #      vào latest.json và ứng dụng cũ HIỆN NÓ trong hộp thoại mời cập nhật —
 #      viết cho người dùng đọc, không phải cho lập trình viên.
+#      Tối đa ~1200 ký tự — vượt là build TỰ CHẶN (scripts/check-release-notes.sh);
+#      chi tiết dài viết vào mô tả trên trang Releases, hộp thoại không hiện.
 #   1. Sửa version cho khớp nhau ở tất cả các chỗ sau:
 #        src-tauri/tauri.conf.json   <- nguồn sự thật, Tauri đọc file này
 #        package.json
@@ -63,6 +65,12 @@ jobs:
       # hướng dẫn cài cho người tải tay từ trang Releases. HỢP ĐỒNG với
       # UpdateNotice.svelte: ứng dụng cắt ở vạch --- và chỉ hiện phần trước —
       # người đang đứng trong app không cần ai dạy cách chạy bộ cài.
+      # Chặn ngay từ đây nếu ghi chú rỗng hoặc quá dài — trước khi tốn 15
+      # phút build ra một bản mà hộp thoại của nó bắt người dùng đọc tiểu luận.
+      - name: Kiểm tra ghi chú phát hành
+        shell: bash
+        run: bash scripts/check-release-notes.sh
+
       - name: Đọc ghi chú phát hành
         id: notes
         shell: bash

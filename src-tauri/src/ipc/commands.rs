@@ -582,6 +582,15 @@ pub fn dupe_groups(
         .collect()
 }
 
+/// Mở trang Releases trên trình duyệt — đường "xem đầy đủ" của hộp thoại
+/// cập nhật, cho ai muốn đọc nhiều hơn phần tóm tắt.
+#[tauri::command]
+pub fn open_releases_page() -> Result<(), String> {
+    // URL cố định, không nhận tham số: lệnh này chỉ mở đúng một trang, và
+    // frontend không có cách nào biến nó thành cửa mở-URL-tuỳ-ý.
+    shell::open_with_default_app("https://github.com/khanhhoang050120-lang/mediafinder/releases")
+}
+
 /// Open a file with whatever Windows uses for that type.
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), String> {

@@ -52,7 +52,8 @@ function baseHandlers(update: UpdateStatus): IpcRecorder {
     }))
     .on("dupe_progress", { running: false, completed: false, groups: 0, wasted: 0, hashed: 0, candidates: 0 })
     .on("dupe_groups", [])
-    .on("cancel_duplicates", null);
+    .on("cancel_duplicates", null)
+    .on("open_releases_page", null);
   return r;
 }
 
@@ -211,6 +212,54 @@ describe("hộp thoại cập nhật", () => {
     await ipc.emit("update-available", null);
     await settle(80);
     expect(dialog(), "cửa sổ đang mở không nhận được tin").toBeTruthy();
+  });
+
+  it("ghi chú dài: hai nút vẫn đứng yên trong hộp thoại, không bị đẩy trốn", async () => {
+    const longNotes = Array.from({ length: 80 }, (_, i) => `- Dòng thay đổi số ${i}`).join("\n");
+    ipc = baseHandlers({ ...FOUND, available: { version: "1.0.4", notes: longNotes } });
+    await mountApp();
+    expect(document.querySelector(".notes-wrap"), "thiếu lớp bọc ô ghi chú").toBeTruthy();
+    expect(btn("Cập nhật"), "nút Cập nhật biến mất khi ghi chú dài").toBeTruthy();
+    expect(btn("Để sau"), "nút Để sau biến mất khi ghi chú dài").toBeTruthy();
+  });
+
+  it("dải mờ 'còn nữa': hiện khi còn chữ bên dưới, tắt khi cuộn tới đáy", async () => {
+    ipc = baseHandlers(FOUND);
+    await mountApp();
+    const notesEl = document.querySelector(".notes") as HTMLDivElement;
+    const wrap = document.querySelector(".notes-wrap") as HTMLDivElement;
+    expect(notesEl && wrap).toBeTruthy();
+
+    // jsdom không đo được layout — cấp số đo như một ô đang tràn thật.
+    let scrollTop = 0;
+    Object.defineProperty(notesEl, "scrollHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(notesEl, "clientHeight", { configurable: true, get: () => 200 });
+    Object.defineProperty(notesEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v: number) => (scrollTop = v),
+    });
+
+    window.dispatchEvent(new Event("resize")); // ép đo lại
+    await settle(30);
+    expect(wrap.classList.contains("fade"), "còn chữ bên dưới mà không có dải mờ").toBe(true);
+
+    scrollTop = 200; // cuộn tới đáy
+    notesEl.dispatchEvent(new Event("scroll"));
+    await settle(30);
+    expect(wrap.classList.contains("fade"), "đã tới đáy mà dải mờ vẫn hứa 'còn nữa'").toBe(false);
+  });
+
+  it("link 'Xem đầy đủ' gọi backend mở trang Releases", async () => {
+    ipc = baseHandlers(FOUND);
+    await mountApp();
+    const link = [...document.querySelectorAll("[role=dialog] button")].find((b) =>
+      b.textContent!.includes("Xem đầy đủ"),
+    );
+    expect(link, "thiếu link Xem đầy đủ").toBeTruthy();
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await settle(40);
+    expect(ipc.count("open_releases_page")).toBe(1);
   });
 
   it("bấm Cập nhật: hộp thoại chuyển sang trạng thái đang tải", async () => {
