@@ -45,6 +45,15 @@ pub enum ThumbError {
     #[error("không có thumbnail cho tệp này")]
     Unavailable,
 
+    /// Hàng đợi đầy — người dùng đang cuộn nhanh hơn đĩa theo kịp.
+    ///
+    /// Tách riêng khỏi `Unavailable` vì hai câu trả lời đòi hai phản ứng
+    /// ngược nhau: "tệp này không có thumbnail" thì hỏi lại là vô ích, còn
+    /// "đang bận" thì hỏi lại chính là điều nên làm. Trước đây cả hai trả
+    /// cùng một mã, và phía giao diện ẩn ảnh vĩnh viễn cho cả hai.
+    #[error("hàng đợi thumbnail đang đầy")]
+    Busy,
+
     #[error("Windows từ chối dựng thumbnail: {0}")]
     Shell(String),
 
@@ -100,21 +109,51 @@ struct Job {
     reply: SyncSender<Result<Arc<Vec<u8>>, ThumbError>>,
 }
 
+/// How long a "no thumbnail" answer is remembered.
+///
+/// The frontend now retries transient failures a few times. Without this
+/// cache, every retry against a file that genuinely has no thumbnail would
+/// decode it again from scratch — the most expensive way to learn nothing
+/// new. A minute is long enough to absorb the retries and short enough that
+/// installing a new codec pack shows results on the next scroll-past.
+const MISS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Entries in the miss cache. A key plus an `Instant` is tiny; this covers
+/// several screenfuls of files with no thumbnails without measurable memory.
+const MISS_ENTRIES: usize = 2048;
+
 /// Shared thumbnail service: cache in front, bounded worker pool behind.
 pub struct ThumbnailService {
     cache: Arc<Mutex<LruCache<CacheKey, Arc<Vec<u8>>>>>,
+    /// Files the workers already tried and failed to thumbnail, with when.
+    /// Only genuine `Unavailable` answers land here — a refused-because-busy
+    /// request must stay retryable.
+    misses: Mutex<LruCache<CacheKey, std::time::Instant>>,
     jobs: SyncSender<Job>,
+    /// Chỉ trong bản kiểm thử: giữ đầu nhận sống khi dựng dịch vụ 0 worker.
+    /// Không có nó, Receiver bị thả ngay cuối constructor và channel chết
+    /// trước khi bài kiểm thử kịp nhét job mồi vào.
+    #[cfg(test)]
+    _rx_keepalive: Arc<Mutex<Receiver<Job>>>,
 }
 
 impl ThumbnailService {
     pub fn new() -> Self {
+        Self::with_limits(WORKERS, QUEUE_DEPTH)
+    }
+
+    /// Tách riêng để kiểm thử ép được trạng thái "hàng đợi đầy" một cách tất
+    /// định: không worker nào rút việc ra, thì hàng sâu bao nhiêu cũng đầy
+    /// được bằng đúng bấy nhiêu lời gọi. Ngoài kiểm thử ra, đường duy nhất
+    /// vào đây là `new()` với các hằng số thật.
+    fn with_limits(workers: usize, queue_depth: usize) -> Self {
         let cache = Arc::new(Mutex::new(LruCache::new(
             std::num::NonZeroUsize::new(CACHE_ENTRIES).expect("cache size is non-zero"),
         )));
-        let (tx, rx) = mpsc::sync_channel::<Job>(QUEUE_DEPTH);
+        let (tx, rx) = mpsc::sync_channel::<Job>(queue_depth);
         let rx = Arc::new(Mutex::new(rx));
 
-        for n in 0..WORKERS {
+        for n in 0..workers {
             let rx: Arc<Mutex<Receiver<Job>>> = Arc::clone(&rx);
             let cache = Arc::clone(&cache);
             std::thread::Builder::new()
@@ -123,7 +162,15 @@ impl ThumbnailService {
                 .expect("spawn thumbnail worker");
         }
 
-        Self { cache, jobs: tx }
+        Self {
+            cache,
+            misses: Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(MISS_ENTRIES).expect("miss cache size is non-zero"),
+            )),
+            jobs: tx,
+            #[cfg(test)]
+            _rx_keepalive: rx,
+        }
     }
 
     /// Fetch a thumbnail, blocking until it is ready.
@@ -136,6 +183,18 @@ impl ThumbnailService {
             return Ok(hit);
         }
 
+        // Đã thử và biết là không có? Trả lời ngay thay vì decode lại — các
+        // lần hỏi lại của giao diện phải gần như miễn phí với tệp không ảnh.
+        {
+            let mut misses = self.misses.lock();
+            if let Some(when) = misses.get(&key) {
+                if when.elapsed() < MISS_TTL {
+                    return Err(ThumbError::Unavailable);
+                }
+                misses.pop(&key);
+            }
+        }
+
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         let job = Job {
             key,
@@ -145,13 +204,16 @@ impl ThumbnailService {
         };
 
         // A full queue means the user is scrolling faster than the disk can
-        // keep up. Dropping the request is correct: the row will ask again
-        // once it stops moving.
-        self.jobs
-            .try_send(job)
-            .map_err(|_| ThumbError::Unavailable)?;
+        // keep up. Dropping the request is correct: the row asks again after
+        // a short pause — `Busy`, not `Unavailable`, so that retry is not
+        // silenced by the miss cache.
+        self.jobs.try_send(job).map_err(|_| ThumbError::Busy)?;
 
-        reply_rx.recv().map_err(|_| ThumbError::Unavailable)?
+        let res = reply_rx.recv().map_err(|_| ThumbError::Busy)?;
+        if matches!(res, Err(ThumbError::Unavailable)) {
+            self.misses.lock().put(key, std::time::Instant::now());
+        }
+        res
     }
 }
 
@@ -398,5 +460,91 @@ mod tests {
     #[test]
     fn error_messages_are_written_for_the_user() {
         assert!(ThumbError::Unavailable.to_string().contains("thumbnail"));
+    }
+}
+
+#[cfg(test)]
+mod miss_cache_tests {
+    use super::*;
+
+    /// Hàng đợi đầy phải trả `Busy` — và tuyệt đối không được ghi vào
+    /// miss-cache, vì "đang bận" là lời mời hỏi lại chứ không phải câu trả
+    /// lời cuối cùng.
+    ///
+    /// Dịch vụ dựng với 0 worker và hàng sâu đúng 1: không ai rút việc ra,
+    /// nên một job mồi là hàng đầy — tất định, không đua tranh, không cần
+    /// chặn thread nào.
+    #[test]
+    fn hang_day_tra_busy_va_khong_ghi_nho() {
+        let svc = ThumbnailService::with_limits(0, 1);
+
+        // Job mồi chiếm chỗ duy nhất. Giữ đầu nhận sống tới cuối test để
+        // channel không tự dọn.
+        let (plug_tx, _plug_rx) = mpsc::sync_channel(1);
+        svc.jobs
+            .try_send(Job {
+                key: (0, 0),
+                path: String::new(),
+                size: 0,
+                reply: plug_tx,
+            })
+            .expect("job moi phai vao duoc hang con trong");
+
+        let res = svc.get(9, r"C:at\ky.mp4", 64);
+        assert!(
+            matches!(res, Err(ThumbError::Busy)),
+            "hang day phai la Busy, nhan duoc: {res:?}"
+        );
+        assert!(
+            svc.misses.lock().peek(&(9u64, 64u32)).is_none(),
+            "Busy bi ghi vao miss-cache — cac luot hoi lai se bi nuot oan"
+        );
+    }
+
+    /// Miss-cache phải trả lời tức thì, không đụng tới hàng đợi worker.
+    ///
+    /// Đường dẫn cố tình không tồn tại: nếu câu hỏi lọt qua miss-cache và
+    /// xuống tới worker, phép đo thời gian sẽ tố cáo (một vòng qua channel +
+    /// shell chậm hơn tra bảng hàng nghìn lần).
+    #[test]
+    fn miss_cache_tra_loi_ngay_khong_hoi_dia() {
+        let svc = ThumbnailService::new();
+        let key = (7u64, 64u32);
+        svc.misses.lock().put(key, std::time::Instant::now());
+
+        let t = std::time::Instant::now();
+        let res = svc.get(7, r"C:\duong\dan\khong\ton\tai.mp4", 64);
+        assert!(
+            matches!(res, Err(ThumbError::Unavailable)),
+            "phai la Unavailable, nhan duoc: {res:?}"
+        );
+        assert!(
+            t.elapsed() < std::time::Duration::from_millis(50),
+            "cham bat thuong — cau hoi da lot xuong worker"
+        );
+    }
+
+    /// Ghi nhớ hết hạn thì phải hỏi lại thật — cài codec mới xong, lần cuộn
+    /// sau phải thấy ảnh chứ không bị câu trả lời cũ đè một đời.
+    #[test]
+    fn miss_het_han_thi_hoi_lai() {
+        let svc = ThumbnailService::new();
+        let key = (8u64, 64u32);
+        svc.misses
+            .lock()
+            .put(key, std::time::Instant::now() - MISS_TTL - std::time::Duration::from_secs(1));
+
+        // Đường dẫn không tồn tại → worker thật sự được hỏi (shell trả lỗi
+        // Shell, thứ cố ý KHÔNG bị ghi nhớ — tệp biến mất có thể quay lại).
+        // Bất biến cần giữ: sau lần hỏi này, mục ghi nhớ CŨ không còn ngồi đó
+        // trả lời thay — hoặc đã bị nhổ đi, hoặc đã được làm tươi.
+        let _ = svc.get(8, r"C:\duong\dan\khong\ton\tai.mp4", 64);
+        let misses = svc.misses.lock();
+        if let Some(when) = misses.peek(&key) {
+            assert!(
+                when.elapsed() < MISS_TTL,
+                "muc ghi nho het han van con nguyen — expiry khong chay"
+            );
+        }
     }
 }

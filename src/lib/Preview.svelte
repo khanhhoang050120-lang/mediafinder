@@ -59,6 +59,17 @@
   /// that fullscreens itself.
   let armed = $state(false);
 
+  // Toàn bộ cơ chế bên trên từng chỉ tồn tại trong lời chú thích: `armed`
+  // được khai báo, được kiểm tra, nhưng chưa bao giờ được BẬT — nên sân khấu
+  // từ chối chuột vĩnh viễn và video không bấm dừng hay tua được. Mở khoá
+  // một lần cho mỗi lần overlay dựng lên: cái đuôi cử chỉ cần đề phòng chỉ
+  // sinh ra ở cú double-click mở overlay; bước sang tệp khác giữ nguyên
+  // overlay, không có cử chỉ mới nào để phải khoá lại.
+  $effect(() => {
+    const t = setTimeout(() => (armed = true), 800);
+    return () => clearTimeout(t);
+  });
+
   /// Refuse the tail of the gesture that opened this overlay.
   ///
   /// Runs in the capture phase on `window`, so it sees the event before the
@@ -69,16 +80,37 @@
     e.stopPropagation();
   }
 
+  /// Thẻ video đang chiếu, để phím Space với tới được nút tạm dừng.
+  let videoEl = $state<HTMLVideoElement | null>(null);
+
   function onKeydown(e: KeyboardEvent) {
     // The overlay owns the keyboard while it is up. Without stopping
     // propagation the list underneath would move at the same time, and closing
     // would land the user somewhere they never navigated to.
     switch (e.key) {
       case "Escape":
-      case " ":
         e.preventDefault();
         e.stopPropagation();
         onclose();
+        break;
+      case " ":
+        e.preventDefault();
+        e.stopPropagation();
+        // Space theo thói quen của từng loại nội dung: với video, mọi trình
+        // phát đều dạy người ta rằng Space là tạm dừng — đóng cửa sổ ngay
+        // giữa đoạn đang xem là phản xạ bị trừng phạt. Ảnh và nhạc không có
+        // thói quen đó, giữ nghĩa cũ: đóng. Video hỏng (đang hiện fallback)
+        // cũng đóng — không còn gì để mà dừng.
+        if (hit.kind === "video" && !failed && videoEl) {
+          if (videoEl.paused) {
+            const p = videoEl.play() as Promise<void> | undefined;
+            p?.catch(() => {});
+          } else {
+            videoEl.pause();
+          }
+        } else {
+          onclose();
+        }
         break;
       case "ArrowDown":
       case "ArrowRight":
@@ -167,6 +199,7 @@
         -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <video
+          bind:this={videoEl}
           {src}
           controls
           autoplay
@@ -215,7 +248,7 @@
       <span>{formatBytes(hit.size)}</span>
       {#if hit.width > 0}<span>{hit.width}×{hit.height}</span>{/if}
       <span class="spacer"></span>
-      <span class="hint"><kbd>↑</kbd><kbd>↓</kbd> đổi tệp · <kbd>Enter</kbd> mở · <kbd>Esc</kbd> đóng</span>
+      <span class="hint"><kbd>↑</kbd><kbd>↓</kbd> đổi tệp · <kbd>Enter</kbd> mở{#if hit.kind === "video" && !failed} · <kbd>Space</kbd> tạm dừng{/if} · <kbd>Esc</kbd> đóng</span>
     </footer>
   </div>
 </div>

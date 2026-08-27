@@ -526,6 +526,16 @@ pub fn dupe_progress(
     dupes.progress()
 }
 
+/// Stop a scan the person has walked away from.
+///
+/// The scan reads the disk for minutes. Without this, closing the view left it
+/// running to the end for an answer nobody would look at, competing for the
+/// same drive as the searching the person went back to doing.
+#[tauri::command]
+pub fn cancel_duplicates(dupes: State<'_, crate::media::dupes::DupeService>) {
+    dupes.cancel();
+}
+
 /// The finished groups, with every path resolved.
 #[tauri::command]
 pub fn dupe_groups(

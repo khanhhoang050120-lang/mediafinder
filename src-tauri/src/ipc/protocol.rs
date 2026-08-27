@@ -85,9 +85,11 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
             .body(png.as_ref().clone())
             .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR)),
 
-        // No thumbnail is an ordinary outcome — a codec that cannot decode
-        // this file, or a queue too busy to take the job. The page falls back
-        // to its coloured placeholder.
+        // Hai câu trả lời khác nhau cho hai tình huống khác nhau: 503 nghĩa
+        // là "hỏi lại đi, đĩa đang bận", 404 nghĩa là "tệp này không có
+        // thumbnail, hỏi lại vô ích". Giao diện thử lại một lỗi tạm thời và
+        // buông một lỗi thật.
+        Err(crate::media::thumbnail::ThumbError::Busy) => error(StatusCode::SERVICE_UNAVAILABLE),
         Err(_) => error(StatusCode::NOT_FOUND),
     }
 }
@@ -95,6 +97,10 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
 fn error(status: StatusCode) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)
+        // Một câu trả lời lỗi không bao giờ được nằm lại trong cache của
+        // webview: "đang bận" mà bị cache thì lần hỏi lại nhận đúng câu từ
+        // chối cũ mà đĩa không hề được hỏi.
+        .header("Cache-Control", "no-store")
         .body(Vec::new())
         .expect("static response builds")
 }

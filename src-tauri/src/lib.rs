@@ -152,6 +152,7 @@ pub fn run_gui() {
             ipc::commands::enrich_status,
             ipc::commands::find_duplicates,
             ipc::commands::dupe_progress,
+            ipc::commands::cancel_duplicates,
             ipc::commands::dupe_groups,
             ipc::commands::hotkey_status,
             ipc::commands::update_status,

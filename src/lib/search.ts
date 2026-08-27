@@ -91,6 +91,14 @@ export interface DupeProgress {
   hashed: number;
   groups: number;
   wasted: number;
+  /**
+   * A scan has finished and `groups` is its answer.
+   *
+   * Not the same as `groups > 0`: a library with nothing duplicated is a
+   * finished scan with an empty answer, and treating that as "never scanned"
+   * would re-run ten minutes of disk reading on every visit.
+   */
+  completed: boolean;
 }
 
 export interface DupeGroup {
@@ -106,6 +114,16 @@ export function findDuplicates(): Promise<void> {
 
 export function dupeProgress(): Promise<DupeProgress> {
   return invoke<DupeProgress>("dupe_progress");
+}
+
+/**
+ * Stop a scan the person has walked away from.
+ *
+ * The scan reads the disk for minutes; leaving it running would compete with
+ * whatever they went back to doing.
+ */
+export function cancelDuplicates(): Promise<void> {
+  return invoke("cancel_duplicates");
 }
 
 export function dupeGroups(limit = 500): Promise<DupeGroup[]> {
