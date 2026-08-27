@@ -1,11 +1,27 @@
+<script lang="ts" module>
+  /// Dấu hiệu "bản vá quan trọng" — dòng đầu RELEASE_NOTES.md bắt đầu bằng
+  /// `[quan trọng]`. Quy ước dành riêng cho lỗi mất dữ liệu / bảo mật: hộp
+  /// thoại vượt qua "Bỏ qua bản này" và đeo badge đỏ — thông tin mạnh hơn,
+  /// vẫn không ép (Để sau vẫn còn đó).
+  export const IMPORTANT_MARK = "[quan trọng]";
+
+  export function isImportantUpdate(notes: string | null): boolean {
+    return (notes ?? "").trimStart().startsWith(IMPORTANT_MARK);
+  }
+</script>
+
 <script lang="ts">
   import { installUpdate, openReleasesPage, type UpdateStatus } from "./search";
 
   let {
     update,
     open = $bindable(),
+    onskip,
   }: {
     update: UpdateStatus;
+    /// "Bỏ qua bản này": App ghi số hiệu vào prefs (bền qua các phiên) rồi
+    /// đóng hộp thoại — khác "Để sau" chỉ nhớ trong phiên.
+    onskip: () => void;
     /// Hộp thoại đang mở hay không — App giữ quyền mở/đóng vì chính App phải
     /// biết mà nhường bàn phím (cùng lý do với chốt chặn menu/preview bên đó),
     /// và mũi tên mở-lại nằm ở footer của App chứ không ở đây.
@@ -22,8 +38,14 @@
   /// cài đặt cho người tải tay từ trang Releases. Người đang đứng TRONG ứng
   /// dụng không cần ai dạy cách chạy bộ cài — cắt ở vạch, giữ phần đầu.
   /// (Hợp đồng này ghi ở release.yml, chỗ sinh ra nội dung ấy.)
+  const important = $derived(isImportantUpdate(update.available?.notes ?? null));
+
   const notes = $derived.by(() => {
-    const raw = update.available?.notes ?? "";
+    let raw = update.available?.notes ?? "";
+    // Dấu [quan trọng] là tín hiệu cho máy; người đọc đã có badge đỏ, không
+    // cần thấy cả cái ngoặc vuông.
+    raw = raw.trimStart();
+    if (raw.startsWith(IMPORTANT_MARK)) raw = raw.slice(IMPORTANT_MARK.length).trimStart();
     return raw.split(/\n\s*-{3,}\s*\n/)[0].trim();
   });
 
@@ -103,6 +125,7 @@
         </div>
       {:else}
         <div class="title">
+          {#if important}<span class="badge">Quan trọng</span>{/if}
           Có bản <b>{update.available?.version}</b>
           <span class="dim">— bạn đang dùng {update.current}</span>
         </div>
@@ -129,10 +152,15 @@
             {error ? "Thử lại" : "Cập nhật"}
           </button>
           <button class="later" onclick={later}>Để sau</button>
+          {#if !important}
+            <!-- Bản [quan trọng] không có đường bỏ qua — chỉ Để sau. -->
+            <button class="skip" onclick={onskip}>Bỏ qua bản này</button>
+          {/if}
         </div>
         <div class="hint">
-          Chọn "Để sau" thì lời mời nằm ở mũi tên dưới chân cửa sổ — bấm vào đó
-          khi nào muốn cập nhật.
+          "Để sau": hỏi lại ở lần mở tới. "Bỏ qua bản này": không tự hỏi lại
+          cho bản {update.available?.version} nữa — mũi tên dưới chân cửa sổ
+          vẫn ở đó khi bạn đổi ý.
         </div>
       {/if}
     </div>
@@ -262,5 +290,31 @@
   .hint {
     font-size: 11.5px;
     color: var(--dim, #8b93a3);
+  }
+  .badge {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ffd7d7;
+    background: #4a2226;
+    border: 1px solid #6b3238;
+    border-radius: 999px;
+    vertical-align: 1px;
+  }
+  .skip {
+    margin-left: auto;
+    font: inherit;
+    font-size: 12px;
+    color: var(--dim, #8b93a3);
+    background: none;
+    border: none;
+    padding: 7px 0;
+    cursor: pointer;
+  }
+  .skip:hover {
+    color: var(--text, #e7eaf0);
+    text-decoration: underline;
   }
 </style>

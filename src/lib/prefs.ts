@@ -11,11 +11,23 @@ export interface Prefs {
   grid: boolean;
   order: Order;
   activeKinds: MediaKind[];
+  /// Bản cập nhật người dùng đã chọn "Bỏ qua bản này".
+  ///
+  /// Bền qua các phiên — đây chính là điểm khác với "Để sau" (chỉ nhớ trong
+  /// phiên): người cố tình ở lại bản cũ không bị hỏi lại mỗi lần mở app.
+  /// Theo-từng-bản chứ không vĩnh viễn: bản mới hơn nữa ra thì hộp thoại
+  /// được phép quay lại.
+  skippedVersion: string | null;
 }
 
 const KEY = "mediafinder:prefs";
 
-const DEFAULTS: Prefs = { grid: false, order: "relevance", activeKinds: [] };
+const DEFAULTS: Prefs = {
+  grid: false,
+  order: "relevance",
+  activeKinds: [],
+  skippedVersion: null,
+};
 
 const VALID_KINDS: MediaKind[] = ["video", "image", "audio"];
 
@@ -50,6 +62,10 @@ export function loadPrefs(): Prefs {
     activeKinds: Array.isArray(p.activeKinds)
       ? VALID_KINDS.filter((k) => (p.activeKinds as unknown[]).includes(k))
       : [...DEFAULTS.activeKinds],
+    skippedVersion:
+      typeof p.skippedVersion === "string" && p.skippedVersion.length > 0
+        ? p.skippedVersion
+        : null,
   };
 }
 

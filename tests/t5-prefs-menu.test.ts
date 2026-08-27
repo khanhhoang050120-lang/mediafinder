@@ -17,23 +17,23 @@ describe("prefs — đọc/ghi và phòng dữ liệu hỏng", () => {
   beforeEach(() => localStorage.clear());
 
   it("kho rỗng thì trả mặc định", () => {
-    expect(loadPrefs()).toEqual({ grid: false, order: "relevance", activeKinds: [] });
+    expect(loadPrefs()).toEqual({ grid: false, order: "relevance", activeKinds: [], skippedVersion: null });
   });
 
   it("lưu rồi đọc lại thì y nguyên", () => {
-    const p: Prefs = { grid: true, order: "newest", activeKinds: ["video", "audio"] };
+    const p: Prefs = { grid: true, order: "newest", activeKinds: ["video", "audio"], skippedVersion: "2.0.0" };
     savePrefs(p);
     expect(loadPrefs()).toEqual(p);
   });
 
   it("JSON hỏng thì về mặc định, không ném lỗi", () => {
     localStorage.setItem(KEY, "{khong phai json");
-    expect(loadPrefs()).toEqual({ grid: false, order: "relevance", activeKinds: [] });
+    expect(loadPrefs()).toEqual({ grid: false, order: "relevance", activeKinds: [], skippedVersion: null });
   });
 
   it("JSON hợp lệ nhưng không phải object thì về mặc định", () => {
     localStorage.setItem(KEY, "42");
-    expect(loadPrefs()).toEqual({ grid: false, order: "relevance", activeKinds: [] });
+    expect(loadPrefs()).toEqual({ grid: false, order: "relevance", activeKinds: [], skippedVersion: null });
   });
 
   it("order lạ thì rơi về relevance — backend chưa từng hứa xử lý giá trị khác", () => {
@@ -53,6 +53,15 @@ describe("prefs — đọc/ghi và phòng dữ liệu hỏng", () => {
   it("activeKinds không phải mảng thì về rỗng", () => {
     localStorage.setItem(KEY, JSON.stringify({ activeKinds: "video" }));
     expect(loadPrefs().activeKinds).toEqual([]);
+  });
+
+  it("skippedVersion không phải chuỗi (hoặc rỗng) thì về null", () => {
+    localStorage.setItem(KEY, JSON.stringify({ skippedVersion: 7 }));
+    expect(loadPrefs().skippedVersion).toBeNull();
+    localStorage.setItem(KEY, JSON.stringify({ skippedVersion: "" }));
+    expect(loadPrefs().skippedVersion).toBeNull();
+    localStorage.setItem(KEY, JSON.stringify({ skippedVersion: "1.0.9" }));
+    expect(loadPrefs().skippedVersion).toBe("1.0.9");
   });
 
   it("grid không phải boolean thì về false", () => {
@@ -181,7 +190,7 @@ describe("prefs — App áp dụng và ghi lại", () => {
     await settle(60);
     click(chip(div, "Liên quan"));
     await settle(60);
-    expect(loadPrefs()).toEqual({ grid: false, order: "newest", activeKinds: ["audio"] });
+    expect(loadPrefs()).toEqual({ grid: false, order: "newest", activeKinds: ["audio"], skippedVersion: null });
     cleanup();
   });
 

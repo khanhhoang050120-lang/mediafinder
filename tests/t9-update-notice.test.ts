@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mount, unmount } from "svelte";
 import { IpcRecorder, settle } from "./helpers";
+import { loadPrefs, savePrefs } from "../src/lib/prefs";
 import App from "../src/App.svelte";
 import type { SearchHit, UpdateStatus } from "../src/lib/search";
 
@@ -260,6 +261,50 @@ describe("hộp thoại cập nhật", () => {
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await settle(40);
     expect(ipc.count("open_releases_page")).toBe(1);
+  });
+
+  it("Bỏ qua bản này: đóng hộp thoại, ghi vào prefs, mũi tên vẫn ở đó", async () => {
+    ipc = baseHandlers(FOUND);
+    const { div } = await mountApp();
+    click(btn("Bỏ qua bản này"));
+    await settle(60);
+    expect(dialog(), "hộp thoại chưa đóng sau khi bỏ qua").toBeNull();
+    expect(arrow(div), "bỏ qua là bỏ lời nhắc, không phải bỏ lối vào").toBeTruthy();
+    expect(loadPrefs().skippedVersion, "lựa chọn không được ghi bền").toBe("1.0.4");
+  });
+
+  it("phiên MỚI với bản đã bỏ qua: không tự hỏi lại; mũi tên vẫn mở được", async () => {
+    savePrefs({ grid: false, order: "relevance", activeKinds: [], skippedVersion: "1.0.4" });
+    ipc = baseHandlers(FOUND);
+    const { div } = await mountApp();
+    expect(dialog(), "bản đã bỏ qua mà vẫn tự bật — chính là nag").toBeNull();
+    const a = arrow(div);
+    expect(a).toBeTruthy();
+    click(a);
+    await settle(40);
+    expect(dialog(), "mũi tên phải luôn là lối vào").toBeTruthy();
+  });
+
+  it("bản MỚI HƠN bản đã bỏ qua: hộp thoại được phép quay lại", async () => {
+    savePrefs({ grid: false, order: "relevance", activeKinds: [], skippedVersion: "1.0.4" });
+    ipc = baseHandlers({ ...FOUND, available: { version: "1.0.5", notes: null } });
+    await mountApp();
+    expect(dialog(), "bỏ qua là theo-từng-bản, không phải vĩnh viễn").toBeTruthy();
+  });
+
+  it("[quan trọng]: vượt qua bỏ-qua, đeo badge, giấu dấu ngoặc, và KHÔNG có nút bỏ qua", async () => {
+    savePrefs({ grid: false, order: "relevance", activeKinds: [], skippedVersion: "1.0.4" });
+    ipc = baseHandlers({
+      ...FOUND,
+      available: { version: "1.0.4", notes: "[quan trọng] Sửa lỗi mất chỉ mục khi mất điện." },
+    });
+    await mountApp();
+    const d = dialog();
+    expect(d, "bản vá quan trọng phải vượt qua sự im lặng").toBeTruthy();
+    expect(d!.querySelector(".badge")?.textContent).toContain("Quan trọng");
+    expect(d!.textContent).toContain("Sửa lỗi mất chỉ mục");
+    expect(d!.textContent, "dấu hiệu cho máy lọt ra màn hình").not.toContain("[quan trọng]");
+    expect(btn("Bỏ qua bản này"), "bản quan trọng không có đường bỏ qua").toBeFalsy();
   });
 
   it("bấm Cập nhật: hộp thoại chuyển sang trạng thái đang tải", async () => {

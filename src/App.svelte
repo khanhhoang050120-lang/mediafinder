@@ -9,7 +9,7 @@
   import Preview from "./lib/Preview.svelte";
   import ScanStatusBar from "./lib/ScanStatusBar.svelte";
   import SearchBar from "./lib/SearchBar.svelte";
-  import UpdateNotice from "./lib/UpdateNotice.svelte";
+  import UpdateNotice, { isImportantUpdate } from "./lib/UpdateNotice.svelte";
   import VirtualList from "./lib/VirtualList.svelte";
   import { loadPrefs, savePrefs } from "./lib/prefs";
   import { prefetchThumb } from "./lib/thumbQueue";
@@ -77,6 +77,8 @@
   let error = $state<string | null>(null);
   let menu = $state<{ x: number; y: number; hit: SearchHit } | null>(null);
   let grid = $state(prefs.grid);
+  /// Bản người dùng đã "Bỏ qua bản này" — bền qua các phiên, khác Để sau.
+  let skippedVersion = $state<string | null>(prefs.skippedVersion);
   let showFilters = $state(false);
   let dupeMode = $state(false);
   let enrich = $state<EnrichStatus | null>(null);
@@ -278,7 +280,7 @@
   // Thoát ở khay hệ thống hoặc theo Windows, và một trình xử lý "trước khi
   // đóng" trong webview không được hứa hẹn sẽ kịp chạy.
   $effect(() => {
-    savePrefs({ grid, order, activeKinds });
+    savePrefs({ grid, order, activeKinds, skippedVersion });
   });
 
   // Hỏi một lần lúc khởi động: ánh xạ ổ đĩa hiếm khi đổi giữa chừng, và đây là
@@ -307,10 +309,14 @@
 
   $effect(() => {
     const v = update?.available?.version;
-    if (v && v !== noticeShownFor) {
-      noticeShownFor = v;
-      updateNoticeOpen = true;
-    }
+    if (!v || v === noticeShownFor) return;
+    // Bản đã "Bỏ qua" thì không tự bật hộp thoại nữa — trừ bản [quan trọng]
+    // (vá mất dữ liệu / bảo mật), thứ được phép vượt qua sự im lặng. Mũi tên
+    // dưới chân cửa sổ vẫn hiện cho mọi trường hợp: bỏ qua là bỏ lời nhắc,
+    // không phải bỏ lối vào.
+    if (v === skippedVersion && !isImportantUpdate(update?.available?.notes ?? null)) return;
+    noticeShownFor = v;
+    updateNoticeOpen = true;
   });
 
   // Tin cập nhật có thể về SAU khi cửa sổ đã mở: app khởi động cùng Windows
@@ -798,7 +804,14 @@
 {/if}
 
 {#if update?.available}
-  <UpdateNotice {update} bind:open={updateNoticeOpen} />
+  <UpdateNotice
+    {update}
+    bind:open={updateNoticeOpen}
+    onskip={() => {
+      skippedVersion = update?.available?.version ?? null;
+      updateNoticeOpen = false;
+    }}
+  />
 {/if}
 
 {#if menu}

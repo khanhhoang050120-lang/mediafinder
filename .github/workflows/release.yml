@@ -90,6 +90,9 @@ jobs:
             echo 'mềm chưa mua chứng chỉ ký số. Bấm **More info** rồi **Run anyway**.'
             echo ''
             echo 'Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ nguyên.'
+            echo ''
+            echo '**Muốn quay về bản cũ?** Mọi bản đều tải được ở trang Releases này — cài đè'
+            echo 'là xong. Nếu ứng dụng hỏi về chỉ mục, bấm **Quét lại** một lần là dùng tiếp.'
             echo 'NOTES_EOF'
           } >> "$GITHUB_OUTPUT"
 
