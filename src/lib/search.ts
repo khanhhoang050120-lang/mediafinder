@@ -403,6 +403,11 @@ export function updateStatus(): Promise<UpdateStatus> {
  * của họ. Trong lúc tải, `onProgress` cho biết đã được bao nhiêu phần trăm —
  * không có nó thì màn hình đứng im hàng phút và trông như bị treo.
  */
+/** Mở trang Releases trên trình duyệt — cho ai muốn đọc nhiều hơn tóm tắt. */
+export function openReleasesPage(): Promise<void> {
+  return invoke("open_releases_page");
+}
+
 export async function installUpdate(
   onProgress: (percent: number) => void,
 ): Promise<void> {

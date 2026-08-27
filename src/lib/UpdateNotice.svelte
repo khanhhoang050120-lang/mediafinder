@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { installUpdate, type UpdateStatus } from "./search";
+  import { installUpdate, openReleasesPage, type UpdateStatus } from "./search";
 
   let {
     update,
@@ -41,6 +41,32 @@
     }
   }
 
+  // ---- Dải mờ "còn nữa" ở mép dưới ô ghi chú ----
+  //
+  // Ô ghi chú có trần chiều cao và tự cuộn (khung với hai nút thì đứng yên —
+  // ghi chú dài cỡ nào cũng không đẩy được nút Cập nhật ra khỏi màn hình).
+  // Dải mờ chỉ hiện khi thật sự còn chữ bên dưới, và tắt khi đã cuộn tới đáy
+  // — một dải mờ thường trực trên ô ngắn là lời hứa suông.
+  let notesEl = $state<HTMLDivElement | null>(null);
+  let notesOverflow = $state(false);
+  let notesAtEnd = $state(false);
+
+  function measureNotes() {
+    if (!notesEl) {
+      notesOverflow = false;
+      return;
+    }
+    notesOverflow = notesEl.scrollHeight > notesEl.clientHeight + 1;
+    notesAtEnd =
+      notesEl.scrollTop + notesEl.clientHeight >= notesEl.scrollHeight - 2;
+  }
+
+  $effect(() => {
+    void notes;
+    void open;
+    measureNotes();
+  });
+
   function later() {
     if (updating) return; // đang tải dở thì không có "để sau"
     open = false;
@@ -56,7 +82,7 @@
   }
 </script>
 
-<svelte:window on:keydown|capture={onKeydown} />
+<svelte:window on:keydown|capture={onKeydown} on:resize={measureNotes} />
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -82,12 +108,17 @@
         </div>
 
         {#if notes}
-          <div class="notes">{notes}</div>
+          <div class="notes-wrap" class:fade={notesOverflow && !notesAtEnd}>
+            <div class="notes" bind:this={notesEl} onscroll={measureNotes}>{notes}</div>
+          </div>
         {:else}
           <!-- Máy chủ không gửi ghi chú thì nói thẳng, đừng để một khoảng
                trắng khiến người ta tưởng hộp thoại bị lỗi. -->
           <div class="notes dim">Bản này không kèm ghi chú thay đổi.</div>
         {/if}
+        <button class="all" onclick={() => openReleasesPage().catch(() => {})}>
+          Xem đầy đủ trên trang Releases ↗
+        </button>
 
         {#if error}
           <div class="error">Không tải được bản mới: {error}</div>
@@ -141,17 +172,53 @@
   .dim {
     color: var(--dim, #8b93a3);
   }
+  .notes-wrap {
+    position: relative;
+    background: #10151d;
+    border: 1px solid var(--line, #2a2e37);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  /* Dải mờ báo "còn nữa" — chỉ vẽ khi lớp bọc mang class fade. */
+  .notes-wrap.fade::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 34px;
+    background: linear-gradient(to bottom, rgba(16, 21, 29, 0), #10151d);
+    pointer-events: none;
+  }
   .notes {
     font-size: 13px;
     line-height: 1.55;
     /* Ghi chú là văn bản nhiều dòng từ máy chủ; giữ nguyên xuống dòng của nó
-       thay vì đổ thành một khối chữ liền. */
+       thay vì đổ thành một khối chữ liền — và bẻ được cả chuỗi liền mạch dài
+       (URL, đường dẫn), thứ pre-wrap một mình không bẻ nổi và từng là đường
+       tràn ngang duy nhất còn sót. */
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    /* Trần chiều cao: ghi chú dài thì CUỘN TRONG Ô — tiêu đề và hai nút của
+       hộp thoại đứng yên, hành động chính không bao giờ trốn khỏi màn hình. */
+    max-height: min(40vh, 320px);
+    overflow-y: auto;
     padding: 10px 12px;
-    background: #10151d;
-    border: 1px solid var(--line, #2a2e37);
-    border-radius: 8px;
     color: var(--text, #e7eaf0);
+  }
+  .all {
+    align-self: flex-start;
+    font: inherit;
+    font-size: 12px;
+    color: #7fb8ff;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .all:hover {
+    color: #b9d9ff;
+    text-decoration: underline;
   }
   .note {
     font-size: 13px;
