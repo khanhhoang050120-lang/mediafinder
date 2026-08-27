@@ -367,11 +367,22 @@ export function mediaUrl(epoch: number, index: number): string {
   return convertFileSrc(`${epoch}_${index}`, "media");
 }
 
+/** Bản mới máy chủ đang mời, kèm ghi chú "có gì mới" nếu có. */
+export interface UpdateFound {
+  version: string;
+  /**
+   * Nội dung release notes từ latest.json. Ghi chú mô tả *bản mới*, nên chỉ
+   * máy chủ mới biết — app đang chạy không thể tự bịa ra danh sách tính năng
+   * của một bản nó chưa từng thấy.
+   */
+  notes: string | null;
+}
+
 export interface UpdateStatus {
   /** Đã hỏi máy chủ xong chưa. `false` nghĩa là chưa biết, không phải là không có bản mới. */
   checked: boolean;
-  /** Phiên bản mới nếu có, ví dụ `"1.1.0"`. */
-  available: string | null;
+  /** Bản mới nếu có. */
+  available: UpdateFound | null;
   /** Phiên bản đang chạy. */
   current: string;
 }

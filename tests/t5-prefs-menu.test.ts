@@ -226,16 +226,20 @@ describe("tin cập nhật về SAU khi cửa sổ đã mở", () => {
     // Mở cửa sổ khi backend còn chưa hỏi được máy chủ (mạng lên chậm sau
     // đăng nhập) — không có băng nào cả.
     const { div, cleanup } = await mountApp();
-    expect(div.querySelector(".update")).toBeNull();
+    expect(document.querySelector("[role=dialog]")).toBeNull();
 
     // Backend thử lại thành công, ghi kết quả rồi bắn sự kiện.
-    ipc.on("update_status", { checked: true, available: "1.0.2", current: "1.0.1" });
+    ipc.on("update_status", {
+      checked: true,
+      available: { version: "1.0.2", notes: null },
+      current: "1.0.1",
+    });
     await ipc.emit("update-available", null);
     await settle(80);
 
-    const banner = div.querySelector(".update");
-    expect(banner, "cửa sổ đang mở phải nhận được tin, không chờ lần mở sau").toBeTruthy();
-    expect(banner!.textContent).toContain("1.0.2");
+    const dlg = document.querySelector("[role=dialog]");
+    expect(dlg, "cửa sổ đang mở phải nhận được tin, không chờ lần mở sau").toBeTruthy();
+    expect(dlg!.textContent).toContain("1.0.2");
     cleanup();
   });
 });
