@@ -297,6 +297,19 @@
     .then((u) => (update = u))
     .catch(() => {});
 
+  // Tin cập nhật có thể về SAU khi cửa sổ đã mở: app khởi động cùng Windows
+  // trước khi mạng kịp kết nối, backend giờ thử lại tới khi hỏi được và bắn
+  // sự kiện này khi có bản mới — không nghe thì cửa sổ đang mở cứ im lặng
+  // tới lần mở kế tiếp.
+  $effect(() => {
+    const stop = listen("update-available", async () => {
+      update = await updateStatus().catch(() => null);
+    });
+    return () => {
+      stop.then((off) => off());
+    };
+  });
+
   function startScan(withNetwork: boolean) {
     error = null;
     scan.start(withNetwork);
