@@ -79,34 +79,80 @@ fn set_tray_tooltip(app: &tauri::AppHandle, text: &str) {
     }
 }
 
-/// Hỏi máy chủ xem có bản mới không, chạy nền.
+/// Nhịp thử lại khi hỏi máy chủ thất bại, tính bằng giây.
+///
+/// Ứng dụng khởi động cùng Windows *trước khi* mạng kịp kết nối, nên cú hỏi
+/// đầu tiên gần như được sắp đặt để thất bại. Bản đầu của phần này hỏi đúng
+/// một lần rồi thôi — nghĩa là máy nào bật lên là trượt thông báo cập nhật
+/// cho tới lần khởi động kế tiếp, và với một ứng dụng ngồi ở khay hàng tuần
+/// thì "lần kế tiếp" xa vô kể. Giãn dần rồi dừng ở mười phút: máy offline
+/// thật sự chỉ tốn một yêu cầu mỗi mười phút, còn máy vừa nối mạng xong thì
+/// biết tin trong vòng nửa phút.
+const RETRY_DELAYS_SECS: &[u64] = &[30, 60, 120, 300, 600];
+
+/// Hỏi lại sau chừng này khi lần trước ĐÃ trả lời được.
+///
+/// Một phiên app sống nhiều ngày ở khay; bản phát hành ra lúc nào không ai
+/// hẹn trước. Một ngày một câu hỏi là đủ để không ai bị bỏ lại quá lâu.
+const RECHECK_SECS: u64 = 24 * 60 * 60;
+
+/// Delay cho lượt thử `n` (đếm từ 0), kẹp ở mức cuối bảng.
+fn retry_delay_secs(attempt: usize) -> u64 {
+    *RETRY_DELAYS_SECS
+        .get(attempt)
+        .unwrap_or(RETRY_DELAYS_SECS.last().expect("bảng nhịp không rỗng"))
+}
+
+/// Hỏi máy chủ xem có bản mới không, chạy nền — và hỏi cho tới khi có câu
+/// trả lời.
 ///
 /// Gọi lúc khởi động. Không chặn: mạng có thể chậm hoặc không có, và tìm kiếm
-/// phải dùng được ngay dù việc này chưa xong.
-///
-/// Mọi lỗi đều nuốt sau khi ghi log. Không kiểm tra được bản mới là chuyện
-/// vặt — nó không được phép cản trở việc chính của ứng dụng, và người dùng
-/// không làm gì được với một thông báo "không kết nối được máy chủ cập nhật".
+/// phải dùng được ngay dù việc này chưa xong. Lỗi không cản trở việc chính
+/// của ứng dụng — nhưng cũng không được phép là dấu chấm hết: thất bại thì
+/// thử lại theo [`RETRY_DELAYS_SECS`], trả lời được rồi thì một ngày hỏi lại
+/// một lần cho phiên sống dài ngày ở khay.
 pub fn check_in_background(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        use tauri_plugin_updater::UpdaterExt;
+    std::thread::Builder::new()
+        .name("update-check".into())
+        .spawn(move || {
+            use tauri_plugin_updater::UpdaterExt;
+            let mut failures = 0usize;
+            loop {
+                let updater = match app.updater() {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!("không dựng được updater: {e}");
+                        return;
+                    }
+                };
 
-        let updater = match app.updater() {
-            Ok(u) => u,
-            Err(e) => {
-                tracing::warn!("không dựng được updater: {e}");
-                return;
+                let wait = match tauri::async_runtime::block_on(updater.check()) {
+                    Ok(found) => {
+                        let version = found.map(|u| u.version.clone());
+                        let had_news = version.is_some();
+                        record(&app, version);
+                        failures = 0;
+                        if had_news {
+                            // Cửa sổ có thể đang mở sẵn từ trước khi tin về —
+                            // báo cho nó thay vì chờ lần mở kế tiếp.
+                            use tauri::Emitter;
+                            let _ = app.emit("update-available", ());
+                        }
+                        RECHECK_SECS
+                    }
+                    // Không có mạng là trường hợp thường gặp nhất ở đây, nhất
+                    // là ngay sau đăng nhập. Ghi log và hẹn lượt sau.
+                    Err(e) => {
+                        let d = retry_delay_secs(failures);
+                        failures += 1;
+                        tracing::info!("không kiểm tra được cập nhật (thử lại sau {d}s): {e}");
+                        d
+                    }
+                };
+                std::thread::sleep(std::time::Duration::from_secs(wait));
             }
-        };
-
-        match updater.check().await {
-            Ok(Some(update)) => record(&app, Some(update.version.clone())),
-            Ok(None) => record(&app, None),
-            // Không có mạng là trường hợp thường gặp nhất ở đây, và nó bình
-            // thường — máy có thể đang offline. Ghi log rồi thôi.
-            Err(e) => tracing::info!("không kiểm tra được cập nhật: {e}"),
-        }
-    });
+        })
+        .expect("spawn update-check");
 }
 
 #[cfg(test)]
@@ -120,6 +166,18 @@ mod tests {
     fn reset() {
         *AVAILABLE.lock() = None;
         CHECKED.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn nhip_thu_lai_gian_dan_roi_dung_o_muc_cuoi() {
+        let _g = SERIAL.lock();
+        assert_eq!(retry_delay_secs(0), 30);
+        assert_eq!(retry_delay_secs(1), 60);
+        assert_eq!(retry_delay_secs(4), 600);
+        // Qua het bang thi ket o muc cuoi — may offline lau ngay khong duoc
+        // phep leo thang vo han, cung khong duoc phep dung hoi.
+        assert_eq!(retry_delay_secs(5), 600);
+        assert_eq!(retry_delay_secs(500), 600);
     }
 
     #[test]

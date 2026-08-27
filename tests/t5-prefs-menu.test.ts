@@ -216,6 +216,30 @@ describe("prefs — App áp dụng và ghi lại", () => {
   });
 });
 
+describe("tin cập nhật về SAU khi cửa sổ đã mở", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    ipc = baseHandlers();
+  });
+
+  it("sự kiện update-available làm băng cập nhật hiện ra không cần mở lại", async () => {
+    // Mở cửa sổ khi backend còn chưa hỏi được máy chủ (mạng lên chậm sau
+    // đăng nhập) — không có băng nào cả.
+    const { div, cleanup } = await mountApp();
+    expect(div.querySelector(".update")).toBeNull();
+
+    // Backend thử lại thành công, ghi kết quả rồi bắn sự kiện.
+    ipc.on("update_status", { checked: true, available: "1.0.2", current: "1.0.1" });
+    await ipc.emit("update-available", null);
+    await settle(80);
+
+    const banner = div.querySelector(".update");
+    expect(banner, "cửa sổ đang mở phải nhận được tin, không chờ lần mở sau").toBeTruthy();
+    expect(banner!.textContent).toContain("1.0.2");
+    cleanup();
+  });
+});
+
 describe("menu chuột phải — mục Xem trước", () => {
   beforeEach(() => {
     localStorage.clear();
