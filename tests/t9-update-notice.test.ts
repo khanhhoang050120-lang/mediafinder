@@ -98,6 +98,12 @@ describe("hộp thoại cập nhật", () => {
     expect(arrow(div)).toBeNull();
   });
 
+  it("số phiên bản đang chạy luôn hiện ở chân cửa sổ", async () => {
+    ipc = baseHandlers(NONE);
+    const { div } = await mountApp();
+    expect(div.querySelector(".ver")?.textContent, "không thấy số phiên bản").toBe("v1.0.3");
+  });
+
   it("có bản mới lúc mở app: hộp thoại TỰ hiện, đủ số hiệu và hai nút", async () => {
     ipc = baseHandlers(FOUND);
     await mountApp();

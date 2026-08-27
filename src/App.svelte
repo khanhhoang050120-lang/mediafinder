@@ -771,9 +771,17 @@
         </svg>
       </button>
     {/if}
-    {#if hits.length && !dupeMode}
-      <span class="timing">{formatCount(hits.length)} kết quả · {elapsedMs.toFixed(1)} ms</span>
-    {/if}
+    <span class="right">
+      {#if hits.length && !dupeMode}
+        <span class="timing">{formatCount(hits.length)} kết quả · {elapsedMs.toFixed(1)} ms</span>
+      {/if}
+      {#if update}
+        <!-- Luôn nhìn thấy được mình đang chạy bản nào — sau một lần cập nhật,
+             đây là bằng chứng tại chỗ rằng nó đã thật sự diễn ra, và là con số
+             đầu tiên cần hỏi khi ai đó báo lỗi. -->
+        <span class="ver" title="Phiên bản đang chạy">v{update.current}</span>
+      {/if}
+    </span>
   </div>
 </main>
 
@@ -958,5 +966,12 @@
   .update-arrow:hover {
     color: #b9d9ff;
   }
+  .right {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
   .timing { flex: 0 0 auto; }
+  .ver { opacity: 0.75; }
 </style>
