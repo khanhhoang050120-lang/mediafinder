@@ -16,6 +16,8 @@
    ở [`docs/README.md`](./docs/README.md). Kết quả lượt test ghi vào
    [`docs/test-log.md`](./docs/test-log.md).
    Giai đoạn chỉ được coi là xong khi lượt test đã chạy và `docs/` đã cập nhật.
+6. **Mọi bước git đều chờ lệnh** (bổ sung 27/08): làm xong để ở working tree cho người dùng
+   duyệt; commit / push `edit` / merge `master` / tag phát hành — từng nấc chỉ làm khi được nói rõ.
 
 Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` đã kiểm chứng chạy được · `[!]` đang vướng
 
@@ -42,6 +44,16 @@ nào khớp tốt hơn ([CONF-005](docs/config.md#conf-005)).
 | **P10** | Quét ổ mạng / NAS theo yêu cầu | ✅ **XONG** — 313.945 tệp trên NAS, 4,5 phút, có nút riêng |
 | **P11** | Chạy nền ở khay hệ thống | ✅ **XONG** — đóng cửa sổ thì ẩn, chỉ Thoát mới tắt hẳn |
 | **P12** | Kéo tệp ra ngoài (CapCut, Explorer, web) | ✅ **XONG** — `CF_HDROP` thật, đã kiểm chứng đầu bên kia |
+| **P13** | Chọn nhiều, kéo nhiều, sắp theo thời gian | ✅ **XONG** — Ctrl/Shift chọn dải, kéo cả tập |
+| **P14** | Xem trước ngay trong ứng dụng | ✅ **XONG** — `media://`, ảnh/video/nhạc |
+| **P15** | Đóng gói phát hành 20–40 máy | ✅ **XONG** — máy trắng, SmartScreen thật, UAC một lần |
+| **P16** | Tách App.svelte + bộ kiểm thử vitest | ✅ **XONG** — 8 component, `npm test`, 2 bug bắt tại chỗ |
+| **P17** | Tuỳ chọn bền & làm chủ bàn phím | ✅ **XONG** — prefs qua phiên, chế độ trùng có bàn phím, Home/End/Ctrl+A |
+| **P18** | Đường ống thumbnail | ✅ **XONG** — hết "ảnh mất vĩnh viễn", nhịp đứng yên 120 ms |
+| **P19** | Xem trước: chuột và phím Space | ✅ **XONG** — viết nốt khoá `armed` bị thiếu |
+| **P20** | Chuỗi tự cập nhật + v1.0.2→v1.0.5 | ✅ **XONG** — người dùng kiểm chứng trọn vòng trên máy thật |
+| **P21** | Ghi chú dài & quyền ở lại bản cũ | 🟡 **một nửa chờ duyệt** — A+C+D đã lên master; phần skip nằm ở `edit` |
+| **P22** | Bốn mảng backend: nhật ký file, đo 0-kết-quả, xác minh tầng-3, lịch 15 phút | 🟡 **chờ duyệt ở working tree** — nghiệm thu tay trên máy thật, tìm & sửa BUG-P22-01 |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -1107,6 +1119,187 @@ Con số 48.291 chính là thứ một máy mới nhận được: **ổ trong m
 
 ---
 
+## P16 — Tách App.svelte + bộ kiểm thử vitest ✅
+
+**Người dùng nêu:** *App.svelte 1.636 dòng là God Component — vi phạm đơn nhiệm, khó bảo trì.*
+
+### Tách theo ranh giới trách nhiệm, không theo ranh giới đề xuất
+
+Tám file mới: `SearchBar`, `FilterPanel`, `UpdateBanner` (sau này thành `UpdateNotice`),
+`ScanStatusBar`, `DuplicateFinder`, `FirstRun`, `MediaRow`, và module `scanState.svelte.ts`.
+App còn ~730 dòng điều phối. Hai chỗ **cố ý làm khác** đề xuất ban đầu:
+
+- **State tìm kiếm ở lại App.** `epoch` là số hiệu bản chỉ mục, `hit.index` là vị trí *trong* bản
+  đó — `thumbUrl(epoch, hit.index)` chỉ đúng khi hai giá trị đến từ cùng một lần tìm. Đẩy ra module
+  dùng chung là biến bất biến trình biên dịch giữ được thành quy ước phải nhớ.
+- **CSS chế độ lưới thành prop** thay vì selector `.grid .thumb` từ cha: CSS của Svelte bị giới hạn
+  theo file. Đã đối chiếu bundle build ra — 7 quy tắc lưới chuyển đổi nguyên vẹn từng thuộc tính.
+
+### Hai bug lộ ra ngay trong lúc tách
+
+- Bộ lọc trễ một nhịp — tự gây: đổi `$derived` thành `$effect` khiến mỗi cú bấm lọc tìm theo *lần
+  bấm trước*; "Bỏ lọc" trả về danh sách bị lọc chặt nhất. Sửa bằng callback mang giá trị mới đi
+  cùng lệnh chạy lại.
+- Nhịp đọc-thuộc-tính (3 s) sống lâu hơn cửa sổ — có sẵn từ trước, vá cho nhất quán.
+
+### Bộ kiểm thử thành tài sản của repo
+
+Harness tạm 137 phép kiểm được chuyển thành vitest chính thức (`npm test`): stub Tauri IPC đếm được
+từng lệnh, vá jsdom (chiều cao viewport, ResizeObserver, DragEvent). Từ giai đoạn này trở đi, mọi
+đợt việc kết thúc bằng **kiểm thử đột biến** — cố tình phá từng nhánh code để chứng minh test bắt
+được; phép nào lọt lưới thì viết thêm test cho tới khi bắt.
+
+---
+
+## P17 — Tuỳ chọn bền & làm chủ bàn phím ✅
+
+**Người dùng chốt các mục 2→5 của lộ trình tối ưu.**
+
+- **Tuỳ chọn qua các phiên** (`prefs.ts`): lưới / sắp xếp / chip loại vào `localStorage`, kiểm hợp
+  lệ **từng trường** — dữ liệu của bản cũ không thể đưa app vào trạng thái không tồn tại. Chính
+  tính năng này làm các test cũ nhiễm nhau (phiên sau "nhớ" phiên trước) — lưới test bắt được ngay,
+  cách ly bằng `localStorage.clear()` mỗi ca.
+- **Nút "Xem trước" chết trong menu trùng lặp** — có sẵn: hit của chế độ trùng không nằm trong
+  `hits`, `indexOf` trả −1, bấm không có gì xảy ra. Mục menu giờ chỉ hiện khi thật sự dùng được.
+- **Bàn phím cho chế độ trùng lặp**: con trỏ đếm theo *tệp* và nhảy qua dòng tiêu đề nhóm; Enter
+  mở, Ctrl+Enter mở thư mục, Escape thoát chế độ. Trước đó các phím này rơi thẳng xuống danh sách
+  tìm kiếm **đang ẩn** — Enter mở một tệp không có trên màn hình. Kiến trúc: một chủ bàn phím duy
+  nhất ở App (bài học hai-listener-anh-em đã ghi trong code), component chỉ đưa thao tác.
+- **Home / End / Ctrl+A** với quy tắc phân xử kiểu Everything: con trỏ đang trong ô tìm kiếm thì
+  nhường phím cho việc sửa chữ; giữ Ctrl thì luôn là lệnh của danh sách. Viết test phát hiện
+  jsdom 30 thực thi `autofocus` — giả định của test sai, không phải của code.
+
+---
+
+## P18 — Đường ống thumbnail ✅
+
+**Người dùng hỏi:** *có nên làm Infinite Scroll để ảnh load kịp?* — Chẩn đoán trước khi trả lời:
+virtualizer sẵn có đã mạnh hơn Infinite Scroll; nghẽn không nằm ở danh sách kết quả mà ở đường ống
+ảnh, và ở đó có một chuỗi bug thật.
+
+### Chuỗi "ảnh mất vĩnh viễn" — có sẵn
+
+Hàng đợi backend đầy → lời từ chối bị trộn chung mã `404` với "tệp không có thumbnail" → frontend
+ẩn ảnh **vĩnh viễn**. Cái "dòng sẽ hỏi lại khi đứng yên" mà chú thích backend trông đợi chưa bao
+giờ được viết ở phía UI.
+
+### Ba tầng sửa + một bài học đắt
+
+- **Rust:** tách `Busy` (503) khỏi `Unavailable` (404); miss-cache 60 s để hỏi-lại với tệp không
+  ảnh gần như miễn phí; câu trả lời lỗi mang `no-store`. Trạng thái hàng-đầy ép được **tất định**
+  trong test nhờ `with_limits(0, 1)` — đóng khoảng trống từng để một phép đột biến lọt lưới.
+- **Cửa xoay frontend** (`thumbQueue.ts`): tối đa 8 ảnh đồng thời, ô vừa lọt vào mắt đi trước
+  (LIFO); prefetch theo hướng cuộn qua hook `onviewport` bỏ không. Probe thực nghiệm tự vạch ra lỗ
+  hổng của chính thiết kế mới — prefetch treo có thể bỏ đói ô đang nhìn → trần riêng 4/8 chỗ.
+- **Bug người dùng báo (cuộn nhanh rồi giật lên → ô trống vĩnh viễn):** chỗ tải buộc vào vòng đời
+  component, cú kéo nhanh bơm đầy hàng backend bằng job rác của dòng đã chết. Sửa gốc: **nhịp đứng
+  yên 120 ms** — dòng bị lướt qua không bắn ra yêu cầu nào; giãn thử-lại 300/1000/3000 ms.
+
+---
+
+## P19 — Xem trước: chuột và phím Space ✅
+
+**Người dùng báo:** *bấm xem video thì không dừng, không tua được bằng chuột.*
+
+Loại bug hiếm gặp: cơ chế chống-tự-phóng-to của P14 được chú thích tỉ mỉ — khoá chuột 800 ms rồi
+mở, có cả số liệu đo — nhưng **dòng code bật khoá chưa bao giờ tồn tại**: `armed` khai báo `false`,
+kiểm tra ở hai nơi, không nơi nào gán `true`. Sân khấu từ chối chuột vĩnh viễn. Viết nốt đúng một
+effect. Kèm theo yêu cầu tiếp: **Space tạm dừng video** thay vì đóng overlay (ảnh/nhạc giữ nghĩa
+cũ; video hỏng cũng đóng — không còn gì để dừng). Nhóm test `t8` khoá cả cơ chế khoá-mở lẫn Space.
+
+---
+
+## P20 — Chuỗi tự cập nhật tin được + v1.0.2 → v1.0.5 ✅
+
+**Mục tiêu người dùng:** máy đã cài bản cũ phải *tự biết* có bản mới — và kiểm chứng bằng máy thật.
+
+### Hai nửa của một bug có sẵn
+
+Người dùng restart máy, không thấy gì. Nửa 1: app hỏi máy chủ **đúng một lần lúc khởi động cùng
+Windows** — trước khi mạng kịp lên; lỗi bị nuốt, không bao giờ hỏi lại. Nửa 2 (tooltip khay đúng mà
+cửa sổ im): webview hỏi backend một lần **quá sớm**. Sửa: thử-lại giãn dần 30 s → 10 ph tới khi hỏi
+được, hỏi lại mỗi 24 h, và sự kiện `update-available` đánh thức cửa sổ đang mở.
+
+### Trải nghiệm cập nhật theo yêu cầu
+
+Hộp thoại kèm ghi chú "có gì mới" lấy từ `latest.json` (chỉ máy chủ biết bản mới có gì); hai nút
+Cập nhật / Để sau; "Để sau" thu về mũi tên giữa chân cửa sổ (icon do người dùng chọn, đã lọc sạch
+Sketch-export). Quy trình phát hành mới: changelog viết vào `RELEASE_NOTES.md`, workflow ghép với
+hướng dẫn cài qua vạch `---`, hộp thoại cắt ở vạch. Footer hiện **số phiên bản đang chạy** — bằng
+chứng tại chỗ sau mỗi lần cập nhật.
+
+### Bốn lần cắt bản
+
+v1.0.2 (đợt sửa lớn — nhưng cơ chế báo của chính nó còn lỗi) → v1.0.3 (nháp, bỏ — bị 1.0.4 gộp
+trọn) → v1.0.4 (người dùng cài tay làm bản nền, vì các bản cũ không tin được vào thông báo của
+chúng) → **v1.0.5: người dùng xác nhận chuỗi chạy trọn vòng** — hộp thoại đúng ghi chú → Cập nhật
+→ phần trăm tải → khởi động lại → footer ghi v1.0.5.
+
+Giữa giai đoạn có một lần **sập nguồn máy dev** — kiểm chứng bằng `git fsck` + chạy lại toàn bộ
+test: không mất một byte.
+
+---
+
+## P21 — Ghi chú dài & quyền ở lại bản cũ 🟡 (một nửa chờ duyệt)
+
+**Người dùng hỏi hai chuyện:** ghi chú dài có tràn khung không, và người *thích* bản cũ thì sao —
+"chưa chắc có bản mới thì user thích bản mới".
+
+### Đã lên master (A + C + D)
+
+Ô ghi chú có trần chiều cao và **tự cuộn** — tiêu đề và hai nút đứng yên, hành động chính không bao
+giờ trốn khỏi màn hình; dải mờ "còn nữa" chỉ hiện khi thật sự còn chữ; chuỗi liền mạch dài bẻ được.
+Tại nguồn: `scripts/check-release-notes.sh` chặn build khi `RELEASE_NOTES.md` rỗng hoặc quá 1.200
+ký tự. Link "Xem đầy đủ" mở trang Releases qua lệnh backend URL cố định.
+
+### Đang ở `edit` (60efce1) — chờ người dùng duyệt
+
+"**Bỏ qua bản này**" ghi bền vào prefs: bỏ lời nhắc chứ không bỏ lối vào (mũi tên vẫn đó; bản mới
+hơn được quay lại). Badge `[quan trọng]` cho vá mất-dữ-liệu/bảo mật: vượt qua bỏ-qua, không có nút
+bỏ qua, vẫn còn Để sau — thông tin mạnh hơn, vẫn không ép. Lời hứa ghi cạnh `SCHEMA_VERSION`:
+**chỉ nâng ở bản major** — trong cùng dòng 1.x, quay về bản cũ không mất gì; footer Releases chỉ
+đường quay về.
+
+---
+
+## P22 — Bốn mảng backend 🟡 (chờ duyệt ở working tree)
+
+**Người dùng chốt cả bốn đề xuất A–D**, kèm quy tắc mới thành luật: *tính năng mới = module riêng.*
+Bốn mảng, bốn module mới — không mảng nào phình vào file có sẵn.
+
+### A — `diag.rs`: bản đã cài cũng kể lại được chuyện gì xảy ra
+
+Bài học trực tiếp từ P20: chẩn đoán trên máy người dùng toàn suy luận chay vì `tracing` chỉ ra
+stderr. Giờ log đi hai ngả (stderr + file trong thư mục dữ liệu), xoay theo dung lượng 5 MB × 5
+file — cố ý không kéo dependency thời gian chỉ để đặt tên file. Menu khay thêm "Xem nhật ký".
+
+### B — `misslog.rs`: đo chất lượng tìm kiếm bằng truy vấn 0-kết-quả
+
+Triển khai đúng đề xuất nằm sẵn trong mục BT, với ràng buộc cứng của nó: mặc định **tắt**, bật là
+hành động có chủ ý ngay trong màn "Không tìm thấy kết quả nào" (component `MissLogControls` riêng),
+dữ liệu là một file văn bản cạnh cache có nút Xem/Xoá, **không gửi đi đâu**. Cái khó duy nhất là
+tiếng ồn khi gõ từng phím — giải bằng ô *chờ lắng* 2 giây: truy vấn 0-kết-quả chỉ được ghi khi nó
+đứng yên đủ lâu; chặng gõ dở bị thay thế, chưa từng chạm đĩa.
+
+### C — `media/verify.rs`: tầng 3 của tìm-trùng
+
+Tầng 2 tự thú "đối chiếu hai đầu tệp — xem lại trước khi xoá". Tầng 3 trả món nợ đó: hash trọn
+từng byte (blake3 sẵn có), **theo yêu cầu từng nhóm** — vài giây cho nhóm người dùng sắp hành động
+thay vì hàng giờ cho cả thư viện. Nút "Xác minh" trên tiêu đề nhóm; kết quả chỉ mặt đúng tệp khác
+nội dung, và tệp không-đọc-được thì *không kết luận gì* — không đọc được không phải là "khác".
+Đây là điều kiện tiên quyết của mục 7 (Thùng rác).
+
+### D — Lịch chỉ mục mỗi 15 phút (P9 giai đoạn 2, phiên bản thực dụng)
+
+Realtime thật cần đọc USN trong GUI, mà GUI cố ý chạy `asInvoker` — bức tường đó không đáng phá vì
+bản vá gia tăng chỉ tốn 0,45 s: thêm `Repetition PT15M` vào trigger là tệp mới hiện sau tối đa một
+khắc thay vì "ngày mai". Di trú cho 20–40 máy đã cài: chính task cũ chạy indexer elevated, nên
+indexer tự nhận lịch v1 (qua marker trong Description) và tự thay lịch cho mình ở lần chạy kế —
+không ai phải bấm gì. Test khoá marker và XML kể cùng một câu chuyện; clippy bắt được đúng một chỗ
+hớ hênh (hằng số marker không phải nguồn sự thật duy nhất) — đã sửa.
+
+---
+
 ## BT — Bảo trì sau phát hành 🟢
 
 Không phải một giai đoạn có điểm kết thúc. Quy tắc số 5 vẫn nguyên hiệu lực: **mọi vấn đề gặp trong
@@ -1155,6 +1348,7 @@ và bật lên phải là một hành động có chủ ý.
 | 2026-08-24 | Phạm vi tìm kiếm | chỉ **tên tệp** (đặc tả mục 3.3) | tìm cả **đường dẫn thư mục** | Dữ liệu thật tổ chức theo kiểu tên thư mục mang toàn bộ ý nghĩa, tên tệp chỉ là số. Tìm theo tên tệp trả về gần như rỗng. Xem `SPEC-001`. |
 | 2026-08-24 | Lọc thư mục | danh sách tên cố định | thêm quy tắc `skip_dot_directories` | Một quy tắc thay cho danh sách phải bổ sung mãi mãi; bao phủ cả công cụ cài sau này. Xem `ISSUE-001`. |
 | 2026-08-24 | `MediaKind` | thuộc P2 | kéo sớm sang P1 | Bộ lọc phần mở rộng chạy ngay lúc quét MFT, viết bảng này hai lần là vô lý. |
+| 2026-08-27 | Phát hành bản vá update-check | cắt v1.0.3 và publish ngay | cắt tag nhưng bỏ nháp, gộp vào v1.0.4 | Đợt hộp thoại cập nhật hoàn thành trước khi kịp publish; gộp lại thì người dùng chỉ phải cài tay một lần |
 | 2026-08-24 | crate `windows` | `0.58` | **`0.61`** | Tauri 2.11 đã kéo về `windows 0.61.3`. Giữ 0.58 → 2 bản trong graph, tốn build time và dễ xung đột type. Bump lúc chưa viết dòng Win32 nào là miễn phí; để sau sẽ phải sửa code. |
 
 ---
@@ -1183,3 +1377,37 @@ Chỉ ghi những gì đã **thực sự chạy** và kết quả quan sát đư
 | Chất lượng code | `cargo clippy --all-targets` | **sạch, 0 warning** |
 | Dispatch 2 chế độ | `mediafinder.exe --index` | log `indexer mode`, không mở GUI, exit 101 tại `unimplemented!` — đúng như thiết kế |
 | Manifest trong binary | `grep` chuỗi trong exe | có `asInvoker` `longPathAware` `PerMonitorV2`; **không** có `requireAdministrator` |
+
+### 2026-08-26 → 27 — P16–P21
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Toàn bộ kiểm thử JS | `npm test` (9 nhóm t1–t9) | **85/85 pass** |
+| Toàn bộ kiểm thử Rust | `cargo test --lib` | **226 pass, 0 fail** (3 test thumbnail + 4 test update mới) |
+| Type-check | `svelte-check` + `tsc --noEmit` | 0 lỗi, 0 warning, 119 file |
+| Kiểm thử đột biến | cố tình phá từng nhánh (LIFO, retry, skip, guard, armed, settle…) | **>20 phép, tất cả bị bắt**; 1 phép từng lọt (Busy↔Unavailable) đã vá bằng test Rust ép hàng-đầy tất định |
+| CSS sau refactor | đối chiếu bundle cũ/mới, bỏ hash scope | 0 selector mất; 7 quy tắc lưới chuyển prop **khớp từng thuộc tính** |
+| App thật sau refactor | `npm run tauri dev`, thư viện thật | 48.303 tệp, log sạch, ổn định >15 phút |
+| Chốt chặn ghi chú | `scripts/check-release-notes.sh` với file thật / dài 2.460 ký tự / rỗng | pass / **chặn đúng lý do** / chặn |
+| v1.0.2 phát hành | tag → CI 16 ph → publish → `latest.json` từ ngoài | version 1.0.2 + chữ ký đủ, `.exe` HTTP 200 |
+| v1.0.5 trọn vòng | người dùng thao tác trên máy chạy v1.0.4 | ✅ hộp thoại đúng ghi chú → Cập nhật → tải % → tự khởi động lại → footer `v1.0.5` |
+| Sau sập nguồn (27/08) | `git fsck` + chạy lại toàn bộ test | repo nguyên vẹn, 76/76 (thời điểm đó) pass — không mất byte nào |
+
+### 2026-08-27 (chiều) — P22
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit đủ bốn lệnh | `cargo test` · `clippy --all-targets` · `fmt --check` · `npm run check` | 236 pass · **0 warning** · sạch · 0 lỗi/120 file |
+| Kiểm thử JS toàn cục | `npm test` (10 nhóm, thêm t10) | **94/94 pass** |
+| Ô chờ-lắng của misslog | test đồng hồ tuỳ ý: chặng gõ dở bị thay, đứng yên 30 ms được ghi, tìm-thấy xoá ô chờ | 5/5 pass |
+| Kẻ giả dạng cùng-hai-đầu | tệp 4 KiB khác đúng 1 byte ở bụng | tầng 3 tách đúng cụm; UI chỉ mặt đúng tệp |
+| Xoay vòng nhật ký | file >5 MB dịch xuống `.1`, bản `.5` cũ rơi khỏi mép | pass |
+| Nghiệm thu tay A | file log trên đĩa sau một phiên chạy | ghi liên tục, không màu ANSI, đủ dòng |
+| Nghiệm thu tay B | chạy suốt phiên chưa bật bộ ghi | **không tạo file `misses.*` nào** — mặc-định-tắt đúng ngoài đời |
+| Nghiệm thu tay C | 3 tệp thật × 8 MB, kẻ giả dạng khác 1 byte ở bụng | **30 ms** (~800 MB/s), tách đúng cụm |
+| Nghiệm thu tay D | người dùng chạy task elevated trên máy thật | **lộ BUG-P22-01** (marker có dấu → vòng lặp xoá-tạo-lại); sửa xong, chạy lại 2 lần: log chỉ 1 dòng nâng cấp |
+| Đột biến P22 | 7 phép: bỏ chờ-lắng · hash-hằng · tắt xoay · gỡ Repetition · đọc cụm sai · nút không gọi backend · marker có dấu | **7/7 bị bắt** (2/1/1/1/3/1/1 ca đỏ), khôi phục giống hệt từng byte |
+
+**Trạng thái git lúc ghi:** `master` = hết A+C+D (P21 nửa đầu); `edit` = +`60efce1` (P21 nửa sau,
+chờ duyệt). `RELEASE_NOTES.md` còn là nội dung 1.0.5 — **phải viết lại trước khi cắt v1.0.6**
+(quên thì CI tự chặn). Mục 7 lộ trình (Thùng rác cho tệp trùng) chưa làm, chờ lệnh.

@@ -403,6 +403,45 @@ export function updateStatus(): Promise<UpdateStatus> {
  * của họ. Trong lúc tải, `onProgress` cho biết đã được bao nhiêu phần trăm —
  * không có nó thì màn hình đứng im hàng phút và trông như bị treo.
  */
+/** Tình hình bộ ghi truy-vấn-0-kết-quả (đo chất lượng tìm kiếm, cục bộ). */
+export interface MissLogStatus {
+  enabled: boolean;
+  count: number;
+}
+
+export function missLogStatus(): Promise<MissLogStatus> {
+  return invoke<MissLogStatus>("miss_log_status");
+}
+
+export function missLogSetEnabled(enabled: boolean): Promise<void> {
+  return invoke("miss_log_set_enabled", { enabled });
+}
+
+export function missLogClear(): Promise<void> {
+  return invoke("miss_log_clear");
+}
+
+/** Mở file ghi bằng trình soạn thảo mặc định. */
+export function missLogOpen(): Promise<void> {
+  return invoke("miss_log_open");
+}
+
+/**
+ * Tầng 3 tìm-trùng: xác minh trọn nội dung một nhóm ứng viên.
+ *
+ * `groups` là các cụm trùng thật sự từng byte — một cụm duy nhất nghĩa là
+ * nhóm đúng là bản sao của nhau; `unreadable` là tệp không đọc nổi, về chúng
+ * ta không kết luận gì.
+ */
+export interface VerifyOutcome {
+  groups: string[][];
+  unreadable: string[];
+}
+
+export function verifyDupeGroup(paths: string[]): Promise<VerifyOutcome> {
+  return invoke<VerifyOutcome>("verify_dupe_group", { paths });
+}
+
 /** Mở trang Releases trên trình duyệt — cho ai muốn đọc nhiều hơn tóm tắt. */
 export function openReleasesPage(): Promise<void> {
   return invoke("open_releases_page");

@@ -1052,3 +1052,43 @@ Sau lượt thử trên máy trắng, hai đường tôi không tự kiểm đư
 Điều thứ hai đóng lại phần còn dở ở lượt trước: khi đó tôi chỉ đo được bằng gỡ im lặng — đường đó
 **cố ý bỏ qua** bước xin quyền, nên tác vụ còn sót lại và tôi không biết đường xin quyền có chạy
 được không. Nay biết là chạy được.
+
+## 2026-08-27 — Lượt test P22 (bốn mảng backend)
+
+Nguồn phát hiện: tự kiểm chủ động sau khi viết, theo phương pháp đột biến.
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| 1 | `SCHEDULE_MARK` khai báo nhưng `schedule_is_current` so bằng chuỗi gõ tay — hai nơi có thể trôi lệch, và khi lệch thì task hoặc nâng cấp mãi hoặc không bao giờ nâng | clippy chỉ ra; sửa cho hàm dùng chính hằng số làm nguồn sự thật duy nhất, kèm mẩu ASCII suy ra từ nó cho đầu ra mã trang OEM |
+| 2 | Lịch v2 chưa có test — ai gỡ `Repetition` khỏi XML thì marker thành nói dối mà không gì đỏ | thêm `lich_v2_marker_va_xml_khop_nhau`; đột biến gỡ Repetition → đỏ đúng chỗ |
+| 3 | setup.rs đã có sẵn `mod tests` — mod mới đặt tên trùng gây E0428 | đổi `schedule_v2_tests`; bài học: grep trước khi append mod test |
+
+### Nghiệm thu tay trên máy thật (cùng ngày)
+
+Bốn mảng chạy trên bản dev, thư viện thật 48.319 tệp:
+
+| Mảng | Kết quả |
+|---|---|
+| A — nhật ký file | ✅ `%LOCALAPPDATA%\MediaFinder\logs\mediafinder.log` ghi liên tục, không màu ANSI, đủ mọi dòng như stderr |
+| B — bộ ghi 0-kết-quả | ✅ chạy suốt phiên **không tạo file `misses.*` nào** — lời hứa mặc-định-tắt giữ đúng ngoài đời |
+| C — xác minh tầng 3 | ✅ 3 tệp × 8 MB → **30 ms** (~800 MB/s), tách đúng kẻ giả dạng khác 1 byte ở giữa bụng |
+| D — lịch 15 phút | ⚠️ **lộ một bug thật** — xem dưới |
+
+#### BUG-P22-01: marker phiên bản lịch có dấu tiếng Việt → vòng lặp xoá-tạo-lại vô tận
+
+Người dùng chạy task elevated trên máy thật: `PT15M` = CO (lịch **đã** nâng cấp) nhưng marker = KHONG
+(hàm nhận diện **không** đọc thấy marker trong XML nó vừa tự ghi). Hậu quả nếu phát hành: indexer
+xoá và tạo lại scheduled task ở **mỗi** lần chạy — mỗi 15 phút, mãi mãi.
+
+Nguyên nhân: `schtasks /XML` in ra **UTF-8** (không phải UTF-16 như dự đoán), và marker `"[lịch v2"`
+chứa `ị` — ký tự nhiều byte. Phép so trên "mẩu ASCII lọc ra" tìm chuỗi `"ch v2]"`, nhưng giữa `ch`
+và ` v2]` thực tế là `ị` + `h`. Đoán sai hình dạng dữ liệu, và chỉ máy thật mới phơi ra.
+
+Sửa: marker thành **thuần ASCII** `[schedule-v2:`; hàm nhận diện thử UTF-8 trước rồi UTF-16. Thêm
+`assert!(SCHEDULE_MARK.is_ascii())` vào test — đột biến trả marker về chuỗi có dấu làm test đỏ đúng chỗ.
+
+Kiểm chứng lại trên máy thật: lần chạy 1 → marker CO, PT15M CO; lần chạy 2 → y hệt, và log chỉ có
+**đúng một** dòng "lịch định kỳ là bản cũ". Vòng lặp đã chấm dứt.
+
+Kết luận: 236 test Rust + 94 test JS xanh; 7/7 đột biến bị bắt. Toàn bộ nằm ở working tree chờ
+duyệt theo quy tắc git-theo-lệnh.

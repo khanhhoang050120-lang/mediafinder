@@ -202,7 +202,13 @@ pub async fn search(
                 duration_ms: p.duration_ms,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    // Đo chất lượng tìm kiếm: truy vấn 0-kết-quả là tín hiệu quý nhất, và
+    // đây là chỗ duy nhất biết chắc kết quả cuối cùng rỗng hay không. Lần
+    // tìm bị vượt (superseded) đã return sớm ở trên — không đếm, vì lần mới
+    // hơn sẽ tự nói thay. Khi tắt, lời gọi này là một lần đọc atomic.
+    crate::misslog::note_search(&query, hits.is_empty());
 
     Ok(SearchResponse {
         id,
@@ -580,6 +586,46 @@ pub fn dupe_groups(
                 .collect(),
         })
         .collect()
+}
+
+/// Tầng 3 tìm-trùng: xác minh trọn nội dung một nhóm ứng viên.
+///
+/// Chạy trên pool blocking — một nhóm vài tệp lớn trên NAS có thể mất nhiều
+/// giây, và luồng lệnh IPC không được phép đứng chờ đĩa.
+#[tauri::command]
+pub async fn verify_dupe_group(
+    paths: Vec<String>,
+) -> Result<crate::media::verify::VerifyOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::media::verify::verify_paths(&paths))
+        .await
+        .map_err(|e| format!("xác minh bị gián đoạn: {e}"))
+}
+
+/// Tình hình bộ ghi truy-vấn-0-kết-quả: đang bật không, đã ghi bao nhiêu.
+#[tauri::command]
+pub fn miss_log_status() -> crate::misslog::MissLogStatus {
+    crate::misslog::status()
+}
+
+/// Bật/tắt bộ ghi. Mặc định tắt; đây là hành động có chủ ý từ giao diện.
+#[tauri::command]
+pub fn miss_log_set_enabled(enabled: bool) {
+    crate::misslog::set_enabled(enabled);
+}
+
+/// Xoá sạch những gì đã ghi.
+#[tauri::command]
+pub fn miss_log_clear() {
+    crate::misslog::clear();
+}
+
+/// Mở file ghi bằng trình soạn thảo mặc định — nút "Xem" của giao diện.
+#[tauri::command]
+pub fn miss_log_open() -> Result<(), String> {
+    match crate::misslog::file_path() {
+        Some(p) => shell::open_with_default_app(&p),
+        None => Err("Chưa có gì được ghi.".into()),
+    }
 }
 
 /// Mở trang Releases trên trình duyệt — đường "xem đầy đủ" của hộp thoại

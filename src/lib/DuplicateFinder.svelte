@@ -8,6 +8,8 @@
     findDuplicates,
     formatBytes,
     formatCount,
+    verifyDupeGroup,
+    type VerifyOutcome,
     type DupeGroup,
     type DupeProgress,
     type SearchHit,
@@ -38,17 +40,53 @@
   /// Các nhóm được trải phẳng thành từng dòng để cùng một bộ ảo hoá vẽ được:
   /// một dòng tiêu đề cho mỗi nhóm, rồi tới các tệp của nó.
   type DupeRow =
-    | { head: true; group: DupeGroup; n: number }
-    | { head: false; hit: SearchHit; n: number };
+    | { head: true; group: DupeGroup; n: number; gi: number }
+    | { head: false; hit: SearchHit; n: number; gi: number };
 
   const rows = $derived.by<DupeRow[]>(() => {
     const out: DupeRow[] = [];
-    for (const g of dupes) {
-      out.push({ head: true, group: g, n: g.files.length });
-      for (const f of g.files) out.push({ head: false, hit: f, n: g.files.length });
-    }
+    dupes.forEach((g, gi) => {
+      out.push({ head: true, group: g, n: g.files.length, gi });
+      for (const f of g.files) out.push({ head: false, hit: f, n: g.files.length, gi });
+    });
     return out;
   });
+
+  // ---- Tầng 3: xác minh trọn nội dung, theo yêu cầu từng nhóm ----
+  //
+  // Tầng 2 chỉ nhìn dung lượng và hai đầu tệp — đủ để tìm ứng viên, không đủ
+  // để xoá. Nút này trả lời dứt điểm cho MỘT nhóm: hash từng byte, vài giây,
+  // thay vì hàng giờ cho cả thư viện.
+  type VerifyState = { running: boolean; out?: VerifyOutcome };
+  let verify = $state<Record<number, VerifyState>>({});
+
+  async function runVerify(gi: number) {
+    const g = dupes[gi];
+    if (!g || verify[gi]?.running) return;
+    verify[gi] = { running: true };
+    try {
+      const out = await verifyDupeGroup(g.files.map((f) => f.path));
+      verify[gi] = { running: false, out };
+    } catch (e) {
+      verify[gi] = { running: false };
+      onerror(String(e));
+    }
+  }
+
+  /// Phán quyết cho một tệp sau xác minh: bản sao thật của cụm đông nhất,
+  /// khác nội dung, hay không đọc được. Chưa xác minh thì không nói gì.
+  function verdict(gi: number, path: string): "same" | "diff" | "err" | null {
+    const out = verify[gi]?.out;
+    if (!out) return null;
+    if (out.unreadable.includes(path)) return "err";
+    return out.groups[0]?.includes(path) ? "same" : "diff";
+  }
+
+  /// Nhóm đã xác minh và mọi tệp đọc được đều trùng từng byte.
+  function allSame(gi: number): boolean {
+    const out = verify[gi]?.out;
+    return !!out && out.groups.length === 1 && out.unreadable.length === 0;
+  }
 
   // ---- Con trỏ bàn phím ----
   //
@@ -199,6 +237,20 @@
           <div class="ghead">
             <span class="gcount">{r.n} bản sao</span>
             <span class="gsize">{formatBytes(r.group.size)} mỗi tệp</span>
+            {#if verify[r.gi]?.out}
+              {#if allSame(r.gi)}
+                <span class="vok">✓ trùng từng byte</span>
+              {:else}
+                <span class="vbad">⚠ có tệp khác nội dung</span>
+              {/if}
+            {:else}
+              <button
+                class="vbtn"
+                disabled={verify[r.gi]?.running}
+                onclick={() => runVerify(r.gi)}
+                title="Hash trọn nội dung từng tệp trong nhóm — vài giây, trả lời dứt điểm trước khi xoá"
+              >{verify[r.gi]?.running ? "Đang xác minh…" : "Xác minh"}</button>
+            {/if}
             <span class="gwaste">thừa {formatBytes(r.group.wasted)}</span>
           </div>
         {:else}
@@ -214,6 +266,11 @@
             onkeydown={() => {}}
           >
             <MediaRow hit={r.hit} {epoch} {thumbSize} />
+            {#if verdict(r.gi, r.hit.path) === "diff"}
+              <span class="vtag vbad">khác nội dung</span>
+            {:else if verdict(r.gi, r.hit.path) === "err"}
+              <span class="vtag vdim">không đọc được</span>
+            {/if}
           </div>
         {/if}
       {/snippet}
@@ -288,6 +345,29 @@
   }
   .gcount { color: var(--text); font-weight: 600; }
   .gwaste { margin-left: auto; color: #ffc978; }
+
+  .vbtn {
+    font: inherit;
+    font-size: 11px;
+    padding: 1px 9px;
+    color: var(--text-dim);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .vbtn:hover:not(:disabled) { color: var(--text); }
+  .vbtn:disabled { opacity: 0.6; cursor: default; }
+  .vok { font-size: 11px; color: #7ed2a2; }
+  .vbad { font-size: 11px; color: #ef8f8f; }
+  .vtag {
+    flex: 0 0 auto;
+    font-size: 10.5px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .vdim { color: var(--text-dim); }
 
   .row {
     display: flex;

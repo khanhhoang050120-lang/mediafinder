@@ -4,3 +4,4 @@ pub mod dupes;
 pub mod enrich;
 pub mod metadata;
 pub mod thumbnail;
+pub mod verify;

@@ -51,10 +51,7 @@ fn main() {
     println!("  Ảnh            : {ni}");
     println!("  Âm thanh       : {na}");
     println!("Số thư mục       : {}", idx.dir_count());
-    println!(
-        "Tổng dung lượng  : {:.2} GB",
-        total_bytes as f64 / 1e9
-    );
+    println!("Tổng dung lượng  : {:.2} GB", total_bytes as f64 / 1e9);
 
     println!();
     println!("--- {rows} dòng đầu ---");

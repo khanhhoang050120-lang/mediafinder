@@ -10,9 +10,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub mod diag;
 pub mod index;
 pub mod ipc;
 pub mod media;
+pub mod misslog;
 pub mod ntfs;
 pub mod preflight;
 pub mod setup;
@@ -22,10 +24,10 @@ pub mod walk;
 
 /// Initialise tracing. Verbosity is controlled by `RUST_LOG`.
 pub fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("mediafinder=info,warn"));
-    let _ = fmt().with_env_filter(filter).try_init();
+    // Chi tiết nằm ở module `diag`: stderr cho phiên dev, file cho bản đã
+    // cài — nơi trước đây mọi chẩn đoán đều là suy luận chay vì log không
+    // đi đâu cả.
+    diag::init();
 }
 
 /// GUI mode. Runs unelevated; loads the index from the on-disk cache.
@@ -141,6 +143,11 @@ pub fn run_gui() {
             ipc::commands::search,
             ipc::commands::index_status,
             ipc::commands::open_file,
+            ipc::commands::verify_dupe_group,
+            ipc::commands::miss_log_status,
+            ipc::commands::miss_log_set_enabled,
+            ipc::commands::miss_log_clear,
+            ipc::commands::miss_log_open,
             ipc::commands::open_releases_page,
             ipc::commands::start_file_drag,
             ipc::commands::reveal_in_explorer,
@@ -174,14 +181,18 @@ fn build_tray(app: &tauri::AppHandle) {
     let open = MenuItemBuilder::with_id("open", format!("Mở MediaFinder  ({HOTKEY})"))
         .build(app)
         .ok();
+    let logs = MenuItemBuilder::with_id("logs", "Xem nhật ký")
+        .build(app)
+        .ok();
     let quit = MenuItemBuilder::with_id("quit", "Thoát").build(app).ok();
-    let (Some(open), Some(quit)) = (open, quit) else {
+    let (Some(open), Some(logs), Some(quit)) = (open, logs, quit) else {
         tracing::warn!("không dựng được mục menu khay hệ thống");
         return;
     };
 
     let menu = match MenuBuilder::new(app)
         .item(&open)
+        .item(&logs)
         .separator()
         .item(&quit)
         .build()
@@ -207,6 +218,18 @@ fn build_tray(app: &tauri::AppHandle) {
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open" => summon(app),
+            // Mở thư mục nhật ký bằng Explorer — khi một trong 20–40 máy kia
+            // gặp chuyện, câu trả lời nằm trong file thay vì một phiên đoán.
+            "logs" => {
+                if let Some(dir) = diag::logs_dir() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    if let Err(e) =
+                        crate::ipc::commands::shell::open_with_default_app(&dir.to_string_lossy())
+                    {
+                        tracing::warn!("không mở được thư mục nhật ký: {e}");
+                    }
+                }
+            }
             "quit" => {
                 tracing::info!("thoát theo yêu cầu từ khay hệ thống");
                 app.exit(0);
@@ -1229,6 +1252,11 @@ pub fn run_indexer() {
     let dry_run = std::env::args().any(|a| a == "--dry-run");
     let full = std::env::args().any(|a| a == "--full");
     tracing::info!(dry_run, full, "indexer starting");
+
+    // Tiến trình này chạy elevated — là chỗ duy nhất tự thay được lịch của
+    // chính mình. Máy còn mang lịch v1 (mỗi ngày) sẽ tự lên v2 (mỗi 15 phút)
+    // ở lần chạy định kỳ kế tiếp, không ai phải bấm gì.
+    setup::upgrade_schedule_if_stale();
 
     // This process is elevated — the user approved that for the scan they asked
     // for. Registering the refresh task here means it costs no second prompt,

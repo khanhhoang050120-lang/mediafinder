@@ -6,6 +6,7 @@
   import FilterPanel, { NO_FILTERS } from "./lib/FilterPanel.svelte";
   import FirstRun from "./lib/FirstRun.svelte";
   import MediaRow from "./lib/MediaRow.svelte";
+  import MissLogControls from "./lib/MissLogControls.svelte";
   import Preview from "./lib/Preview.svelte";
   import ScanStatusBar from "./lib/ScanStatusBar.svelte";
   import SearchBar from "./lib/SearchBar.svelte";
@@ -746,6 +747,8 @@
             Đang tìm…
           {:else}
             Không tìm thấy kết quả nào
+            <br />
+            <MissLogControls />
           {/if}
         </p>
       {/if}

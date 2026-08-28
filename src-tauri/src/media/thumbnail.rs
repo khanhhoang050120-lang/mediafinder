@@ -530,9 +530,10 @@ mod miss_cache_tests {
     fn miss_het_han_thi_hoi_lai() {
         let svc = ThumbnailService::new();
         let key = (8u64, 64u32);
-        svc.misses
-            .lock()
-            .put(key, std::time::Instant::now() - MISS_TTL - std::time::Duration::from_secs(1));
+        svc.misses.lock().put(
+            key,
+            std::time::Instant::now() - MISS_TTL - std::time::Duration::from_secs(1),
+        );
 
         // Đường dẫn không tồn tại → worker thật sự được hỏi (shell trả lỗi
         // Shell, thứ cố ý KHÔNG bị ghi nhớ — tệp biến mất có thể quay lại).

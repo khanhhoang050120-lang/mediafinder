@@ -47,7 +47,7 @@ const SHORTCUT_NAME: &str = "MediaFinder.lnk";
 const TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Cập nhật chỉ mục MediaFinder từ USN journal. Chạy nhanh, vài giây.</Description>
+    <Description>Cập nhật chỉ mục MediaFinder từ USN journal. Chạy nhanh, vài giây. [schedule-v2: 15 min]</Description>
     <URI>\{TASK}</URI>
   </RegistrationInfo>
   <Triggers>
@@ -62,6 +62,16 @@ const TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
       <ScheduleByDay>
         <DaysInterval>1</DaysInterval>
       </ScheduleByDay>
+      <!-- Lịch v2 (P9 giai đoạn 2, phiên bản thực dụng): bản vá gia tăng chỉ
+           tốn ~0,45 giây, nên lặp mỗi 15 phút gần như miễn phí — và tệp mới
+           tải về tự hiện trong danh sách sau tối đa một khắc, thay vì "ngày
+           mai". Realtime thật sự cần đọc USN trong GUI, mà GUI cố ý chạy
+           asInvoker — bức tường đó không đáng phá vì 15 phút đã đủ tươi. -->
+      <Repetition>
+        <Interval>PT15M</Interval>
+        <Duration>P1D</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
     </CalendarTrigger>
   </Triggers>
   <Principals>
@@ -109,6 +119,71 @@ pub fn scheduled_task_exists() -> bool {
     schtasks(&["/Query", "/TN", TASK_NAME])
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Dấu hiệu phiên bản lịch, nằm trong Description của task.
+///
+/// 20–40 máy ngoài kia đã đăng ký lịch v1 (đăng nhập + mỗi ngày). Chúng
+/// không tự biết lịch mới tồn tại — nhưng chính task đó chạy indexer với
+/// quyền cao, nên indexer ở lần chạy kế tiếp có thể tự thay lịch cho mình.
+///
+/// **Thuần ASCII có chủ đích.** Bản đầu dùng "[lịch v2" — marker nằm đúng
+/// trong task, nhưng `schtasks /XML` in ra UTF-8 và chữ `ị` là ký tự nhiều
+/// byte, nên mọi phép so trên mẩu-ASCII-lọc-ra đều trượt. Hậu quả không hề
+/// vô hại: lịch đã nâng vẫn bị coi là cũ, và indexer xoá-tạo-lại task ở
+/// **mỗi** lần chạy, mãi mãi. Đo trên máy thật mới lộ ra (P22).
+const SCHEDULE_MARK: &str = "[schedule-v2:";
+
+fn schedule_is_current() -> bool {
+    let Ok(out) = schtasks(&["/Query", "/TN", TASK_NAME, "/XML"]) else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    // schtasks /XML in ra UTF-16 hoặc mã trang OEM tuỳ máy; marker toàn ASCII
+    // trừ chữ có dấu — so bằng đoạn ASCII "ch v2" là đủ chắc và miễn nhiễm
+    // với mã hoá đầu ra.
+    // `schtasks /XML` in UTF-8 trên máy đo được, nhưng UTF-16 cũng từng thấy
+    // tuỳ phiên bản Windows. Marker thuần ASCII sống sót qua cả hai (và qua
+    // cả mã trang OEM), nên chỉ cần thử hai cách đọc là đủ chắc.
+    let text_utf8 = String::from_utf8_lossy(&out.stdout).into_owned();
+    if text_utf8.contains(SCHEDULE_MARK) {
+        return true;
+    }
+    let utf16: Vec<u16> = out
+        .stdout
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&utf16).contains(SCHEDULE_MARK)
+}
+
+/// Nâng lịch lên phiên bản hiện hành nếu máy còn mang lịch cũ.
+///
+/// **Gọi từ tiến trình indexer (đã elevated).** Xoá-rồi-tạo-lại thay vì
+/// /Change vì schtasks không sửa được Repetition qua cờ lệnh.
+pub fn upgrade_schedule_if_stale() {
+    if !scheduled_task_exists() || schedule_is_current() {
+        return;
+    }
+    tracing::info!("lịch định kỳ là bản cũ — nâng lên lịch v2 (mỗi 15 phút)");
+    match schtasks(&["/Delete", "/TN", TASK_NAME, "/F"]) {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            tracing::warn!(
+                "không xoá được lịch cũ (mã {:?}): {}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("không gọi được schtasks: {e}");
+            return;
+        }
+    }
+    ensure_scheduled_task();
 }
 
 /// Register the refresh task, if it is not there already.
@@ -390,5 +465,37 @@ mod tests {
     fn the_startup_folder_is_findable_on_this_machine() {
         let dir = startup_dir().expect("Windows luôn có thư mục Startup");
         assert!(dir.is_dir(), "{} phải là thư mục", dir.display());
+    }
+}
+
+#[cfg(test)]
+mod schedule_v2_tests {
+    use super::*;
+
+    /// XML và hằng số marker phải kể cùng một câu chuyện — ai đó sửa lịch
+    /// trong XML mà quên marker (hoặc ngược lại) thì upgrade_schedule sẽ
+    /// hoặc nâng cấp mãi mãi, hoặc không bao giờ nâng.
+    #[test]
+    fn lich_v2_marker_va_xml_khop_nhau() {
+        assert!(
+            TASK_XML.contains(SCHEDULE_MARK),
+            "Description trong XML phai mang marker {SCHEDULE_MARK:?}"
+        );
+        assert!(
+            TASK_XML.contains("<Interval>PT15M</Interval>"),
+            "lich v2 la moi-15-phut; thieu Repetition thi marker dang noi doi"
+        );
+        assert!(
+            TASK_XML.contains("<Repetition>") && TASK_XML.contains("StopAtDurationEnd"),
+            "khoi Repetition phai du hinh hai"
+        );
+        // Bat bien dat gia nhat cua khoi nay, do bang may that moi ra: marker
+        // phai THUAN ASCII. Mot chu co dau trong marker la ky tu nhieu byte,
+        // va moi phep so tren dau ra schtasks deu truot — lich da nang van bi
+        // coi la cu, indexer xoa-tao-lai task mai mai.
+        assert!(
+            SCHEDULE_MARK.is_ascii(),
+            "marker phai thuan ASCII de song sot qua moi cach ma hoa dau ra"
+        );
     }
 }
