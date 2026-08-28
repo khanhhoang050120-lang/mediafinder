@@ -72,7 +72,20 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 24, không phải 20. `jsdom@30` — môi trường mà toàn bộ 170 bài kiểm
+          # thử giao diện chạy trong đó — khai `engines.node` là
+          # `^22.22.2 || ^24.15.0 || >=26.0.0`, và các gói con của nó
+          # (`undici@8` cần >=22.19, `whatwg-url@17` cần ^22.14) cũng vậy.
+          # Node 20 không nằm trong bất kỳ khoảng nào.
+          #
+          # Triệu chứng khi để 20: `npm test` chết sau ĐÚNG 7 GIÂY — chưa chạy
+          # bài nào, vì nó hỏng lúc dựng môi trường jsdom. Bộ kiểm thử mất
+          # ~100 giây, nên con số 7 giây chính là thứ phân biệt "hỏng môi
+          # trường" với "có bài trượt"; đừng bỏ qua nó.
+          #
+          # Chọn 24 chứ không phải 22 vì đó là phiên bản đã chạy xanh toàn bộ
+          # vòng kiểm tra trên máy phát triển (24.18.0, thoả `^24.15.0`).
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
