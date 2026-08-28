@@ -13,10 +13,41 @@
 #        src-tauri/Cargo.toml
 #        src-tauri/Cargo.lock        <- dòng version của crate `mediafinder`
 #   2. git commit
-#   3. git tag v1.0.1 && git push origin master --tags
+#   3. git tag v1.0.1 && git push origin <nhánh> --tags
 #
 # Đẩy tag lên là workflow tự chạy. Khoảng 10-20 phút sau, bản Release có sẵn
 # file .exe cho người dùng tải.
+#
+# ---------------------------------------------------------------------------
+# TAG GẮN VÀO COMMIT, KHÔNG GẮN VÀO NHÁNH
+#
+# Workflow này chạy khi đẩy **tag**, không phải khi đẩy nhánh. Mà tag thì dán
+# được vào bất kỳ commit nào, trên bất kỳ nhánh nào — nên phát hành từ `edit`
+# hoàn toàn được, và `master` cứ đứng yên làm bản cứu vớt.
+#
+# Bộ cập nhật trên máy người dùng KHÔNG biết nhánh là gì. Nó hỏi đúng một địa
+# chỉ (`.../releases/latest/download/latest.json`) rồi so số hiệu. Máy đang ở
+# v1.0.4 hay v1.0.5 đều nhận thông báo như nhau, bất kể tag đến từ nhánh nào —
+# endpoint và khoá công khai giữ nguyên từ v1.0.4 tới nay.
+#
+# Nên hai thứ này là hai cần gạt riêng, đừng gộp:
+#   * NHÁNH          — code nằm ở đâu trong lịch sử. Người dùng không thấy.
+#   * TRẠNG THÁI RELEASE — ai nhận được bản mới. Đây mới là thứ cần cân nhắc.
+#
+# PHÁT HÀNH THEO ĐỢT (cách dùng hiện tại):
+#   a. Tag trên `edit`, đẩy tag. CI dựng, tạo Release dạng **nháp**.
+#   b. Vào xem, bấm Publish → nó thành **pre-release**: không máy nào tự cập
+#      nhật, nhưng `.exe` tải được. Đưa link cho vài người thử.
+#   c. Chạy vài ngày thấy ổn → bỏ tick "Set as a pre-release". Lúc đó cả
+#      studio mới nhận thông báo.
+#   d. Có chuyện → tick lại. Máy chưa nâng dừng ngay. Máy đã nâng thì cài đè
+#      bản cũ từ trang Releases (`ALLOWDOWNGRADES` = true).
+#   e. Gộp lên `master` SAU bước (c), khi đã tin. Đó thuần tuý là ghi sổ.
+#
+# DẶN NGƯỜI THỬ: cài tay đè lên bản ≤ v1.0.5 thì trang chọn của bộ cài có hai
+# nút, nút trên **được tích sẵn** và nó XOÁ chỉ mục — vì bộ gỡ chạy lúc đó là
+# bộ gỡ CŨ đang nằm trên máy, mang lỗi BUG-024. Bảo họ chọn nút dưới ("Do not
+# uninstall"): bộ gỡ không chạy, chỉ mục còn nguyên.
 name: Release
 
 on:
@@ -139,6 +170,25 @@ jobs:
           # Để nháp: bạn vào xem, thấy ổn thì tự bấm Publish. Đổi thành false
           # nếu muốn Release hiện ra công khai ngay khi build xong.
           releaseDraft: true
-          prerelease: false
+          # PHÁT HÀNH THEO ĐỢT — cần gạt an toàn của cả quy trình.
+          #
+          # Ứng dụng trên máy người dùng hỏi đúng một địa chỉ:
+          #   .../releases/latest/download/latest.json
+          # GitHub định nghĩa `/latest` là bản mới nhất **không phải
+          # pre-release**. Nên một Release gắn cờ pre-release thì:
+          #
+          #   * KHÔNG máy nào tự cập nhật lên — `installMode: passive` nghĩa là
+          #     bản thường sẽ tự cài, nên đây là khác biệt lớn;
+          #   * tệp `.exe` VẪN tải được công khai từ trang Releases, đưa cho
+          #     vài người thử.
+          #
+          # Thấy ổn thì vào GitHub bỏ tick "Set as a pre-release" — `/latest`
+          # trỏ sang nó và cả studio mới nhận thông báo. Có chuyện thì tick
+          # lại: mọi máy chưa nâng dừng ngay lập tức.
+          #
+          # Đặt `true` từ v1.0.6, bản chở nguyên cụm P21–P31 (~2.900 dòng qua
+          # 33 tệp) mà chưa một máy nào ngoài kia chạy. Đổi về `false` khi lại
+          # phát hành những bản nhỏ, đã quen tay.
+          prerelease: true
 
 # Đăng ký lại workflow với GitHub.

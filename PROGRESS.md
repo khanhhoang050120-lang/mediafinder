@@ -1853,3 +1853,34 @@ chờ duyệt). `RELEASE_NOTES.md` còn là nội dung 1.0.5 — **phải viết
 | Vết hỏng bám sang tệp sau | bỏ việc đặt lại trạng thái | đỏ đúng bài |
 | Bản dựng thật | lái chuột trên `--no-bundle` | "Ổ trong máy: 11 phút trước · Ổ mạng: 11 giờ trước" |
 | Đóng dấu `lastcheck.json` từ `--index` thật | cần Administrator | **chưa chạy** — 6 bài đơn vị + 2 chốt đọc mã canh điểm gọi |
+
+---
+
+## Quyết định phát hành v1.0.6 — theo đợt, không phát thẳng cho cả studio
+
+Chủ dự án đặt vấn đề: v1.0.6 chở nguyên cụm P21–P31 (~2.900 dòng qua 33 tệp) mà chưa một máy nào
+ngoài kia chạy, nên đẩy thẳng cho tất cả là đánh cược. Ý ban đầu là "phát hành từ nhánh `edit`, giữ
+`master` làm bản cứu vớt".
+
+**Nhánh không phải là cần gạt.** `release.yml` chạy khi đẩy **tag**, mà tag dán được vào bất kỳ
+commit nào trên bất kỳ nhánh nào — nên phát hành từ `edit` vốn đã làm được. Nhưng nó **không** thu
+hẹp bán kính: bộ cập nhật hỏi đúng một địa chỉ
+(`…/releases/latest/download/latest.json`) rồi so số hiệu, không biết nhánh là gì. Đã đối chiếu:
+endpoint và khoá công khai **giống hệt nhau** ở v1.0.4, v1.0.5 và HEAD — nên mọi máy nhận thông báo
+như nhau bất kể tag đến từ đâu, và `installMode: passive` nghĩa là nó tự cài.
+
+**Cần gạt đúng là trạng thái Release.** GitHub định nghĩa `/latest` là bản mới nhất **không phải
+pre-release**. Nên `prerelease: true` cho đúng thứ cần: không máy nào tự nâng, mà `.exe` vẫn tải
+được công khai để đưa cho vài người thử. Thấy ổn thì bỏ tick, cả studio mới nhận; có chuyện thì tick
+lại, máy chưa nâng dừng ngay.
+
+Đã đổi `prerelease: false` → `true`, kèm quy trình sáu bước ghi ngay ở đầu `release.yml`.
+
+**Một điểm ngược với trực giác, đáng ghi lại.** "Ở lại v1.0.5 cho an toàn" thực ra **không** an
+toàn hơn: khi cài đè, thứ chạy là bộ gỡ **đang nằm trên máy**. Máy ở v1.0.5 thì mọi lần cài tay —
+kể cả cài để *quay về* bản cũ — đều xoá sạch chỉ mục. Máy đã lên v1.0.6 thì bộ gỡ trên đĩa là bản
+đã vá, và đo được: `index.bin` 48.074.384 + `metadata.bin` 14.811.580 còn nguyên. `ALLOWDOWNGRADES`
+= `true`. Nói cách khác, **v1.0.6 chính là bản tạo ra lối rút lui an toàn** — đó là lý do đáng phát
+hành nó theo đợt thay vì hoãn vô thời hạn.
+
+Gộp lên `master` để **sau** khi bỏ tick pre-release, và chỉ là ghi sổ.
