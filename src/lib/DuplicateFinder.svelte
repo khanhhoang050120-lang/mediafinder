@@ -82,10 +82,27 @@
     return out.groups[0]?.includes(path) ? "same" : "diff";
   }
 
-  /// Nhóm đã xác minh và mọi tệp đọc được đều trùng từng byte.
-  function allSame(gi: number): boolean {
+  /// Kết luận của tầng 3 cho một nhóm — **ba** trạng thái, không phải hai.
+  ///
+  /// Bản đầu chỉ có "trùng hết" và "khác nội dung", và nó nói sai đúng vào ca
+  /// đáng nói nhất: một nhóm có hai tệp trùng nhau cộng một tệp **không đọc
+  /// được** (NAS vừa rớt mạng, tệp đang bị khoá) rơi vào nhánh "⚠ có tệp khác
+  /// nội dung" — trong khi không có tệp nào khác nội dung cả, chỉ có một tệp
+  /// chưa đọc được. Ca cả nhóm nằm trên ổ mạng vừa mất kết nối còn tệ hơn:
+  /// `groups` rỗng, tiêu đề đỏ lên cảnh báo, mà mọi dòng bên dưới đều mang
+  /// nhãn "không đọc được".
+  ///
+  /// Trái đúng nguyên tắc mà `verify.rs` tự đặt ra và ghi thành lời: **không
+  /// đọc được không phải là khác**. Người dùng đang định xoá tệp dựa trên câu
+  /// trả lời này, nên nói sai theo hướng nào cũng đắt.
+  function groupVerdict(gi: number): "same" | "diff" | "unknown" | null {
     const out = verify[gi]?.out;
-    return !!out && out.groups.length === 1 && out.unreadable.length === 0;
+    if (!out) return null;
+    // Có tệp khác nội dung thật thì đó là câu trả lời, bất kể còn gì khác.
+    if (out.groups.length > 1) return "diff";
+    // Không tệp nào khác nội dung, nhưng có tệp chưa đọc được → chưa đủ cơ sở.
+    if (out.unreadable.length > 0) return "unknown";
+    return "same";
   }
 
   // ---- Con trỏ bàn phím ----
@@ -238,10 +255,12 @@
             <span class="gcount">{r.n} bản sao</span>
             <span class="gsize">{formatBytes(r.group.size)} mỗi tệp</span>
             {#if verify[r.gi]?.out}
-              {#if allSame(r.gi)}
+              {#if groupVerdict(r.gi) === "same"}
                 <span class="vok">✓ trùng từng byte</span>
-              {:else}
+              {:else if groupVerdict(r.gi) === "diff"}
                 <span class="vbad">⚠ có tệp khác nội dung</span>
+              {:else}
+                <span class="vunk">chưa đọc được hết — chưa kết luận</span>
               {/if}
             {:else}
               <button
@@ -359,6 +378,10 @@
   .vbtn:hover:not(:disabled) { color: var(--text); }
   .vbtn:disabled { opacity: 0.6; cursor: default; }
   .vok { font-size: 11px; color: #7ed2a2; }
+  .vunk {
+    color: var(--muted, #8b93a7);
+    font-size: 12px;
+  }
   .vbad { font-size: 11px; color: #ef8f8f; }
   .vtag {
     flex: 0 0 auto;

@@ -54,6 +54,14 @@ nào khớp tốt hơn ([CONF-005](docs/config.md#conf-005)).
 | **P20** | Chuỗi tự cập nhật + v1.0.2→v1.0.5 | ✅ **XONG** — người dùng kiểm chứng trọn vòng trên máy thật |
 | **P21** | Ghi chú dài & quyền ở lại bản cũ | 🟡 **một nửa chờ duyệt** — A+C+D đã lên master; phần skip nằm ở `edit` |
 | **P22** | Bốn mảng backend: nhật ký file, đo 0-kết-quả, xác minh tầng-3, lịch 15 phút | 🟡 **chờ duyệt ở working tree** — nghiệm thu tay trên máy thật, tìm & sửa BUG-P22-01 |
+| **P23** | Lọc kết quả theo ổ đĩa (chip + nhãn dòng) | 🟡 **chờ duyệt ở working tree** — 112 test JS, 5 đột biến (1 từng lọt, đã vá) |
+| **P24** | Hỏi trước khi quét lại ổ mạng | 🟡 **chờ duyệt ở working tree** — 121 test JS, 242 Rust, 4 đột biến (1 từng lọt, đã vá) |
+| **P25** | "Quét lại" nói nó vừa làm gì | 🟡 **chờ duyệt ở working tree** — 129 test JS, 246 Rust, 4/4 đột biến bị bắt |
+| **P26** | Rà soát độ phủ toàn bộ, bù nhóm t14 | 🟡 **chờ duyệt ở working tree** — tìm 3 nhánh không ai canh, 142 test JS |
+| **P27** | Sửa BUG-024: cài đè tay xoá sạch chỉ mục | 🟡 **chờ duyệt ở working tree** — 250 test Rust, chốt chặn cho `nsis-hooks.nsh` |
+| **P28** | Điều tra "10/16 từ" trên ổ cục bộ | 🔵 **điều tra xong, chưa sửa** — lái app thật 8 truy vấn, tái hiện cả hai vế, ghi BUG-025 |
+| **P29** | Vá chốt chặn cho v1.0.6 + nói thật tuổi chỉ mục | 🟡 **chờ duyệt ở working tree** — phản biện bắt lỗi trong chính lộ trình; 259 test Rust, 161 test JS, 2 bài admin trên máy thật |
+| **P30–P31** | Rà soát toàn bộ trước v1.0.6 + sửa 8 lỗi tìm được | 🟡 **chờ duyệt ở working tree** — 272 test Rust, 170 test JS; bộ cài thật đã chạy, ảnh thu nhỏ hết hiện sai tệp |
 | **BT** | Bảo trì sau phát hành | 🟢 **đang chạy** — ghi mọi vấn đề thực tế vào [`docs/`](./docs/) |
 
 ---
@@ -1300,6 +1308,182 @@ hớ hênh (hằng số marker không phải nguồn sự thật duy nhất) —
 
 ---
 
+## P23 — Lọc kết quả theo ổ đĩa 🟡 (chờ duyệt ở working tree)
+
+**Người dùng nêu:** kết quả trộn lẫn các ổ nhìn rối mắt, và sẽ rối gấp bội khi quét thêm NAS.
+
+Đề xuất ba lớp, người dùng xem bản mô phỏng bấm-được rồi chốt **lớp 1 + 2**, bỏ lớp 3.
+
+### Lớp 1 — hàng chip ổ đĩa (`DriveChips.svelte`, `drives.ts`)
+
+`Tất cả 6 · C: 1 · D: 3 · NAS 2` — con số trả lời "ổ nào có thứ tôi cần" trước cả khi bấm. Hàng
+này **chỉ hiện khi kết quả trải trên nhiều ổ**; một ổ duy nhất thì nó không nói thêm gì mà lại
+chiếm mất một dòng của thứ đang thực sự cần chỗ.
+
+Nhận diện ổ làm ở giao diện, suy từ `path`, chứ không thêm trường vào `SearchHit` — trả giá đụng
+vào cấu trúc mà mọi đường tìm kiếm và bộ kiểm thử đang dựa vào, để lấy một thứ suy ra được trong
+vài ký tự, là không đáng. Đường dẫn UNC giữ nguyên hai gạch (`\NAS`) để một ổ tình cờ tên `N:`
+không lẫn với máy chủ tên `NAS`.
+
+### Lớp 2 — nhãn ổ trên mỗi dòng (`MediaRow`)
+
+`D:` xanh, `NAS` cam — cùng ngôn ngữ màu với hàng chip. Ổ mạng mang màu riêng không phải để trang
+trí: nó chậm hơn và thường là kho lưu trữ chứ không phải nơi đang làm việc.
+
+### Lớp 3 — gom nhóm theo ổ: **đã bỏ, có lý do**
+
+Chia kết quả thành cụm nghe hợp lý nhưng **phá vỡ thứ tự xếp theo độ khớp**: tệp khớp nhất có thể
+nằm ở NAS, và gom nhóm đẩy nó xuống dưới hàng nghìn kết quả ổ D. Chip lọc giải quyết đúng vấn đề
+đó mà không phải trả cái giá này.
+
+### Một chỗ lọc duy nhất, không rắc khắp nơi
+
+`hits` trở thành `$derived` của `allHits` đã lọc, nên bàn phím, kéo-thả, xem trước, tải trước ảnh
+đều tự nhìn cùng một danh sách. Rắc `filterByDrive` ở từng nơi tiêu thụ thì chỉ cần một chỗ quên
+là con trỏ bàn phím trỏ vào một tệp không có trên màn hình.
+
+**Không lưu lựa chọn ổ qua các phiên** — khác lưới/sắp xếp/loại tệp. Một bộ lọc vô hình đang chặn
+kết quả là màn hình khó hiểu nhất; mở app thấy "không tìm thấy gì" chỉ vì phiên trước lỡ lọc ổ Z
+là cái bẫy không đáng đặt. Và khi lần tìm mới không còn ổ đang lọc, tự về "Tất cả" thay vì bỏ
+người dùng lại trước một danh sách rỗng.
+
+---
+
+## P24 — Hỏi trước khi quét lại ổ mạng 🟡 (chờ duyệt ở working tree)
+
+**Người dùng hỏi:** bấm "+ ổ mạng" lần hai thì nó quét lại từ đầu — vậy nút đó rốt cuộc là gì, và
+sao không hỏi trước?
+
+### Một đính chính, ghi lại vì nó quan trọng
+
+Lượt trước tôi phỏng đoán "Quét lại" thường sẽ xoá mất dữ liệu NAS. **Sai.** Đọc code cho thấy cả
+hai chiều hợp nhất đều bỏ qua ổ mà lượt quét không chạm tới ([`lib.rs:1509`] cho quét nội bộ,
+[`lib.rs:526`] cho quét mạng) — dữ liệu NAS an toàn qua mọi lần "Quét lại". Cái "mức 3" tôi định
+đề xuất hoá ra đã tồn tại sẵn từ P10. Bài học: đọc trước khi đoán, kể cả khi câu chuyện nghe rất
+hợp lý.
+
+### Cái thật sự hỏng: nút không mang trạng thái
+
+Bấm lần nào cũng chạy trọn cả hai giai đoạn — vài phút và tranh băng thông. Người dùng bấm lần hai
+vì tưởng nó là một nút khác, rồi ngồi chờ một việc mình không định làm.
+
+**Mức 1 — hộp thoại xác nhận** (`NetScanConfirm.svelte`): hỏi trước khi quét, hai nút Quét lại /
+Không, Escape cũng là Không. Nút "Quét lại" thường **không** hỏi — nó chỉ tốn vài giây, hỏi là
+phiền vô ích.
+
+**Mức 2 — dấu vết lần quét gần nhất** (`netscan_mark.rs`): lần trước quét lúc nào, ra bao nhiêu
+tệp, trên mấy ổ, mất bao lâu. Không có ba con số đó thì lời hỏi rỗng tuếch. Đổi giây ra phút vì
+người dùng đang quyết định có bỏ ra chừng ấy thời gian hay không — họ nghĩ bằng phút.
+
+Ghi ra một tệp JSON nhỏ cạnh cache, **không** nhét vào `index.bin`: đụng vào định dạng chỉ mục là
+phải nâng `SCHEMA_VERSION`, mà lời hứa ghi cạnh hằng số đó (P21) nói rõ chỉ được nâng ở bản major.
+Một dấu vết tiện nghi không đáng để bẻ gãy lời hứa ấy.
+
+Lượt bị huỷ giữa chừng **không** để lại dấu vết: nó không phải một câu trả lời, và nói "đã quét lúc
+14:32" về một lượt dừng dở là nói dối với người đang cân nhắc bỏ ra vài phút nữa.
+
+---
+
+## P25 — "Quét lại" nói nó vừa làm gì 🟡 (chờ duyệt ở working tree)
+
+**Người dùng hỏi:** nút "Quét lại" cũng nên có thông báo như "+ ổ mạng" chứ?
+
+### Cùng câu hỏi, khác câu trả lời — vì cái giá khác nhau
+
+"+ ổ mạng" tốn **vài phút** và tranh băng thông: bấm nhầm là mất chừng ấy thời gian, nên hỏi trước
+là đáng. "Quét lại" tốn **vài giây** (bản vá gia tăng P9 ~0,45s), và chỉ mục vốn đã tự làm mới mỗi
+15 phút từ P22 — nút này giờ chủ yếu dành cho lúc vừa chép tệp vào và muốn thấy ngay. Đúng lúc mà
+một hộp thoại xen vào là phiền nhất.
+
+Đã trình bày cả hai phương án kèm cái giá; người dùng chọn **B: nói mà không chặn đường.**
+
+### Hai nửa
+
+**Tooltip** nút Quét lại kèm "Lần gần nhất: 14:32 hôm nay · 48.320 tệp". Ai muốn biết thì rê chuột;
+ai không thì không bị cản. Chưa từng quét thì không bịa ra lần nào cả.
+
+**Một dòng sau khi xong** ở thanh trạng thái: "Đã quét lại · thêm 12 tệp". So `meta` trước và sau —
+`onreload` là chỗ duy nhất còn giữ cả hai. Cả ca "không có gì đổi" cũng nói: im lặng thì người dùng
+không biết nó đã chạy hay chưa, mà đó chính là câu hỏi khiến họ bấm nút lần hai. Tự tắt sau tám
+giây (tin, không phải trạng thái) và bị dọn ngay khi lượt mới bắt đầu.
+
+---
+
+## P26 — Rà soát độ phủ toàn bộ 🟡 (chờ duyệt ở working tree)
+
+**Người dùng yêu cầu:** test lại toàn bộ, cần thì viết thêm test case.
+
+### Chạy lại thì dễ; tìm chỗ *không* được canh mới là việc
+
+Chạy lại toàn bộ chỉ chứng minh những gì đã canh vẫn đúng. Phép thử thật là **cố tình phá từng
+nhánh rồi xem có ai kêu không** — nhánh nào phá mà mọi test vẫn xanh thì nhánh đó chưa được canh,
+chỉ tình cờ đúng.
+
+Rà hết các module và component. Sáu chỗ bị phá thử; ba chỗ **không ai bắt**, cả ba đều ở
+`ContextMenu` — component dùng ở cả danh sách tìm kiếm lẫn chế độ trùng lặp mà chưa có nhóm nào
+canh:
+
+| Nhánh bị phá | Trước | Sau (nhóm t14) |
+|---|---|---|
+| Bấm ra ngoài không đóng menu | ⚠️ lọt | 🔴 bắt |
+| Không kê menu vào trong khi mở sát mép | ⚠️ lọt | 🔴 bắt |
+| Bấm một mục xong menu không đóng | ⚠️ lọt | 🔴 bắt |
+| Menu trôi ra ngoài mép trái (toạ độ âm) | — | 🔴 bắt |
+
+Nhóm 14 gồm 13 ca: nội dung và biểu tượng, bấm mục thì chạy đúng hành động **và** đóng, ba đường
+đóng (bấm ngoài / chuột phải ngoài / Escape), và bốn ca kê-vào-trong-màn-hình.
+
+### Một test viết sai lại hoá hữu ích
+
+Ca "Escape không lọt xuống app" của tôi đỏ — và nó đúng: `stopPropagation` **không** chặn được
+trình nghe anh em trên cùng `window`. Đó chính là lý do App phải có chốt riêng
+(`if (menu || preview) return`), điều mà chú thích trong App đã nêu từ P16. Ca này được viết lại
+thành lời ghi chép về giới hạn ấy, trỏ sang TC-3.16b — nơi thật sự canh chốt đó.
+
+### Một phép kiểm quá lỏng
+
+Ca "không lùi ra ngoài mép trái" dùng toạ độ `(2, 2)` và kiểm `>= 0` — bỏ `Math.max` đi thì 2 vẫn
+qua. Siết lại bằng toạ độ **âm** (có thật: màn hình phụ đặt bên trái cho `clientX` âm) và kiểm
+`> 0`; giờ đột biến đỏ đúng chỗ.
+
+---
+
+## P27 — Sửa BUG-024: cài đè tay xoá sạch chỉ mục 🟡 (chờ duyệt ở working tree)
+
+**Người dùng báo:** tìm một tệp có thật trên NAS mà không ra; và **ai ở v1.0.4 thì không gặp, ai lên
+v1.0.5 thì gặp**.
+
+### Chẩn đoán đầu của tôi đã sai, và chi tiết người dùng nêu mới lật được vụ này
+
+Tôi kết luận đó là chỉ mục ổ mạng cũ — đúng triệu chứng, nhưng **không giải thích được tương quan
+với phiên bản**. Nếu chỉ là chỉ mục cũ thì v1.0.4 phải bị y hệt. Đào tiếp mới ra nguyên nhân thật.
+
+### Bằng chứng, theo thứ tự thu thập
+
+1. Tệp có thật trên đĩa; 0/368.866 mục trong chỉ mục có tên chứa `a-lady-enjoying`.
+2. Thư mục đó: 125 tệp trên đĩa, 51 trong chỉ mục, 74 tệp mới hơn mốc chỉ mục — `51+74=125`.
+3. `src-tauri/src/` **không đổi một dòng** giữa v1.0.4 và v1.0.5; cây `index/` cùng SHA
+   `9d6facaf…` ở cả hai tag. Về mặt toán học, v1.0.5 không thể gây lỗi tìm kiếm.
+4. Nhật ký sáng 28/8: chỉ mục chỉ còn **48.319 tệp** (ổ cục bộ), **320.505 mục ổ mạng đã biến mất**.
+5. `nsis-hooks.nsh` xoá `index.bin`; trong template Tauri, móc được chèn **vô điều kiện** — ngoài
+   chốt mà chính Tauri dùng cho dữ liệu ứng dụng của nó.
+6. Cập nhật trong app truyền `/UPDATE` → bỏ qua uninstaller (an toàn). **Cài tay đè lên** thì không
+   → trang chọn hiện ra với "Uninstall before installing" **tích sẵn** → móc chạy → mất chỉ mục.
+
+### Sửa
+
+Cả hai móc tính một cờ chung trước mọi việc phá huỷ, dựa trên `$EXEDIR` vs `$INSTDIR` (NSIS chỉ chạy
+uninstaller tại chỗ khi bộ cài gọi kèm `_?=`), `$UpdateMode`, và ô xoá-dữ-liệu người dùng tự tích.
+Cài đè nay giữ cả chỉ mục lẫn tác vụ định kỳ.
+
+Ghi chú phát hành bỏ câu sai "Chỉ mục đã quét vẫn giữ nguyên", nói rõ các bản **từ v1.0.5 trở về
+trước** vẫn xoá khi cài tay đè lên, và chỉ đường phục hồi.
+
+`src-tauri/tests/installer_hooks.rs` khoá bốn bất biến của tệp `.nsh` — tệp mà vòng kiểm tra không
+có trình biên dịch nào kiểm hộ.
+
+---
+
 ## BT — Bảo trì sau phát hành 🟢
 
 Không phải một giai đoạn có điểm kết thúc. Quy tắc số 5 vẫn nguyên hiệu lực: **mọi vấn đề gặp trong
@@ -1340,6 +1524,160 @@ những tệp gì trên máy — đó là dữ liệu riêng tư, không phải 
 và bật lên phải là một hành động có chủ ý.
 
 ---
+
+
+---
+
+## P28 — Điều tra tiếp: lỗi "10/16 từ" cũng xảy ra trên ổ cục bộ 🔵 (điều tra xong, chưa sửa)
+
+**Người dùng nói thêm:** *"không chỉ có ở trên nas mà vấn đề này còn bị ngay ở trên ổ"*, và yêu cầu
+test cực kỳ chi tiết, có đọc log, và **lái chính bản đã cài** chứ không phải bản dev.
+
+Câu bổ sung đó loại BUG-024 khỏi vai trò nguyên nhân duy nhất: cài đè tay chỉ xoá dữ liệu rồi lượt
+quét đầu dựng lại **ổ cục bộ**, nên vế ổ cục bộ phải có nguyên nhân khác.
+
+### Lái app thật
+
+`SendKeys` không tới được nội dung WebView2 (lượt đầu ô tìm kiếm rỗng trong ảnh chụp). Đổi sang đặt
+clipboard rồi bắn `Ctrl+V` bằng `keybd_event`; chụp bằng `PrintWindow(PW_RENDERFULLCONTENT)`. Đối
+tượng: bản đã cài, FileVersion 1.0.5.
+
+Tám truy vấn, chi tiết ở `docs/test-log.md` (lượt P28). Hai kết quả cốt lõi:
+
+* **Tái hiện đúng triệu chứng người dùng báo** — dán nguyên tên tệp: băng vàng "khớp đủ 16 từ…
+  10/16", 22 kết quả sai.
+* **Tái hiện được cả vế ổ cục bộ** — tạo `D:\mf-test-p28\…zxqw.mp4` rồi tìm ngay: *"Không tìm thấy
+  kết quả nào"*. Chạy tay tác vụ làm mới (+90 tệp) rồi tìm lại: ra ngay, 2 kết quả · 3,2 ms.
+
+Cặp đối chứng đó khoá chặt nguyên nhân vào **tuổi chỉ mục**. Năm truy vấn khó khác (tên 29 từ tiếng
+Pháp có dấu, tên có khoảng trắng và chữ hoa, tên viết lẫn hoa thường, cả ổ cục bộ lẫn NAS) đều ra
+đúng 1 kết quả trong dưới 6 ms — bộ tìm kiếm không hỏng.
+
+### Nguyên nhân (BUG-025)
+
+| Loại ổ | Đường làm mới | Khoảng mù |
+|---|---|---|
+| Ổ mạng | **không có đường tự động nào** — `scan_network_volumes()` chỉ có 1 nơi gọi: lệnh IPC sau nút **+ Ổ mạng** | vô hạn, tới khi có người bấm |
+| Ổ cục bộ (bản đã phát hành) | tác vụ `--index`, lịch `DaysInterval 1` **không có `Repetition`** | tới 24 giờ |
+| Ổ cục bộ (nhánh `edit`) | thêm `Repetition PT15M` — **chưa gộp `master`, chưa phát hành** | 15 phút |
+
+Đo trên thư mục người dùng đang tìm: 125 tệp trên đĩa · 51 trong chỉ mục · 74 thiếu, ranh giới nằm
+đúng ở mốc quét ổ mạng 11:23:05; tệp họ tìm đến ổ lúc 13:48:49.
+
+### Hai chỗ mù phát hiện thêm
+
+* **Bản đã phát hành không ghi log.** `src-tauri/src/diag.rs` có trên `edit` nhưng không có
+  trong `master` lẫn tag `v1.0.5`, nên
+  `logs/mediafinder.log` trên máy người dùng trống. Trên máy này log đứng im ở 15:28 trong khi tác
+  vụ vẫn chạy 16:00 / 16:15 / 16:21. Chẩn đoán từ xa đang mù.
+* **`stats.unresolved` có thể mất dữ liệu vĩnh viễn.** Thay đổi tra không ra thư mục cha bị bỏ; nếu
+  cùng lượt có tệp khác được thêm thì cache được ghi và con trỏ journal tiến qua, mất luôn tới lượt
+  quét đầy đủ kế tiếp. Log cho thấy nó bắn thật: 2 / 3 / 26 / 73. Chưa dựng được ca tái hiện — ghi
+  làm đầu mối.
+
+### Chưa sửa gì
+
+Lượt này chỉ điều tra và ghi chép, theo đúng yêu cầu "đưa ra kết quả cho tôi". Bốn hướng sửa đề xuất
+nằm ở cuối BUG-025 trong `docs/bug.md`, chờ chốt.
+
+### Dọn hiện trường
+
+`D:\mf-test-p28\` đã xoá, chạy lại tác vụ làm mới thấy `+5 −2` đúng như mong đợi. Bốn ví dụ dò tạm
+(`probe_find`, `probe_local`, `probe_search`, `probe_walk`) đã xoá khỏi `src-tauri/examples/`.
+
+
+
+---
+
+## P29 — Vá chốt chặn cho v1.0.6, và nói thật về tuổi chỉ mục 🟡 (chờ duyệt ở working tree)
+
+**Chủ dự án phân vân giữa bốn hướng sửa BUG-025**, nên lượt này cân nhắc trước khi viết mã: bốn
+lăng kính độc lập (người dùng cuối · rủi ro kỹ thuật · chi phí vận hành · khả năng chẩn đoán), một
+lượt soi hướng bị bỏ sót, một lượt phản biện chính lộ trình vừa dựng.
+
+### Bốn lăng kính mâu thuẫn nhau, và ba mâu thuẫn tự tan khi xếp đúng thứ tự
+
+| Lăng kính | Xếp hạng | H1 / H2 / H3 / H4 |
+|---|---|---|
+| Người dùng cuối | 1 › 2 › 3 › 4 | **8** / 7 / 5 / 1 |
+| Rủi ro kỹ thuật | 3 › 4 › 2 › 1 | 2 / 6 / **9** / 8 |
+| Chi phí vận hành | 2 › 4 › 3 › 1 | 6 / **9** / 7 / 8 |
+| Khả năng chẩn đoán | 4 › 3 › 2 › 1 | 1 / 2 / 7 / **9** |
+
+Không lấy trung bình cộng. Lăng kính chẩn đoán chấm H2 thấp vì "phát hành PT15M một mình biến một
+lỗi tái hiện được trong 2 phút thành lỗi hiếm không còn dụng cụ đuổi theo" — tan biến khi H4 đi
+**cùng chuyến**. Lăng kính người dùng chấm H4 thấp vì editor không thấy gì — cũng tan biến, vì H4
+đi nhờ chuyến phát hành BUG-024 vốn bắt buộc phải đi. H3 bị chấm 5/9 vì hôm nay nó "chỉ vào một
+cánh cửa khoá": nút "+ ổ mạng" lần nào cũng bật UAC rồi bắt chờ trọn lượt quét cục bộ.
+
+### Phản biện bắt được lỗi trong chính lộ trình
+
+Lộ trình định bỏ bước `/Delete` trong `upgrade_schedule_if_stale`, gọi là "một dòng". Sai:
+`ensure_scheduled_task()` mở đầu bằng `if scheduled_task_exists() { return true; }`, mà nâng lịch
+thì **luôn** gặp một tác vụ đã tồn tại. Bỏ `/Delete` mà vẫn gọi hàm ấy nghĩa là XML mới không bao
+giờ được ghi — máy mang lịch v1 ghi log "nâng lên lịch v2" mãi mãi, lịch không đổi. Đúng hình dạng
+lỗi `SCHEDULE_MARK` đã trả giá ở P22.
+
+### Đã làm
+
+1. **Tách `write_task_definition()`** khỏi chốt `exists`; `upgrade_schedule_if_stale` gọi thẳng nó
+   và **không xoá trước** (`/Create /XML /F` tự ghi đè, còn xoá-rồi-tạo để lại một cửa sổ máy không
+   có tác vụ nào).
+2. **Tệp tạm mang PID** ở cả ba chỗ: `index.bin.tmp`, `progress json.tmp`, `mediafinder-task.xml`.
+3. **`#[serde(default)]` cho `NetScanMark`** — thêm trường sau này không được xoá mốc quét NAS trên
+   mọi máy.
+4. **`.gitattributes` cho `persist.rs`** — tệp chứa 3 byte NUL thật trong `MAGIC` nên git coi là
+   nhị phân; `git diff --stat` đi từ `Bin 9365 → 10316 bytes` thành `12 +++++++++++-`.
+5. **`src-tauri/src/taskhealth.rs`** (module riêng) + lệnh IPC `task_health` — trả lời "tác vụ định
+   kỳ còn không". Cố ý **không** phân tích `schtasks /Query /FO LIST /V`: tên trường trong đầu ra đó
+   được bản địa hoá, nên trên máy chạy Windows tiếng Việt phép so chuỗi sẽ trượt — im lặng đúng
+   trên những máy cần chẩn đoán nhất. Chỉ dùng mã thoát.
+6. **`src/lib/freshness.ts` + `src/lib/FreshnessNote.svelte`** (component riêng) — nói tuổi chỉ mục
+   ở **cả hai** trạng thái hỏng, và chỉ lên tiếng khi có gì đáng nói.
+7. **Chân cửa sổ thôi nói dối** — in hai mốc tách bạch thay vì một mốc `builtAtUnix` gọi là "quét
+   lúc". `persist.rs` đóng dấu `built_at_unix = now_unix()` ở mọi lần ghi, kể cả lượt vá gia tăng
+   cục bộ, nên câu cũ sai 96 lần/ngày sau khi có PT15M.
+8. **`RELEASE_NOTES.md`** viết lại cho v1.0.6, nói thẳng rằng bản này **chưa** sửa vế ổ mạng.
+
+### Một quyết định của chủ dự án từng bị lật im lặng
+
+Chủ dự án nhắc lại rằng họ đã yêu cầu **1 ngày chỉ quét 2 lần**. Tra lại `docs/test-log.md` (lượt
+P9) thì đúng: *"Lịch cuối cùng (theo lựa chọn của chủ máy): khi đăng nhập (trễ 1 phút) và 13:00
+hằng ngày — tức 1–2 lần mỗi ngày."* **P22 đã thay nó bằng `PT15M` mà không hỏi lại.**
+
+Đưa số liệu ra để chốt lại thay vì tranh luận: một lượt PT15M là đọc nhật ký USN (0,2–2 giây),
+không phải quét đầy đủ; nhưng khi có thay đổi thật thì ghi lại trọn 46 MB cache — đo ngày 28/8:
+16:00, 16:15, 16:21, 18:00, 20:45. Đổi lại, khoảng mù ổ cục bộ là 15 phút thay vì ~12 giờ, tức
+chính cái đã gây ra khiếu nại mở đầu BUG-025.
+
+**Chủ dự án xem số liệu rồi chốt: giữ PT15M.** Ghi chú phát hành nói "mỗi 15 phút" là đúng sự thật.
+Bài học không phải ở con số mà ở chỗ: một lựa chọn đã chốt của chủ dự án chỉ được đổi khi hỏi lại
+họ, kể cả khi kỹ thuật thấy nên đổi.
+
+### Chưa làm, có chủ đích
+
+Hướng 1 (quét NAS nền định kỳ) **không được phát hành ở dạng hiện tại**. Trong
+`scan_network_volumes`, `walked.push()` chạy vô điều kiện và tập `touched` dựng từ `walked`, nên một
+ổ trả về tập rỗng hoặc dở vẫn **xoá sạch mục cũ của ổ đó** rồi báo thành công. Chạy tay thì người
+dùng ngồi nhìn thấy; chạy nền thì 320.000 mục biến mất trong im lặng. Cứng hoá chỗ đó là bước bắt
+buộc trước bất kỳ việc gì làm lượt quét NAS rẻ hơn hoặc thường xuyên hơn.
+
+### Nghiệm thu
+
+Vòng trước-commit xanh: `cargo test` 259 · clippy 0 warning · fmt sạch · `npm run check` 0 lỗi/125
+tệp · `npm test` 161/161 (thêm nhóm t15). Sáu đột biến, mỗi cái đỏ đúng một bài. Lái bản dựng thật
+bằng chuột: cả ba chỗ đều hiện hai mốc, đúng ca người dùng báo.
+
+Hai đường cần quyền Administrator đã chạy trên máy thật, **cả hai đạt**:
+
+* **Nâng lịch v1 → v2**: dựng tác vụ đúng hình dạng máy người dùng (`PT15M: False | marker: False`),
+  chạy `--index` của bản dựng mới → `PT15M: True | marker: True`. Nếu làm theo đề xuất ban đầu, bước
+  này sẽ in `False` và v1.0.6 ra đời với tính năng chính chết lặng.
+* **Cảnh báo mất tác vụ**: xoá hẳn tác vụ → ứng dụng hiện *"Không còn tác vụ làm mới định kỳ trên máy
+  này — chỉ mục sẽ không tự cập nhật nữa. Bấm Quét lại một lần để tạo lại nó."*
+
+Tác vụ được khôi phục sạch sau cả hai bài (`hop le: True | tro vao: ban da cai`).
+
 
 ## Sai lệch so với kế hoạch
 
@@ -1408,6 +1746,110 @@ Chỉ ghi những gì đã **thực sự chạy** và kết quả quan sát đư
 | Nghiệm thu tay D | người dùng chạy task elevated trên máy thật | **lộ BUG-P22-01** (marker có dấu → vòng lặp xoá-tạo-lại); sửa xong, chạy lại 2 lần: log chỉ 1 dòng nâng cấp |
 | Đột biến P22 | 7 phép: bỏ chờ-lắng · hash-hằng · tắt xoay · gỡ Repetition · đọc cụm sai · nút không gọi backend · marker có dấu | **7/7 bị bắt** (2/1/1/1/3/1/1 ca đỏ), khôi phục giống hệt từng byte |
 
+### 2026-08-28 — P23
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · `clippy` · `fmt --check` · `npm run check` | 241 pass · 0 warning · sạch · 0 lỗi/122 file |
+| Kiểm thử JS | `npm test` (11 nhóm, thêm t11) | **112/112 pass** |
+| Đột biến P23 | 5 phép: UNC mất hai gạch · ổ mạng không xuống cuối · bàn phím đọc danh sách thô · không reset con trỏ · chip hiện khi chỉ một ổ | 4 bị bắt ngay; **phép "ổ mạng xuống cuối" LỌT** |
+| Vá khoảng trống | dữ liệu cũ có C: < D: < NAS nên xếp chữ cái tình cờ trùng kết quả đúng | thêm ca `\ALPHA` vs `Z:` ép quy tắc lộ ra → đột biến đỏ đúng chỗ; **5/5** |
+| Bug tự tìm ra khi chạy test | `scrollToTop()` gọi `viewport.scrollTo` — jsdom không có, effect ném lỗi giữa chừng sau khi `selectOnly(0)` đã chạy | đổi sang gán `scrollTop = 0`: cùng kết quả, không phụ thuộc một phương thức có thể vắng mặt; 8 lỗi ngầm biến mất |
+
+### 2026-08-28 (chiều) — P24
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · `clippy` · `fmt --check` · `npm run check` | 242 pass · 0 warning · sạch · 0 lỗi/123 file |
+| Kiểm thử JS | `npm test` (12 nhóm, thêm t12) | **121/121 pass** |
+| Đột biến P24 | 4 phép: bỏ qua hộp thoại · không nhường bàn phím · giây không đổi ra phút · lượt huỷ vẫn ghi dấu vết | 3 bị bắt ngay; **phép "lượt huỷ" LỌT** |
+| Vá khoảng trống | quy tắc nằm trong một `if` ở `lib.rs` nên test chỉ *mô phỏng* lại được — mô phỏng không bao giờ đỏ khi bản thật bị sửa | tách thành `netscan_mark::record_outcome`, test gọi thẳng hàm thật → đột biến đỏ đúng chỗ; **4/4** |
+| Test cũ vỡ theo thiết kế mới | TC-2.13 giả định bấm "+ ổ mạng" là quét ngay | cập nhật để đi qua hộp thoại — giả định cũ giờ sai, không phải code sai |
+
+### 2026-08-28 (tối) — P25
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · `clippy` · `fmt --check` · `npm run check` | 246 pass · 0 warning · sạch · 0 lỗi/123 file |
+| Kiểm thử JS | `npm test` (13 nhóm, thêm t13) | **129/129 pass** |
+| Đột biến P25 | 4 phép: so metadata sau khi đã thay · dòng tin không tự tắt · lượt mới không dọn tin cũ · tooltip bịa lần quét | **4/4 bị bắt** ngay lượt đầu (2/1/1/8 ca đỏ) |
+
+### 2026-08-28 (đêm) — P26 rà soát toàn bộ
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · `clippy` · `fmt --check` · `npm run check` | 246 pass · 0 warning · sạch · 0 lỗi/123 file |
+| Kiểm thử JS | `npm test` (14 nhóm, thêm t14) | **142/142 pass** |
+| Rà độ phủ bằng đột biến | phá 6 nhánh khắp các module: ContextMenu ×3, FirstRun, ScanStatusBar, VirtualList | 3 bị bắt sẵn; **3 lọt — đều ở ContextMenu** |
+| Sau khi bù t14 | phá lại đúng 3 nhánh đó + 1 nhánh biên mới | **4/4 bị bắt** |
+| Rà tiếp các module lõi | ScanState (không dừng timer), prefs (sai khoá lưu), drives (không viết hoa chữ ổ) | 3/3 bị bắt sẵn — không có khoảng trống |
+
+### 2026-08-28 (khuya) — P27
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · `clippy` · `fmt --check` · `npm run check` | **250 pass** · 0 warning · sạch · 0 lỗi/123 file |
+| Kiểm thử JS | `npm test` | 142/142 pass |
+| Tệp có thật mà chỉ mục không biết | tra thẳng chỉ mục 368.866 mục + đọc đĩa | 0 khớp; 51+74=125 khớp tuyệt đối |
+| v1.0.5 có gây lỗi không | `git diff v1.0.4 v1.0.5 -- src-tauri/src/` | **trống**; cây `index/` cùng SHA → không thể |
+| Đường cập nhật nào an toàn | đọc template NSIS của tauri-bundler 2.7.1 + nguồn tauri-plugin-updater 2.10.1 | in-app truyền `/UPDATE` → an toàn; cài tay → chạy uninstaller → mất dữ liệu |
+| Đột biến bản móc cũ | khôi phục `nsis-hooks.nsh` từ HEAD | **4/4 bài đỏ** — chốt chặn bắt đúng lỗi |
+
 **Trạng thái git lúc ghi:** `master` = hết A+C+D (P21 nửa đầu); `edit` = +`60efce1` (P21 nửa sau,
 chờ duyệt). `RELEASE_NOTES.md` còn là nội dung 1.0.5 — **phải viết lại trước khi cắt v1.0.6**
 (quên thì CI tự chặn). Mục 7 lộ trình (Thùng rác cho tệp trùng) chưa làm, chờ lệnh.
+
+### 2026-08-28 (chiều muộn) — P28 lái app thật
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Tái hiện triệu chứng người dùng báo | dán nguyên tên tệp vào bản đã cài v1.0.5 | băng "khớp đủ 16 từ… **10/16**", 22 kết quả sai · 13,6 ms |
+| Tái hiện vế **ổ cục bộ** | tạo `.mp4` trên `D:` rồi tìm ngay | "Không tìm thấy kết quả nào" |
+| Đối chứng | chạy tay tác vụ làm mới (+90 tệp), tìm lại cùng truy vấn | ra ngay, 2 kết quả · 3,2 ms |
+| Bộ tìm kiếm có hỏng không | 5 truy vấn tên đầy đủ: 14 từ, 29 từ tiếng Pháp có dấu, có khoảng trắng + chữ hoa, viết lẫn hoa thường, tệp NAS | **5/5 đúng 1 kết quả**, 3,7–5,7 ms, không lần nào hiện băng |
+| Tệp người dùng tìm có thật không | `find` trên `Y:` | có: đến ổ 13:48:49; quét ổ mạng gần nhất 11:23:05 |
+| Thư mục đó lệch bao nhiêu | đối chiếu đĩa với chỉ mục | 125 trên đĩa · 51 trong chỉ mục · 74 thiếu (51+74=125) |
+| Ổ mạng có tự làm mới không | truy mọi nơi gọi `scan_network_volumes()` | đúng **1** nơi: lệnh IPC sau nút "+ Ổ mạng" → **không có đường tự động** |
+| Lịch ổ cục bộ bản đã phát hành | `git show v1.0.5:src-tauri/src/setup.rs` | `DaysInterval 1`, **không có `Repetition`** → mù tới 24 giờ |
+| Bản đã phát hành có ghi log không | so `LastWriteTime` của log với các lượt chạy tác vụ | log đứng im 15:28 trong khi tác vụ chạy 16:00 / 16:15 / 16:21 → **không ghi** |
+| Dọn hiện trường | xoá tệp thử, chạy lại tác vụ | `+5 −2` — hai tệp thử rời chỉ mục đúng như mong đợi |
+
+### 2026-08-28 (tối) — P29 vá chốt chặn
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · `clippy --all-targets` · `fmt --check` · `npm run check` | **259 pass** · 0 warning · sạch · 0 lỗi/125 tệp |
+| Kiểm thử JS | `npm test` (15 nhóm, thêm t15) | **161/161 pass** |
+| Bẫy nâng lịch có thật không | đọc `setup.rs:197` — `ensure_scheduled_task` thoát sớm ở `scheduled_task_exists()` | có: bỏ `/Delete` mà vẫn gọi hàm đó thì `/Create /XML /F` không bao giờ chạy |
+| Chốt chặn có bắt được không | khôi phục lời gọi `ensure_scheduled_task()` trong đường nâng lịch | **đỏ đúng 1/5 bài**, 4 bài kia xanh |
+| Tệp tạm | đưa `index.bin.tmp` về đường dẫn cố định | **đỏ đúng 1 bài** |
+| `serde(default)` | nạp tệp `netscan.json` chỉ có 2 trường kiểu bản cũ | đọc được, trường thiếu nhận mặc định |
+| Diff `persist.rs` có xem được không | `git diff --stat` trước/sau `.gitattributes` | `Bin 9365 → 10316 bytes` **⇒** `12 +++++++++++-` |
+| Đột biến giao diện | gỡ note khỏi nhánh 0 kết quả · chân cửa sổ về một mốc · doạ nhầm khi `health = null` · luôn lên tiếng | **4/4 đỏ đúng bài**, mỗi lần đúng một bài |
+| Test cũ đỏ vì đếm tuyệt đối | `t12` đổi sang đo độ tăng, rồi bỏ lượt đọc lại trong `beginNetScan` | vẫn **đỏ** — sửa mà không làm mềm |
+| Bản dựng thật, trạng thái 0 kết quả | lái chuột trên `tauri build --no-bundle` | "Ổ trong máy: 1 phút trước · Ổ mạng: **6 giờ trước**" |
+| Bản dựng thật, băng 10/16 | dán đúng truy vấn người dùng báo | băng vàng kèm hai mốc, phần cũ tô hổ phách |
+| Bản dựng thật, chân cửa sổ | đọc dòng chân | `ổ trong máy 18:00:01 · ổ mạng 11:23:05 28/8/2026` — hết nói dối |
+| Đường nâng lịch v1 → v2 chạy thật | dựng task lịch v1, chạy `--index` bản mới | `PT15M: False` → **`PT15M: True`** — **ĐẠT** |
+| Cảnh báo mất tác vụ | xoá hẳn task, mở app, tìm tệp không tồn tại | hiện đúng câu cảnh báo + nút cần bấm — **ĐẠT** |
+| Máy có bị bỏ lại ở trạng thái hỏng không | đọc lại task sau mỗi bài | `ton tai: True · hop le: True · tro vao: ban da cai` |
+| Chính script kiểm thử có đúng không | thử hàm kiểm tồn tại với một tên task bịa ra | **trả `True`** — lỗi `%ERRORLEVEL%`; sửa rồi mới tin kết quả |
+
+### 2026-08-29 (rạng sáng) — P30–P31 rà soát và sửa
+
+| Kiểm chứng | Cách đo | Kết quả |
+|---|---|---|
+| Vòng trước-commit | `cargo test` · clippy · fmt · `npm run check` | **272 pass** · 0 warning · sạch · **0 lỗi 0 cảnh báo**/125 tệp |
+| Kiểm thử JS | `npm test` (15 nhóm) | **170/170** (từ 142 ở P26) |
+| Bộ cài NSIS thật | `npm run tauri build`, cài 1.0.6 đè 1.0.5 | tái hiện đúng bẫy BUG-024; **thủ phạm là bộ gỡ CŨ**, không phải móc mới |
+| Bản sửa BUG-024 có chạy không | bộ gỡ MỚI, `uninstall.exe /S _?=<thư mục>` | `index.bin` 48.074.384 + `metadata.bin` 14.811.580 **còn nguyên** |
+| Bản sửa có bảo vệ quá đà không | gỡ THẬT (không `_?=`) | thư mục xoá sạch, registry mất — đúng |
+| Ảnh thu nhỏ hiện sai tệp | đọc `thumbnail.rs:103` + `get()` | khoá theo **vị trí**, `get()` không đọc `path` — có thật |
+| Chốt chặn khoá cache | khoá không phụ thuộc đường dẫn | **đỏ đúng 1/11 bài** |
+| Ổ mạng ánh xạ có được nhận không | `net use` + `driveKey("Y:\…")` | `isNetworkDrive("Y")` = **false** — cả nhánh là mã chết |
+| Tầng 3 có nói sai không | đọc `allSame()` + bài t10 | nói sai, **và bài t10 đang khoá hành vi sai** |
+| `npm test` có trong CI không | đọc cả hai workflow | **không** — đã thêm |
+| Lớp phủ khi chỉ mục đổi | bỏ `preview = false; menu = null;` | **cả hai vế** đỏ đúng thông điệp |
+| Vết hỏng bám sang tệp sau | bỏ việc đặt lại trạng thái | đỏ đúng bài |
+| Bản dựng thật | lái chuột trên `--no-bundle` | "Ổ trong máy: 11 phút trước · Ổ mạng: 11 giờ trước" |
+| Đóng dấu `lastcheck.json` từ `--index` thật | cần Administrator | **chưa chạy** — 6 bài đơn vị + 2 chốt đọc mã canh điểm gọi |

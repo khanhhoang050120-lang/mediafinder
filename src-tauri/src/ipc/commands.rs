@@ -588,6 +588,13 @@ pub fn dupe_groups(
         .collect()
 }
 
+/// Lần quét ổ mạng gần nhất — để giao diện hỏi trước khi bắt người dùng
+/// chờ thêm vài phút nữa. `None` nghĩa là chưa từng quét xong lần nào.
+#[tauri::command]
+pub fn net_scan_mark() -> Option<crate::netscan_mark::NetScanMark> {
+    crate::netscan_mark::load()
+}
+
 /// Tầng 3 tìm-trùng: xác minh trọn nội dung một nhóm ứng viên.
 ///
 /// Chạy trên pool blocking — một nhóm vài tệp lớn trên NAS có thể mất nhiều

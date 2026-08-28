@@ -161,29 +161,31 @@ fn schedule_is_current() -> bool {
 
 /// Nâng lịch lên phiên bản hiện hành nếu máy còn mang lịch cũ.
 ///
-/// **Gọi từ tiến trình indexer (đã elevated).** Xoá-rồi-tạo-lại thay vì
-/// /Change vì schtasks không sửa được Repetition qua cờ lệnh.
+/// **Gọi từ tiến trình indexer (đã elevated).**
+///
+/// Ghi đè thẳng bằng [`write_task_definition`] — `/Create /XML /F` tự ghi đè
+/// được, nên không cần xoá trước. Bản đầu xoá-rồi-tạo-lại và chỗ đó có hai
+/// vấn đề, cái sau nặng hơn cái trước nhiều:
+///
+/// * Giữa `/Delete` và `/Create` có một cửa sổ mà máy **không còn tác vụ nào**.
+///   Bước tạo hỏng ở đó (không đọc được `current_exe`, không ghi được XML tạm,
+///   phần mềm diệt virus chặn `schtasks`) là chỉ mục thôi tự làm mới hẳn — nặng
+///   hơn chính cái bệnh đang chữa.
+/// * Và nếu chỉ bỏ `/Delete` mà vẫn gọi [`ensure_scheduled_task`] thì hàm đó
+///   thoát ngay ở chốt `scheduled_task_exists()`, nên **XML mới không bao giờ
+///   được ghi**: máy mang lịch v1 sẽ ghi log "nâng lên lịch v2" ở mọi lượt chạy,
+///   mãi mãi, mà lịch không đổi. Đó đúng là hình dạng của lỗi `SCHEDULE_MARK`
+///   đã trả giá một lần ở P22 — cùng một cách hỏng, chỗ khác.
+///
+/// Vì thế đường nâng lịch phải đi thẳng vào phần ghi, không qua chốt tồn tại.
 pub fn upgrade_schedule_if_stale() {
     if !scheduled_task_exists() || schedule_is_current() {
         return;
     }
     tracing::info!("lịch định kỳ là bản cũ — nâng lên lịch v2 (mỗi 15 phút)");
-    match schtasks(&["/Delete", "/TN", TASK_NAME, "/F"]) {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => {
-            tracing::warn!(
-                "không xoá được lịch cũ (mã {:?}): {}",
-                out.status.code(),
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-            return;
-        }
-        Err(e) => {
-            tracing::warn!("không gọi được schtasks: {e}");
-            return;
-        }
+    if write_task_definition() {
+        tracing::info!("đã nâng lịch định kỳ lên bản mới");
     }
-    ensure_scheduled_task();
 }
 
 /// Register the refresh task, if it is not there already.
@@ -198,7 +200,15 @@ pub fn ensure_scheduled_task() -> bool {
     if scheduled_task_exists() {
         return true;
     }
+    write_task_definition()
+}
 
+/// Ghi định nghĩa tác vụ xuống máy, **không hỏi nó đã tồn tại hay chưa**.
+///
+/// Tách khỏi [`ensure_scheduled_task`] có chủ đích: nâng lịch cần ghi đè lên
+/// một tác vụ **đang tồn tại**, mà chốt tồn tại của hàm kia lại chặn đúng
+/// đường đó. Xem ghi chú ở [`upgrade_schedule_if_stale`].
+fn write_task_definition() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         tracing::warn!("không xác định được đường dẫn chương trình, bỏ qua tác vụ định kỳ");
         return false;
@@ -216,7 +226,11 @@ pub fn ensure_scheduled_task() -> bool {
     // UTF-16 with a BOM: the XML header says so, and `schtasks` reads the
     // header rather than sniffing. A UTF-8 file here is rejected with a
     // singularly unhelpful "The task XML is malformed".
-    let path = std::env::temp_dir().join("mediafinder-task.xml");
+    //
+    // Tên kèm PID: tác vụ định kỳ 15 phút một lượt và tiến trình giao diện có
+    // thể cùng đi qua đây, và một đường dẫn cố định thì tiến trình sau ghi đè
+    // lên tệp tiến trình trước đang đọc dở — hoặc xoá mất nó ở cuối hàm.
+    let path = std::env::temp_dir().join(format!("mediafinder-task-{}.xml", std::process::id()));
     let mut bytes = vec![0xFF, 0xFE];
     for unit in xml.encode_utf16() {
         bytes.extend_from_slice(&unit.to_le_bytes());

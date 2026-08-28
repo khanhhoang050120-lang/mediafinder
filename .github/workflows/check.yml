@@ -62,3 +62,10 @@ jobs:
 
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # 161 bài / 15 nhóm canh hợp đồng giao diện — chúng chỉ sống nếu có người
+      # nhớ gõ tay, và người thì quên. Thêm vào đây sau khi P29 phát hiện cả hai
+      # workflow đều chạy `npm run check` (chỉ kiểm kiểu) mà không chạy `npm test`.
+      - name: Kiểm thử giao diện
+        run: npm test
+

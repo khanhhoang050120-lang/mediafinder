@@ -693,7 +693,16 @@ Không có handle tiến trình để chờ (tác vụ chạy ở phiên riêng)
 báo xong. Hai việc tưởng rời nhau hoá ra là một.
 
 **Lịch cuối cùng (theo lựa chọn của chủ máy):** khi đăng nhập (trễ 1 phút) và **13:00 hằng ngày**
-— tức 1–2 lần mỗi ngày. Đã kiểm chứng sau khi đổi lịch: hành động và quyền của tác vụ vẫn nguyên
+— tức 1–2 lần mỗi ngày.
+
+> **Cập nhật 28/08/2026 (P29).** Đoạn trên đã bị P22 thay bằng `Repetition PT15M` (96 lượt/ngày) mà
+> **không hỏi lại chủ dự án** — một quyết định của họ bị lật im lặng. Chỗ này lộ ra khi họ nhắc lại
+> "1 ngày chỉ được quét 2 lần". Đã đưa số liệu ra để chốt lại: một lượt PT15M là **đọc nhật ký USN**
+> (0,2–2 giây), không phải quét đầy đủ, nhưng khi có thay đổi thật thì nó ghi lại trọn **46 MB**
+> cache — quan sát ngày 28/8 trên máy này: ghi lúc 16:00, 16:15, 16:21, 18:00, 20:45, tức vài lần
+> mỗi giờ chứ không phải mọi tick. Đổi lại, khoảng mù của ổ cục bộ là 15 phút thay vì ~12 giờ.
+> **Chủ dự án xem số liệu rồi chốt: giữ PT15M.** Lịch hiện hành là 96 lượt/ngày, và đó là lựa chọn
+> có chủ đích — đừng ai "sửa lại cho đúng tài liệu cũ". Đã kiểm chứng sau khi đổi lịch: hành động và quyền của tác vụ vẫn nguyên
 (`--index`, `RunLevel = Highest`), chạy thử từ tiến trình quyền thường trả về mã 0, lần kế tiếp
 được lên lịch đúng 13:00.
 
@@ -1092,3 +1101,446 @@ Kiểm chứng lại trên máy thật: lần chạy 1 → marker CO, PT15M CO; 
 
 Kết luận: 236 test Rust + 94 test JS xanh; 7/7 đột biến bị bắt. Toàn bộ nằm ở working tree chờ
 duyệt theo quy tắc git-theo-lệnh.
+
+## 2026-08-28 — Lượt test P23 (lọc theo ổ đĩa)
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| 1 | `$effect` reset con trỏ chạy cả ở lần mount đầu, khi `listRef` chưa tồn tại — 13 test đỏ và 8 lỗi ngầm | so với giá trị trước đó thay vì chạy mỗi lần effect kích |
+| 2 | `VirtualList.scrollToTop()` dùng `viewport.scrollTo`, jsdom không có → ném lỗi giữa effect, giết phần việc đứng sau | gán `scrollTop = 0`; cùng kết quả, không phụ thuộc phương thức có thể vắng |
+| 3 | **Đột biến "ổ mạng xuống cuối" lọt lưới** — dữ liệu test có C: < D: < NAS nên xếp thuần chữ cái tình cờ ra đúng thứ tự | thêm ca `\ALPHA` vs `Z:`: xếp chữ cái sẽ cho ALPHA trước, nên quy tắc buộc phải lộ ra |
+
+Bài học lặp lại lần thứ hai trong hai ngày: **dữ liệu kiểm thử tình cờ đúng cũng là một kiểu mù**.
+Đột biến là thứ duy nhất phát hiện ra nó.
+
+Kết luận: 241 test Rust + 112 test JS xanh; 5/5 đột biến bị bắt sau khi vá.
+
+## 2026-08-28 (chiều) — Lượt test P24 (hỏi trước khi quét ổ mạng)
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| 1 | Tôi phỏng đoán "Quét lại" xoá mất dữ liệu NAS — **sai**. Cả hai chiều hợp nhất đều bỏ qua ổ không chạm tới, có từ P10 | đính chính với người dùng ngay; bài học: đọc code trước khi đoán, nhất là khi câu chuyện nghe hợp lý |
+| 2 | `btn(document, "Quét lại")` bắt nhầm nút trên thanh chính thay vì nút trong hộp thoại — test xanh vì lý do sai | thêm `dlgBtn()` giới hạn phạm vi tìm trong `[role=dialog]` |
+| 3 | **Đột biến "lượt huỷ vẫn ghi dấu vết" lọt lưới** — quy tắc nằm trong một `if` ở `lib.rs`, test chỉ mô phỏng lại được điều kiện | tách thành `record_outcome()`; test gọi thẳng hàm mà `lib.rs` dùng |
+
+Bài học #3 là biến thể của bài học P23 (dữ liệu tình cờ đúng): **một bài kiểm thử mô phỏng lại logic
+thay vì gọi nó thì không canh gì cả.** Quy tắc muốn được canh thì phải có một cái tên để gọi tới.
+
+Kết luận: 242 test Rust + 121 test JS xanh; 4/4 đột biến bị bắt sau khi vá.
+
+## 2026-08-28 (tối) — Lượt test P25 ("Quét lại" nói nó vừa làm gì)
+
+Không phát hiện lỗi mới. 8 ca của nhóm t13 xanh ngay lần chạy đầu, 4/4 đột biến bị bắt.
+
+Đáng ghi lại một quyết định thiết kế thay vì một lỗi: người dùng đề nghị áp cùng cách xử lý của
+"+ ổ mạng" (hộp thoại xác nhận) cho "Quét lại". Hai nút trông giống nhau nhưng **cái giá khác nhau
+một bậc độ lớn** — vài phút so với vài giây — nên cùng một giải pháp sẽ đúng ở nút này và sai ở nút
+kia. Trình bày cả hai phương án kèm cái giá, để người dùng chọn.
+
+Kết luận: 246 test Rust + 129 test JS xanh.
+
+## 2026-08-28 (đêm) — Lượt rà soát độ phủ P26
+
+Không chạy lại cho có: phá từng nhánh rồi xem có ai kêu không.
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| 1 | **`ContextMenu` không có nhóm test nào** — ba nhánh (đóng khi bấm ngoài, kê vào trong màn hình, bấm mục thì đóng) bị phá mà 129 test vẫn xanh | viết nhóm t14, 13 ca; 4/4 đột biến bị bắt |
+| 2 | Ca "Escape không lọt xuống app" tôi viết sai giả định — `stopPropagation` không chặn listener anh em trên cùng `window` | viết lại thành lời ghi chép về giới hạn đó, trỏ sang TC-3.16b nơi canh chốt thật |
+| 3 | Ca kiểm mép trái quá lỏng: `(2,2)` với `>= 0` — bỏ `Math.max` vẫn qua | đổi sang toạ độ âm và kiểm `> 0` |
+
+Bài học lần thứ ba trong hai ngày, mỗi lần một dạng: dữ liệu tình cờ đúng (P23), test mô phỏng thay
+vì gọi (P24), và giờ là **cả một component không ai canh**. Cách phát hiện luôn giống nhau: phá rồi
+xem có ai kêu.
+
+Kết luận: 246 test Rust + 142 test JS xanh.
+
+## 2026-08-28 (khuya) — Điều tra BUG-024 do người dùng báo
+
+Nguồn phát hiện: **người dùng**, không phải kịch bản test. Mô tả ban đầu mơ hồ như thường lệ ("tìm
+file mà không ra"), và việc đầu tiên là tái hiện — ở đây là tra thẳng chỉ mục thật trên máy.
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| 1 | Tệp có thật trên NAS nhưng 0/368.866 mục chỉ mục biết tới nó | không phải lỗi xếp hạng tìm kiếm — bộ tìm không trả về được thứ nó không biết |
+| 2 | **Chẩn đoán đầu của tôi (chỉ mục NAS cũ) giải thích được triệu chứng nhưng KHÔNG giải thích được tương quan phiên bản người dùng nêu** | đào tiếp thay vì đóng vụ; chi tiết không khớp mới là chỗ đáng đào |
+| 3 | `nsis-hooks.nsh` xoá `index.bin` vô điều kiện; cài tay đè lên bản cũ chạy qua uninstaller | thêm chốt chặn ba tín hiệu; 4 bài kiểm thử đọc thẳng tệp `.nsh` |
+| 4 | Ghi chú phát hành hứa "Chỉ mục đã quét vẫn giữ nguyên" — sai với đường cài tay | sửa lời, nói rõ bản nào còn dính và cách phục hồi |
+
+Bài học bổ sung vào ba bài của P23–P26: **một tương quan người dùng nêu ra là dữ liệu, kể cả khi nó
+mâu thuẫn với chẩn đoán đang có.** Chẩn đoán giải thích được triệu chứng mà không giải thích được
+tương quan thì chưa xong.
+
+Kết luận: 250 test Rust + 142 test JS xanh; đột biến khôi phục bản móc cũ làm 4/4 bài đỏ.
+
+
+## 2026-08-28 (chiều muộn) — Lượt P28: lái app thật bằng chuột, truy vấn thật
+
+Người dùng yêu cầu: *"test cực kỳ chi tiết… phải test log và test trên phiên bản thật (nghĩa là bạn
+tự ở app tự điều khiển chuột tự tìm kiếm và đưa ra kết quả cho tôi)"*, sau khi bổ sung rằng lỗi
+"10/16 từ" **cũng xảy ra trên ổ cục bộ**, không riêng NAS.
+
+### Cách lái
+
+`SendKeys` không tới được nội dung WebView2 — lượt đầu ô tìm kiếm vẫn rỗng trong ảnh chụp. Đổi sang
+đặt clipboard rồi bắn `Ctrl+V` bằng `keybd_event`, đi qua đúng đường xử lý phím của trình duyệt.
+Chụp bằng `PrintWindow(PW_RENDERFULLCONTENT)` chứ không `CopyFromScreen`, để một cửa sổ khác đè lên
+không làm hỏng bằng chứng.
+
+Đối tượng thử: bản **đã cài** `C:\Users\Padoma1\AppData\Local\MediaFinder\mediafinder.exe`,
+FileVersion 1.0.5 — không phải bản dev.
+
+### Kết quả
+
+| # | Truy vấn | Mong đợi | Thực tế | Đạt |
+|---|---|---|---|---|
+| P28-1 | Tên tệp người dùng báo, dán nguyên | tìm thấy | băng "khớp đủ **16** từ… **10/16**", 22 kết quả sai · 13,6 ms | ❌ tái hiện |
+| P28-2 | `.mp4` vừa tạo trên `D:` 2 phút trước | tìm thấy | "Không tìm thấy kết quả nào" | ❌ tái hiện vế ổ cục bộ |
+| P28-3 | Y hệt P28-2, sau khi chạy tay tác vụ làm mới | tìm thấy | 2 kết quả · 3,2 ms, đúng thư mục | ✅ |
+| P28-4 | Tên 14 từ trên `C:` | 1 kết quả | 1 kết quả · 5,4 ms | ✅ |
+| P28-5 | Tên 29 từ tiếng Pháp có dấu, `Z:` | 1 kết quả | 1 kết quả · 5,7 ms | ✅ |
+| P28-6 | Tên có khoảng trắng + gạch dưới + chữ hoa, `F:` | 1 kết quả | 1 kết quả · 5,6 ms | ✅ |
+| P28-7 | P28-4 viết HOA/thường lẫn lộn | 1 kết quả | 1 kết quả · 4,3 ms | ✅ |
+| P28-8 | Tên 12 từ trên NAS `Y:` | 1 kết quả | 1 kết quả · 3,7 ms | ✅ |
+
+P28-2 và P28-3 là cặp đối chứng có kiểm soát: cùng tệp, cùng truy vấn, chỉ khác chỗ chỉ mục đã làm
+mới hay chưa. Đó là bằng chứng thẳng rằng nguyên nhân nằm ở **tuổi chỉ mục**, không ở bộ tìm kiếm.
+
+### Đo trên đĩa và trong chỉ mục
+
+Thư mục chứa tệp người dùng tìm, `Y:\PROJECT DEEP SEA 5\DS1_118\Whale Shark`:
+
+```
+trên đĩa                        : 125 tệp
+chỉ mục biết                    :  51 tệp
+thiếu                           :  74 tệp   (51 + 74 = 125, khớp tuyệt đối)
+tệp mới nhất chỉ mục biết       : đến ổ 11:12:45
+lần quét ổ mạng gần nhất        : 11:23:05  (netscan.json)
+tệp người dùng tìm, đến ổ lúc   : 13:48:49  — sau lần quét 2 giờ 25 phút
+```
+
+### Test log — và một phát hiện về chính nó
+
+`%LOCALAPPDATA%\MediaFinder\logs\mediafinder.log` **không lớn thêm** trong suốt lượt thử, dù tác vụ
+định kỳ chạy lúc 16:00:01, 16:15:01 và 16:21:41 (đối chiếu bằng `LastWriteTime` của `index.bin`).
+Lý do: `src-tauri/src/diag.rs` có trên nhánh `edit` nhưng không có trong `master` lẫn tag
+`v1.0.5`, nên **bản v1.0.5 người dùng đang chạy không ghi log**.
+Toàn bộ nội dung tệp log trên máy này do các bản dev tạo ra. Chẩn đoán từ xa hiện đang mù.
+
+Nội dung log cũ vẫn có giá trị: nó cho thấy `run_incremental()` bỏ ổ mạng ở **mọi** lượt, và cho
+thấy `stats.unresolved` bắn thật 2 / 3 / 26 / 73 lần ở các lượt khác nhau.
+
+### Dọn hiện trường
+
+Tệp thử `D:\mf-test-p28\` đã xoá; chạy lại tác vụ làm mới, chỉ mục báo `+5 −2` — hai tệp thử rời
+khỏi chỉ mục đúng như mong đợi. Bốn ví dụ dò tạm (`probe_find`, `probe_local`, `probe_search`,
+`probe_walk`) đã xoá khỏi `src-tauri/examples/`.
+
+### Kết luận
+
+Bộ tìm kiếm đạt 5/5 ở mọi kiểu tên khó. Hai ca hỏng đều là chỉ mục thiếu tệp, và thiếu vì không có
+đường làm mới nào với tới: ổ mạng chỉ được quét khi có người bấm nút, ổ cục bộ mỗi ngày một lần trên
+bản đã phát hành. Ghi thành **BUG-025**.
+
+
+## 2026-08-28 (tối) — Lượt P29: vá chốt chặn trước khi cắt v1.0.6
+
+Chủ dự án phân vân giữa bốn hướng sửa BUG-025, nên lượt này cân nhắc bằng bốn lăng kính độc lập
+(người dùng cuối · rủi ro kỹ thuật · chi phí vận hành · khả năng chẩn đoán), một lượt soi hướng bị
+bỏ sót, và một lượt phản biện chính lộ trình vừa dựng. Kết quả đáng giá nhất **không phải** thứ
+hạng mà là lượt phản biện: nó bắt được một lỗi trong chính đề xuất, thứ suýt làm cả bản phát hành
+thành công cốc.
+
+### Lỗi trong đề xuất, bắt được trước khi viết một dòng nào
+
+Lộ trình định vá `upgrade_schedule_if_stale` bằng cách bỏ bước `/Delete`, gọi đó là "một dòng, rủi
+ro gần bằng không". Đọc lại mã thì sai: [`setup.rs`](../src-tauri/src/setup.rs) —
+`ensure_scheduled_task()` mở đầu bằng `if scheduled_task_exists() { return true; }`. Nâng lịch thì
+**luôn luôn** gặp một tác vụ đã tồn tại, đó là tiền đề của việc nâng. Nên bỏ `/Delete` mà vẫn gọi
+hàm ấy nghĩa là `/Create /XML /F` **không bao giờ chạy tới**: máy mang lịch v1 sẽ ghi log "nâng lên
+lịch v2" ở mọi lượt, mãi mãi, mà lịch không đổi.
+
+Đúng hình dạng của lỗi `SCHEDULE_MARK` đã trả giá ở P22 — cùng một cách hỏng, chỗ khác. Và bài đo
+mà lộ trình đề xuất ("xác nhận tác vụ vẫn còn VÀ Repetition = PT15M") rất dễ bị tick xanh chỉ dựa
+trên vế đầu.
+
+### Bốn vá, và đột biến chứng minh từng cái
+
+| # | Vá | Đo bằng | Đột biến | Kết quả |
+|---|---|---|---|---|
+| 1 | Tách `write_task_definition()` ra khỏi chốt `exists`; nâng lịch gọi thẳng nó | `tests/refresh_guards.rs` ×4 | khôi phục lời gọi `ensure_scheduled_task()` | **đỏ đúng 1 bài**, 4 bài kia xanh |
+| 2 | Tệp tạm mang PID ở cả ba chỗ (`index.bin.tmp`, `progress json.tmp`, `mediafinder-task.xml`) | cùng tệp trên | đưa `index.bin.tmp` về đường dẫn cố định | **đỏ đúng 1 bài** |
+| 3 | `#[serde(default)]` cho `NetScanMark` | `tep_thieu_truong_van_doc_duoc_thay_vi_mat_trang` | — | đọc được tệp 2 trường của bản cũ |
+| 4 | `.gitattributes` cho `persist.rs` | `git diff --stat` | — | `Bin 9365 → 10316 bytes` **⇒** `12 +++++++++++-` |
+
+Vá 4 không phải chuyện thẩm mỹ: `persist.rs` khai báo `const MAGIC: &[u8; 8] = b"MFIDX\0\0\0";` —
+ba byte NUL thật nằm trong nguồn (byte NUL đầu ở offset 2443), nên git coi cả tệp là nhị phân và
+người duyệt **không đọc được diff** của đúng tệp giữ định dạng chỉ mục.
+
+### Bốn đột biến phía giao diện
+
+| Đột biến | Bài phải đỏ | Kết quả |
+|---|---|---|
+| Gỡ `FreshnessNote` khỏi nhánh 0 kết quả | "không còn im lặng về tuổi" | ✅ đỏ đúng bài |
+| Chân cửa sổ quay về một mốc `quét lúc` | "nói HAI mốc, không còn nói dối" | ✅ đỏ đúng bài |
+| `matTacVu = !health?.taskExists` | "chưa hỏi được thì không doạ nhầm" | ✅ đỏ đúng bài |
+| `coGiDeNoi = true` | "mọi thứ đều tươi thì im lặng" | ✅ đỏ đúng bài |
+
+Mỗi lần chỉ một bài đỏ — không bài nào đang canh hộ bài khác.
+
+### Một test cũ đỏ, và vì sao nó đáng sửa chứ không đáng nới
+
+`t12` đếm **số tuyệt đối** lượt gọi `net_scan_mark` (1 rồi 2). Từ lượt này có thêm một lượt đọc hợp
+lệ lúc mở cửa sổ, nên con số thành 2 rồi 3. Bất biến thật của bài ấy là "**mỗi lần mở hộp thoại
+phải hỏi lại**", nên nó được viết lại để đo **độ tăng**. Kiểm chứng rằng sửa như vậy không làm nó
+mềm đi: bỏ lượt đọc lại trong `beginNetScan` → bài vẫn **đỏ**.
+
+### Nghiệm thu trên bản dựng thật
+
+Dựng bằng `npm run tauri build -- --no-bundle` (bản `cargo build --release` trần vẫn trỏ vào
+`devUrl`, ảnh chụp đầu ra `ERR_CONNECTION_REFUSED` — ghi lại để lần sau khỏi mất thời gian), rồi
+lái bằng chuột và clipboard như lượt P28.
+
+| Ca | Trước | Sau |
+|---|---|---|
+| Không tìm thấy kết quả nào | im lặng hoàn toàn về tuổi chỉ mục | **"Ổ trong máy: 1 phút trước · Ổ mạng: 6 giờ trước"**, phần cũ tô hổ phách |
+| Băng "10/16 từ" (đúng ca người dùng báo) | chỉ có câu "khớp nhiều nhất" | thêm **"Ổ trong máy: 2 phút trước · Ổ mạng: 6 giờ trước"** |
+| Chân cửa sổ | `quét lúc 18:00:01 28/8/2026` — nói dối về nửa NAS | `ổ trong máy 18:00:01 · ổ mạng 11:23:05 28/8/2026` |
+
+### Vòng trước-commit
+
+`cargo test` **259 pass** · `clippy --all-targets` **0 warning** · `fmt --check` sạch ·
+`npm run check` **0 lỗi / 125 tệp** · `npm test` **161/161** (15 nhóm, thêm t15).
+
+### Hai đường cần quyền Administrator — đã chạy, cả hai đạt
+
+Chủ dự án mở một PowerShell Administrator; hai script tự chạy trọn vẹn và tự khôi phục tác vụ ở
+khối `finally`.
+
+**Bài A — đường nâng lịch v1 → v2.** Dựng một tác vụ đúng hình dạng máy người dùng đang mang (cắt
+khối `<Repetition>`, đổi marker thành `[v1]`), chạy `--index` của bản dựng mới, rồi đọc lại:
+
+```
+1. da dung task kieu lich v1 -> PT15M: False | marker: False
+2. indexer thoat voi ma 0
+3. sau khi indexer chay      -> PT15M: True  | marker: True
+   KET QUA: DAT
+4. da khoi phuc task goc     -> ton tai: True | hop le: True | tro vao: ban da cai (dung)
+```
+
+Đây là bài đắt nhất của cả lượt: nếu làm theo đề xuất ban đầu (chỉ bỏ `/Delete`, vẫn gọi
+`ensure_scheduled_task`), bước 3 sẽ in `PT15M: False` — và v1.0.6 ra đời với tính năng chính chết
+lặng trên mọi máy.
+
+**Bài B — cảnh báo mất tác vụ.** Xoá hẳn tác vụ (`con ton tai: False`), mở ứng dụng, tìm một tệp
+không tồn tại. Màn hình hiện đúng câu cần nói:
+
+> Không còn tác vụ làm mới định kỳ trên máy này — chỉ mục sẽ không tự cập nhật nữa. Bấm **Quét lại**
+> một lần để tạo lại nó.
+
+kèm "Ổ trong máy: 6 phút trước · Ổ mạng: 9 giờ trước", và chân cửa sổ
+`ổ trong máy 20:45:01 · ổ mạng 11:23:05 28/8/2026`. Tác vụ được khôi phục sạch sau đó
+(`hop le: True | tro vao: ban da cai`).
+
+**Một chi tiết trong ảnh, không phải lỗi.** Nút **+ ổ mạng** biến mất khỏi thanh công cụ ở ảnh này.
+Nguyên nhân là bài thử: script chạy trong PowerShell Administrator nên `Start-Process` mở ứng dụng ở
+tiến trình **nâng quyền**, mà tiến trình nâng quyền thuộc phiên đăng nhập khác và không nhìn thấy ổ
+ánh xạ — đúng CHECK-007 đã ghi trong mã. Người dùng thật mở ứng dụng theo lối tắt Startup
+(`asInvoker`) nên không gặp. Dòng tuổi chỉ mục vẫn đúng, vì mốc ổ mạng đọc từ `netscan.json` trên
+đĩa chứ không từ việc liệt kê ổ.
+
+### Ba lỗi trong chính script kiểm thử, sửa trước khi tin kết quả
+
+Lần chạy đầu cả hai script đều hỏng giữa chừng (khối `finally` vẫn khôi phục đúng). Ghi lại vì lỗi
+thứ ba là loại nguy hiểm nhất — nó không làm script đổ, nó làm script **nói dối**:
+
+1. **Tên biến PowerShell không phân biệt hoa–thường.** `$v1` (nội dung XML) đè lên `$V1` (đường dẫn
+   tệp) → `WriteAllText` nhận cả đống XML làm đường dẫn.
+2. **`2>$null` trên chương trình ngoài.** PS 5.1 bọc stderr thành `ErrorRecord`; gặp
+   `ErrorActionPreference='Stop'` là ném — đúng lúc `schtasks /Query` báo không tìm thấy tác vụ vừa
+   xoá. Mọi lệnh `schtasks` nay đi qua `cmd /c` để cmd tự nuốt stderr.
+3. **`& echo %ERRORLEVEL%` luôn nói dối.** cmd khai triển biến cả dòng **trước khi** chạy, nên nó in
+   mã lỗi của lệnh *trước đó*. Hàm kiểm tra tồn tại trả `True` cho cả một tên tác vụ bịa ra — thử
+   bằng `khong-he-co-task-nay` mới lộ. Nếu không bắt, bài B sẽ báo "xoá rồi mà vẫn còn tồn tại" và
+   kết luận sẽ sai. Nay dùng `&& echo CO || echo KHONG`.
+
+Bài học lặp lại của cả dự án: **dụng cụ đo cũng phải được đo.** Cùng một họ với lỗi `SCHEDULE_MARK`
+ở P22 và với đột biến "cancelled scan" ở P26 — một phép kiểm mô phỏng lại điều kiện thay vì hỏi
+thẳng hệ thống thì không bao giờ đỏ khi bản thật hỏng.
+
+
+## 2026-08-28 (khuya) — Lượt P30: rà soát toàn bộ tính năng trước khi cắt v1.0.6
+
+Chủ dự án hỏi thẳng: *"đã fix xong hoàn tất chưa, liệu version mới đến tay user có bị mắc lỗi"*, và
+yêu cầu test lần lượt toàn bộ tính năng, viết test case cho bài bản.
+
+Chia làm 6 mảng, mỗi mảng một người soi độc lập, mỗi rủi ro bị một người khác cố bác bỏ: **55 rủi
+ro nêu ra, 52 sống sót**. Tỉ lệ sống sót cao bất thường nên **không chuyển thẳng** — tự đối chiếu
+từng khẳng định nặng bằng mã trước khi tin.
+
+### Bốn khẳng định tự kiểm chứng — cả bốn đều đúng
+
+**1. Cache ảnh thu nhỏ khoá theo VỊ TRÍ, không theo tệp.** `thumbnail.rs` khai
+`type CacheKey = (u64, u32)` = (chỉ số trong chỉ mục, kích thước), và `get()` trả cache hit **mà
+không hề đọc tham số `path`**. Chỉ số là một vị trí, nên sau một lượt dựng lại chỉ mục thì số 42
+chỉ vào tệp khác. Chốt epoch ở `protocol.rs` **không cứu được**: nó chỉ từ chối yêu cầu *đang bay*
+mang epoch cũ; yêu cầu mới mang epoch *đúng* thì đi lọt rồi trúng cache.
+
+Chính chú thích trong mã tự tố cáo: `protocol.rs:14-17` viết *"an in-flight request would quietly
+paint the wrong picture next to the right name"*, và `:82-83` viết *"a cached response can never go
+stale"*. Cả hai đều không đúng với cache nằm sau nó.
+
+Vì sao là chuyện của v1.0.6: lịch cũ mỗi ngày một lượt thì cửa sổ này gần như không tồn tại; lịch
+`PT15M` mới làm chỉ mục nạp lại vài lần mỗi giờ **ngay giữa phiên làm việc**. Với người dựng phim
+chọn clip bằng khung hình, ảnh sai cạnh tên đúng là kiểu hỏng tệ nhất — nó không báo lỗi, nó khiến
+người ta chọn nhầm.
+
+**Cách sửa, và vì sao không chọn cách hiển nhiên.** Thêm epoch vào khoá cũng chặn được lỗi, nhưng
+mỗi lượt nạp lại sẽ làm mọi khoá đổi hết — vứt sạch cache vài lần mỗi giờ ngay dưới tay người đang
+cuộn, tức sửa một lỗi bằng cách tạo một lỗi khác. Đã khoá theo **thứ bức ảnh mô tả**:
+`(băm đường dẫn viết thường, mtime, cạnh px)`. Hai tệp khác nhau không bao giờ chung khoá, **và**
+cùng một tệp giữ nguyên khoá qua mọi lượt dựng lại — cache sống sót. `mtime` bắt ca xuất lại một
+bản dựng đè lên chính nó.
+
+**2. Cả nhánh "ổ mạng" của tính năng lọc-theo-ổ là mã chết trên mọi máy studio.**
+`isNetworkDrive` chỉ nhận tiền tố UNC `\\`. Nhưng `driveKey("Y:\PROJECT…")` trả `"Y"`, và cả bốn ổ
+NAS của studio đều là **ổ ánh xạ** — `net use` trên máy này: `F:`, `H:`, `Y:`, `Z:`. Nên
+`isNetworkDrive("Y")` = `false`: không chip cam, không nhãn cam, ổ mạng không bị đẩy xuống cuối
+hàng chip. Không ai báo lỗi vì phần lọc và đếm vẫn đúng — tính năng lặng lẽ giải đúng một nửa vấn
+đề nó sinh ra để giải. Phần còn thiếu vốn đã có sẵn: lệnh `network_drives` trả danh sách chữ cái,
+và `App.svelte` đã gọi nó từ trước cho màn hình chạy lần đầu; chỉ chưa ai truyền nó vào chỗ cần.
+
+**3. Tầng 3 kết luận sai khi có tệp không đọc được.** `allSame()` đòi
+`groups.length === 1 && unreadable.length === 0`, nên nhóm có a+b trùng nhau cộng c **chưa đọc
+được** rơi vào nhánh else và hiện cảnh báo đỏ *"⚠ có tệp khác nội dung"* — trong khi không tệp nào
+khác nội dung. Ca cả nhóm nằm trên NAS vừa rớt mạng còn tệ hơn: `groups` rỗng, tiêu đề đỏ, mọi
+dòng bên dưới mang nhãn "không đọc được". Trái đúng nguyên tắc `verify.rs` tự đặt ra, và người dùng
+đang định **xoá tệp** dựa trên câu trả lời này. Nay có ba trạng thái: trùng / khác / **chưa kết
+luận**.
+
+Đáng nói hơn: bài `t10` đang **khoá hành vi sai**. Tên bài nói "một tệp khác nội dung" nhưng dữ
+liệu là `groups:[["a","b"]], unreadable:["c"]` — a và b trùng nhau. Chú thích của chính bài thừa
+nhận dữ liệu đã bị đổi mà khẳng định thì không đổi theo. Một bài kiểm thử sai còn nguy hơn không có
+bài nào: nó cấp giấy chứng nhận cho lỗi.
+
+**4. `npm test` chưa từng chạy trong CI.** Cả `check.yml` lẫn `release.yml` đều chạy
+`npm run check` (chỉ kiểm kiểu), `cargo fmt`, `cargo clippy`, `cargo test` — **không** có
+`npm test`. 165 bài canh hợp đồng giao diện chỉ sống nếu có người nhớ gõ tay.
+
+### Một quả mìn tìm thấy dọc đường
+
+`thumbnail.rs` chứa một **ký tự backspace thật** (`\x08`) nằm lẫn trong mã nguồn — di chứng heredoc
+của một phiên trước. Nó biên dịch được vì nằm trong raw string, nên không ai biết. Đã dọn, và thêm
+một khẳng định chặn: không còn ký tự điều khiển nào trong tệp.
+
+### Đột biến
+
+| Đột biến | Bài phải đỏ | Kết quả |
+|---|---|---|
+| Khoá cache không phụ thuộc đường dẫn | `hai_tep_khac_nhau_khong_bao_gio_dung_chung_khoa` | ✅ đỏ đúng 1/11 bài |
+
+### Vòng trước-commit
+
+`cargo test` **264 pass** · clippy **0 warning** · fmt sạch · `npm run check` 0 lỗi/125 tệp ·
+`npm test` **165/165** (thêm 4 bài) · `check-release-notes.sh` 1074/1200.
+
+### Chưa sửa — ghi ra để không ai tưởng là đã xong
+
+Còn khoảng tám mục mức "đáng kể" chưa xử lý, đáng chú ý nhất:
+
+* `"Ổ mạng: chưa quét lần nào"` sẽ hiện **sai trên mọi máy nâng cấp**: `netscan.json` là tệp mới
+  của v1.0.6 nên `load()` trả `None`, dù chỉ mục đang có 320.505 mục NAS. Sửa bằng câu chữ:
+  `null` thì nói "chưa rõ lần trước".
+* **Ngưỡng 30 phút báo động giả**: `run_incremental` cố ý không ghi cache khi không có gì đổi, mà
+  `built_at_unix` chỉ đóng dấu lúc `save()`. Máy yên tĩnh buổi tối sẽ bị tô vàng "Ổ trong máy: 4
+  giờ trước" trong khi tác vụ vừa chạy hai phút trước.
+* `index-reloaded` không đóng lớp xem trước và menu chuột phải đang mở — lịch 15 phút đưa chuyện
+  này vào giữa phiên làm việc.
+* Lớp xem trước giữ vết hỏng của tệp trước (`failed`/`loading` không reset khi `hit` đổi).
+* Tầng 3 không có đường huỷ và không giới hạn song song.
+
+
+## 2026-08-29 (rạng sáng) — Lượt P31: làm nốt bốn mục còn treo của P30
+
+### 1. `"Ổ mạng: chưa quét lần nào"` nói sai trên mọi máy nâng cấp
+
+`netscan.json` là tệp mới của bản này, nên `load()` trả `None` trên **mọi** máy nâng cấp — kể cả
+máy đang có 320.505 mục ổ mạng trong chỉ mục. Nói "chưa quét lần nào" ở đó là khẳng định một điều
+mình không biết, và khẳng định sai đúng trên màn hình được dựng lên để *"thôi để họ kết luận sai"*.
+
+Không có đường di trú nào khả dĩ: chỉ mục cố ý không cấp `VolumeStamp` cho ổ mạng nên không suy
+ngược ra mốc cũ. Sửa bằng câu chữ — **chưa biết thì nói là chưa biết**: `"chưa rõ lần trước"`.
+Chân cửa sổ cũng thôi rơi về câu một-mốc `"quét lúc …"` mà nói rõ `"ổ trong máy …"`.
+
+Thêm: máy không gắn ổ mạng nào thì **đừng nhắc tới ổ mạng**.
+
+### 2. Ngưỡng 30 phút báo động giả — sửa bằng một mốc mới, không bằng cách nới ngưỡng
+
+`run_incremental` cố ý không ghi lại cache khi journal không có gì đáng áp; đó là quyết định đúng,
+nó tránh ~4,5 GB ghi SSD mỗi ngày. Nhưng `built_at_unix` chỉ được đóng dấu trong `persist::save()`,
+nên **một máy hoàn toàn khoẻ** — tác vụ vừa chạy hai phút trước — vẫn bị tô vàng *"Ổ trong máy: 4
+giờ trước"* chỉ vì buổi tối không ai đụng vào tệp nào.
+
+Cách rẻ là chỉ cảnh báo khi mất tác vụ. Cách đúng là nhận ra **hai câu hỏi khác nhau cần hai con số
+khác nhau**:
+
+* `built_at_unix` — chỉ mục **đổi** lần cuối lúc nào.
+* mốc mới — cỗ máy làm mới **chạy** lần cuối lúc nào.
+
+Con số thứ hai mới trả lời được câu giao diện thật sự hỏi. Module riêng `src-tauri/src/lastcheck.rs`
+(theo quy tắc chia nhỏ), tệp JSON vài chục byte cạnh cache — không đụng `SCHEMA_VERSION`, và không
+rơi lại vào chính cái bẫy ghi-47-MB vừa tránh. Đóng dấu ở **cả hai** lối ra thành công của
+`run_incremental`; giao diện lùi về `builtAtUnix` khi chưa có mốc, cho máy vừa nâng cấp.
+
+### 3. Chỉ mục bị thay khi lớp phủ đang mở
+
+Lớp xem trước bám theo `selected` — vừa bị đưa về 0 — nên nó ở lại và lặng lẽ chiếu một tệp người
+dùng chưa từng chọn. Menu chuột phải thì tính lại `menuItems`, `hits.indexOf(hit)` thành -1, và mục
+"Xem trước" biến mất khỏi menu **đang mở**: bốn mục co xuống ba ngay dưới con trỏ. Hai dòng.
+
+Trước v1.0.6 chuyện này gần như không xảy ra vì chỉ mục làm mới mỗi ngày một lần.
+
+### 4. Lớp xem trước giữ vết hỏng của tệp trước
+
+`Preview.svelte` mang sẵn chú thích *"Reset per file, not per open"* — nhưng **không có dòng mã nào
+làm việc đó**. Gặp một `.mkv` không giải mã được rồi bấm mũi tên là mọi tệp sau đó đều báo "Không
+xem trước được định dạng này". Cùng kiểu hỏng như `armed` từng mắc: cơ chế sống trong lời văn chứ
+không trong mã.
+
+**Bản sửa đầu của tôi sai, và bộ kiểm thử bắt được.** `$effect` chạy cả lần đầu, mà lượt flush đầu
+tiên xảy ra *sau* khi component dựng xong — nên một tệp hỏng ngay lúc mở bị chính effect ấy xoá mất
+trạng thái hỏng. Sửa lại: chỉ đặt lại khi tệp **thật sự đổi**, `null` là "chưa chạy lần nào".
+
+Để kiểm được nó phải đổi prop trên một component **đang gắn** — `mount()` trả về exports chứ không
+phải proxy props, nên thêm `tests/runes.svelte.ts` (rune chỉ dùng được trong tệp `.svelte.ts`).
+
+### Đột biến — mỗi phép đỏ đúng một bài
+
+| Đột biến | Bài phải đỏ | Kết quả |
+|---|---|---|
+| Bỏ hẳn việc đặt lại trạng thái xem trước | "bước sang tệp khác thì QUÊN vết hỏng cũ" | ✅ đỏ đúng bài |
+| Bỏ `preview = false; menu = null;` | TC-2.9b (cả hai vế) | ✅ **cả hai vế** đỏ với đúng thông điệp |
+
+Phép thứ hai quan trọng hơn vẻ ngoài của nó: bài TC-2.9b có nhánh "bỏ qua nếu jsdom không mở được
+lớp phủ", và một bài xanh nhờ bỏ qua thì vô dụng. Đột biến chứng minh cả hai vế **thật sự chạy**.
+
+### Vòng trước-commit
+
+`cargo test` **272 pass** · clippy **0 warning** · fmt sạch · `npm run check` **0 lỗi 0 cảnh báo**
+/125 tệp · `npm test` **170/170**.
+
+Cảnh báo `state_referenced_locally` xuất hiện một lúc rồi được sửa — Svelte nói đúng: khởi tạo biến
+theo dõi bằng `hit.index` chỉ bắt được giá trị đầu.
+
+### Nghiệm thu trên bản dựng thật
+
+Dựng `npm run tauri build -- --no-bundle`, lái bằng chuột:
+
+* Trạng thái 0 kết quả: **"Ổ trong máy: 11 phút trước · Ổ mạng: 11 giờ trước"**, phần cũ tô hổ phách.
+* Chân cửa sổ: `ổ trong máy 22:30:02 · ổ mạng 11:23:05 28/8/2026`.
+* `lastcheck.json` chưa tồn tại nên tuổi ổ cục bộ lùi về `builtAtUnix` — **đúng đường dự phòng đã
+  thiết kế cho máy vừa nâng cấp**, và quan sát được đúng như vậy.
+
+**Chưa nghiệm thu được:** việc đóng dấu `lastcheck.json` từ tiến trình `--index` thật, vì nó cần
+quyền Administrator và bản đang cài trên máy được dựng trước khi module này tồn tại. Logic có 6 bài
+đơn vị cộng 2 chốt đọc thẳng mã nguồn canh đúng điểm gọi.

@@ -945,3 +945,265 @@ này dữ liệu thật lớn hơn dữ liệu thử.
 **Bài học.** Lặp lại đúng bài học của [BUG-020](#bug-020) ở một chỗ khác: **dữ liệu thử do tôi chọn
 nhỏ hơn dữ liệu thật.** Với bố cục, "thử bằng thứ lớn nhất người dùng có" phải là một mục kiểm tra,
 không phải may rủi.
+
+## BUG-024 🔴 — Cài tay đè lên bản cũ xoá sạch chỉ mục, người dùng tưởng bản mới hỏng
+
+**Giai đoạn:** BT (phát hiện ở P27) · **Trạng thái:** ĐÃ SỬA · **Ngày:** 2026-08-28 · **Người báo:** người dùng
+
+**Hiện tượng.** Người dùng gõ nguyên tên một tệp có thật trên NAS
+(`a-lady-enjoying-swimming-with-the-huge-whale-shark-2025-12-17-21-17-42-utc`) và không tìm ra; ứng
+dụng báo "Không có tệp nào khớp đủ 16 từ · đang hiện 10/16". Họ báo thêm một chi tiết quyết định:
+**ai còn ở v1.0.4 thì không gặp, ai lên v1.0.5 thì gặp.**
+
+**Chẩn đoán đầu tiên của tôi đã SAI.** Tôi kết luận đó chỉ là chỉ mục ổ mạng cũ (ổ mạng chỉ được
+quét khi bấm tay "+ ổ mạng"), và nói với người dùng như vậy. Nhưng chẩn đoán đó không giải thích
+được tương quan với phiên bản — nếu chỉ là chỉ mục cũ thì v1.0.4 phải bị y hệt. Chính chi tiết
+người dùng nêu thêm mới lật lại được vụ này.
+
+**Nguyên nhân thật.** Của tôi, trong `src-tauri/nsis-hooks.nsh`.
+
+Hai móc `NSIS_HOOK_PREUNINSTALL` và `NSIS_HOOK_POSTUNINSTALL` chạy **mỗi lần uninstaller chạy**.
+Trong template của Tauri, chúng được chèn vào `Section Uninstall` **vô điều kiện** — nằm ngoài chốt
+`$DeleteAppDataCheckboxState = 1 ${AndIf} $UpdateMode <> 1` mà chính Tauri dùng để bảo vệ dữ liệu
+ứng dụng của nó.
+
+Hệ quả tuỳ đường lên bản mới:
+
+| Đường | Cờ | Kết quả |
+|---|---|---|
+| Nút **Cập nhật** trong ứng dụng | truyền `/UPDATE` → `PageLeaveReinstall` nhảy thẳng `reinst_done`, không chạy uninstaller | chỉ mục an toàn |
+| **Tải .exe về cài đè tay** | không có `/UPDATE` → hiện trang chọn, **nút radio đầu tiên được tích sẵn** là "Uninstall before installing" | uninstaller chạy → móc xoá `index.bin`, `metadata.bin`, **và** gỡ luôn tác vụ định kỳ |
+
+Ghi chú phát hành lại đang hướng người dùng đi đúng vào đường thứ hai, kèm một câu **sai sự thật**:
+"Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ nguyên."
+
+**Bằng chứng trên máy thật.** Nhật ký sáng 28/8 (sau khi cài tay v1.0.4 lúc 27/8 15:41):
+
+```
+01:40:19Z  nạp cache: 48.319 tệp, 3.211 thư mục      ← chỉ còn ổ cục bộ
+03:51:29Z  hợp nhất: 48.335 cục bộ + 320.505 mạng    ← sau khi quét lại NAS
+```
+
+**320.505 mục ổ mạng đã biến mất** và chỉ trở lại sau một lượt quét mạng thủ công. Thư mục chứa tệp
+người dùng tìm: 125 tệp trên đĩa, 51 trong chỉ mục, 74 tệp có mtime sau mốc chỉ mục — `51 + 74 =
+125`, khớp tuyệt đối.
+
+**Cách sửa.** Cả hai móc nay tính một cờ chung trước khi làm bất cứ việc phá huỷ nào, dựa trên ba
+tín hiệu phân biệt "gỡ hẳn" với "gỡ để cài đè":
+
+* `$EXEDIR` so với `$INSTDIR` — tín hiệu quyết định. NSIS chỉ chạy uninstaller **tại chỗ** khi được
+  gọi kèm `_?=`, và chỉ bộ cài mới gọi kiểu đó; người dùng tự gỡ thì NSIS chép sang thư mục tạm rồi
+  chạy bản sao.
+* `$UpdateMode` — bản cập nhật trong ứng dụng, tuyệt đối không đụng dữ liệu.
+* `$DeleteAppDataCheckboxState` — người dùng tự tay yêu cầu xoá thì tôn trọng.
+
+Cài đè nay cũng giữ nguyên tác vụ định kỳ: nó trỏ vào đúng đường dẫn mà bản mới ghi đè lên, nên vẫn
+đúng. Gỡ nó đi nghĩa là sau khi nâng cấp, chỉ mục thôi tự làm mới cho tới khi người dùng tự quét lại
+một lần có hỏi quyền — một sự cố im lặng không ai báo cho họ.
+
+Ghi chú phát hành đã sửa: nói thẳng rằng các bản **từ v1.0.5 trở về trước** vẫn xoá chỉ mục khi cài
+tay đè lên, và chỉ đường phục hồi (Quét lại → + ổ mạng).
+
+**Chốt chặn.** `src-tauri/tests/installer_hooks.rs` — 4 bài đọc thẳng tệp `.nsh`: không móc nào được
+xoá gì trước một `${If}`, chốt chặn phải còn nhìn đủ ba tín hiệu, chế độ cập nhật không bao giờ được
+xoá, và gỡ thật thì phải dọn hết tệp ứng dụng tự tạo. Khôi phục bản móc cũ làm cả 4 bài đỏ.
+
+**Bài học.** Một tương quan mà người dùng nêu ra ("v1.0.4 không sao, v1.0.5 thì có") là dữ liệu, dù
+nó mâu thuẫn với chẩn đoán đang có. Tôi đã suýt đóng vụ này ở chẩn đoán sai vì nó giải thích được
+triệu chứng — nhưng nó không giải thích được **tương quan**. Chi tiết không khớp mới là chỗ đáng đào.
+
+
+### Nghiệm thu bằng bộ cài THẬT (P29, 28/08/2026) — và một giới hạn không vượt qua được
+
+Bốn bài đọc tệp `.nsh` không chứng minh được điều quan trọng nhất, nên đã dựng bộ cài thật
+(`npm run tauri build`, phiên bản nâng lên 1.0.6) và chạy nó đè lên bản v1.0.5 đang cài trên máy.
+
+**Việc đầu tiên bộ cài thật chứng minh:** `makensis` **biên dịch được** `nsis-hooks.nsh`. Bài đọc
+tệp không bao giờ nói được điều đó — một lỗi cú pháp trong `.nsh` sẽ chỉ lộ ra lúc CI đóng gói.
+
+**Cái bẫy tái hiện đúng nguyên văn.** Đọc thẳng từ điều khiển Win32 của hộp thoại, không đoán qua
+ảnh chụp:
+
+```
+Already Installed
+"An older version of MediaFinder is installed on your system. It's recommended
+ that you uninstall the current version before installing."
+  (•) Uninstall before installing     <- DA TICH SAN
+  ( ) Do not uninstall
+```
+
+Chọn đúng cái mặc định đó thì `index.bin` (48.074.384 byte) và `metadata.bin` (14.811.580 byte)
+**bị xoá**, tác vụ định kỳ và lối tắt Startup **bị gỡ**.
+
+**Nhưng thủ phạm không phải móc mới.** `netscan.json` và `logs/` sống sót — mà móc mới xoá cả hai.
+Đối chiếu với `git show v1.0.5:src-tauri/nsis-hooks.nsh`:
+
+| Móc cũ (v1.0.5) xoá | Quan sát được |
+|---|---|
+| `index.bin` | ✗ mất |
+| `metadata.bin` | ✗ mất |
+| `progress.json` | ✗ mất |
+| `--remove-setup` vô điều kiện | ✗ mất tác vụ + lối tắt |
+| *(không biết `netscan.json`, `logs/`)* | ✓ còn |
+
+Khớp từng chi tiết. Móc cũ không biết `netscan.json` và `logs/` vì hai thứ đó chưa tồn tại ở v1.0.5.
+
+**GIỚI HẠN CẤU TRÚC, KHÔNG VƯỢT QUA ĐƯỢC.** Mẫu NSIS gọi bộ gỡ **đang nằm trên máy**:
+
+```nsis
+ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
+StrCpy $R1 "$R1 _?=$4"      ; chạy TẠI CHỖ
+ExecWait '$R1' $0
+```
+
+Bộ gỡ đó là của bản **cũ**, mang móc **cũ**. Bản sửa nằm trong gói mới và chỉ được ghi ra **sau** khi
+cài xong. Nên:
+
+> **Bản sửa BUG-024 không cứu được bất kỳ ai đang ở v1.0.5 trở về trước.** Nó chỉ có hiệu lực từ
+> v1.0.6 → v1.0.7 trở đi. Mọi người dùng cài tay bản mới đè lên bản ≤ v1.0.5 **vẫn sẽ mất chỉ mục**.
+
+Đường an toàn duy nhất cho lần nâng cấp này là **nút cập nhật trong ứng dụng** — nó truyền `/UPDATE`,
+và `PageLeaveReinstall` nhảy thẳng `reinst_done` mà không chạy bộ gỡ.
+
+Ghi chú phát hành đã viết lại theo đúng sự thật đó: câu đầu tiên nay là *"Hãy cập nhật bằng nút trong
+ứng dụng, đừng tải tệp `.exe` về cài đè lần này."* Bản nháp trước đó nói *"cài tay đè lên bản cũ không
+còn xoá chỉ mục nữa"* — đúng về lâu dài nhưng **sai cho chính lần nâng cấp này**, tức lặp lại đúng
+kiểu sai đã tạo ra BUG-024.
+
+### Bản sửa có hoạt động không — đo riêng, và có
+
+Sau khi v1.0.6 đã cài, chạy bộ gỡ **mới** đúng cách bộ cài gọi nó (`uninstall.exe /S _?=<thư mục>`):
+
+| Tệp | Móc cũ | Móc mới |
+|---|---|---|
+| `index.bin` 48.074.384 | xoá | **còn nguyên** |
+| `metadata.bin` 14.811.580 | xoá | **còn nguyên** |
+| `progress.json` · `netscan.json` · `logs/` | xoá / không biết | **còn nguyên** |
+| `mediafinder.exe` | xoá | xoá — đúng, bản mới sắp ghi đè |
+
+Và phép thử ngược lại, gỡ **thật** (không có `_?=`, NSIS tự chép sang thư mục tạm nên
+`$EXEDIR != $INSTDIR`): thư mục dữ liệu **xoá sạch hoàn toàn**, khoá registry mất. Bản sửa không bảo
+vệ quá đà.
+
+**Một điểm còn treo.** Ở lượt gỡ thật đó, lối tắt Startup **còn sót**. Nguyên nhân là thứ tự thử
+nghiệm: lượt gỡ tại-chỗ ngay trước đó đã xoá `mediafinder.exe`, nên lời gọi
+`"$INSTDIR\mediafinder.exe" --remove-setup` trong móc không chạy được. Không phải hình dạng thường
+gặp — gỡ thật thì tệp exe vẫn còn — nhưng nó cho thấy **móc phụ thuộc vào sự tồn tại của exe và thất
+bại im lặng khi thiếu**. Đáng thêm một chốt chặn.
+
+## BUG-025 🔴 — Chỉ mục ổ mạng không bao giờ tự làm mới; ổ cục bộ chỉ mỗi ngày một lần
+
+Người dùng báo tiếp: cái băng "khớp nhiều nhất — 10/16 từ" **không chỉ xảy ra với tệp trên NAS mà
+còn với tệp trên ổ trong máy**. BUG-024 giải thích được vế NAS sau khi cài tay đè lên, nhưng không
+giải thích được vế ổ cục bộ, nên phải đào tiếp. Lượt này lái thẳng bản v1.0.5 đã cài
+(`C:\Users\Padoma1\AppData\Local\MediaFinder\mediafinder.exe`) bằng chuột và bàn phím thật.
+
+**Tái hiện được cả hai vế.**
+
+| # | Việc làm trên app thật | Kết quả |
+|---|---|---|
+| 1 | Dán đúng tên tệp người dùng báo (`a-lady-enjoying-…-utc`) | băng vàng "Không có tệp nào khớp đủ **16** từ… **10/16**", 22 kết quả sai · 13,6 ms |
+| 2 | Tạo `D:\mf-test-p28\…zxqw.mp4` lúc 16:19:47 rồi tìm ngay | **"Không tìm thấy kết quả nào"** — chân cửa sổ vẫn "quét lúc 16:15:01" |
+| 3 | Chạy tay tác vụ `MediaFinder - cap nhat chi muc` (+90 tệp) rồi tìm lại | tìm ra cả `.mp4` lẫn `.png`, 2 kết quả · 3,2 ms |
+
+Bước 2 và 3 là cặp đối chứng: cùng một truy vấn, cùng một tệp, chỉ khác nhau ở chỗ chỉ mục đã được
+làm mới hay chưa. **Bộ tìm kiếm không hỏng.** Tệp không có trong chỉ mục thì không thể ra.
+
+**Bộ tìm kiếm được thử riêng, và nó khoẻ.** Năm truy vấn nữa trên app thật, mỗi truy vấn là nguyên
+tên một tệp *đã có* trong chỉ mục:
+
+| # | Kiểu tên | Ổ | Kết quả |
+|---|---|---|---|
+| T1 | 14 từ, gạch nối | C: | 1 kết quả · 5,4 ms |
+| T2 | 29 từ, tiếng Pháp có dấu | Z: | 1 kết quả · 5,7 ms |
+| T3 | có khoảng trắng, gạch dưới, chữ hoa | F: | 1 kết quả · 5,6 ms |
+| T4 | T1 viết HOA/thường lẫn lộn | C: | 1 kết quả · 4,3 ms |
+| T5 | 12 từ | Y: (NAS) | 1 kết quả · 3,7 ms |
+
+Không lần nào hiện băng "khớp nhiều nhất". Truy vấn 20+ từ, có dấu, lẫn hoa thường đều ra đúng một
+tệp trong dưới 6 ms.
+
+**Nguyên nhân, đo bằng số.** Tệp người dùng tìm **có thật trên đĩa**:
+
+```
+Y:\PROJECT DEEP SEA 5\DS1_118\Whale Shark\a-lady-enjoying-…-2025-12-17-21-17-42-utc.mov
+  đến ổ (CreationTime) : 28/08/2026 13:48:49
+lần quét ổ mạng gần nhất (netscan.json atUnix 1787890985) : 28/08/2026 11:23:05
+```
+
+Tệp đến sau lần quét **2 giờ 25 phút**. Đối chiếu nguyên thư mục đó:
+
+```
+trên đĩa           : 125 tệp
+chỉ mục biết       :  51 tệp
+thiếu              :  74 tệp
+  đến sau 11:12:45 :  67
+  còn lại 7        : mốc CreationTime giữ nguyên khi sao chép, nhưng LastWriteTime
+                     là 11:09–14:53 cùng ngày — tức cũng đến trong ngày
+tệp mới nhất mà chỉ mục biết trong thư mục này: đến ổ lúc 11:12:45
+```
+
+51 + 74 = 125. Ranh giới nằm đúng ở mốc quét, không sót chỗ nào.
+
+**Vì sao không bao giờ tự khỏi.** Hai đường làm mới, cả hai đều không với tới trường hợp này:
+
+* **Ổ mạng — không có đường tự động nào cả.** `scan_network_volumes()` (`src-tauri/src/lib.rs:440`)
+  có đúng **một** nơi gọi: `src-tauri/src/ipc/commands.rs:427`, tức lệnh IPC sau nút **+ Ổ mạng**.
+  Tác vụ định kỳ chạy `--index` → `run_incremental()`, mà đường này đọc MFT/USN nên
+  `src-tauri/src/ntfs/volume.rs:67` gạt thẳng ổ mạng ra: *"đọc MFT/USN chỉ làm được với đĩa gắn trực
+  tiếp, qua SMB thì máy này không thấy MFT của máy chủ"*. Nhật ký xác nhận điều đó ở mọi lượt chạy.
+  ⇒ **Chỉ mục ổ mạng chỉ mới khi có người bấm nút.** Không ai bấm thì nó cũ mãi.
+* **Ổ cục bộ — mỗi ngày một lần.** Bản v1.0.5 đã phát hành và `master` đặt lịch
+  `<DaysInterval>1</DaysInterval>` **không kèm `<Repetition>`** (`git show v1.0.5:src-tauri/src/setup.rs`).
+  Khối `PT15M` đã có trên nhánh `edit` (commit `207b453`) nhưng **chưa gộp lên `master`, chưa
+  phát hành**. ⇒ Tệp mới bỏ vào ổ trong máy có thể **mất
+  tăm tới 24 giờ**.
+
+Máy đang thử đã được nâng lên PT15M từ bản dev, nên khoảng mù ở đây chỉ 15 phút — máy người dùng thì
+là một ngày. Đó là lý do họ thấy vế ổ cục bộ nặng hơn nhiều so với những gì đo được ở đây.
+
+**Một chỗ mù nữa, phát hiện lúc đọc nhật ký.** `run_incremental()` đếm riêng `stats.unresolved` —
+số thay đổi mà journal có nhắc tới nhưng không tra ra được thư mục cha (`src-tauri/src/lib.rs:757`).
+Nhật ký cho thấy nó bắn thật, nhiều lần: 2, 3, 26, **73** thay đổi. Khi cả lượt không đổi gì thì
+cache không được ghi và con trỏ journal đứng yên, nên lần sau thử lại — tự khỏi. Nhưng nếu cùng lượt
+đó có tệp khác được thêm, cache **được** ghi, con trỏ **tiến qua**, và những thay đổi tra không ra
+kia mất luôn cho tới một lượt quét đầy đủ. Chưa dựng được ca tái hiện trên máy thật; ghi lại ở đây
+làm đầu mối, chưa phải kết luận.
+
+**Nhật ký hiện trường đang mù.** `src-tauri/src/diag.rs` (ghi log ra tệp) có trên nhánh `edit`
+nhưng không có trong `master` lẫn tag `v1.0.5`, nên bản v1.0.5
+người dùng đang chạy **không ghi một dòng nào**. Tệp
+`%LOCALAPPDATA%\MediaFinder\logs\mediafinder.log` trên máy này chỉ có nội dung do các bản dev tạo ra,
+và nó đứng im ở 15:28 trong khi tác vụ định kỳ vẫn chạy lúc 16:00, 16:15, 16:21. Muốn chẩn đoán được
+máy người dùng thì phải phát hành `diag.rs`.
+
+**Đã sửa một phần ở P29** (xem `docs/test-log.md`, lượt P29). Bản kế tiếp nói thật về tuổi chỉ mục
+ở cả ba chỗ — băng "khớp nhiều nhất", trạng thái "Không tìm thấy kết quả nào", và chân cửa sổ (nơi
+trước đây in **một** mốc rồi gọi là "quét lúc", trong khi mốc ấy chỉ nói về ổ cục bộ). Máy đã mất
+tác vụ định kỳ vì BUG-024 nay được báo thẳng và chỉ đúng nút cần bấm. Vế **ổ mạng vẫn chưa có đường
+làm mới tự động** — đó là phần còn lại của lỗi này.
+
+Ba chốt chặn phải đi kèm, tìm ra lúc phản biện chứ không phải lúc viết mã:
+
+* `ensure_scheduled_task()` thoát sớm ở `scheduled_task_exists()`, nên đường nâng lịch **không được**
+  đi qua nó — nếu không, `PT15M` không bao giờ tới máy người dùng và log ghi "nâng lên lịch v2" mãi
+  mãi. Cùng hình dạng với lỗi `SCHEDULE_MARK` ở P22.
+* Ba tệp tạm dùng chung một đường dẫn cho mọi tiến trình. Nguy nhất là `index.bin.tmp`: hai lượt ghi
+  chồng nhau đưa một tệp lai vào chỗ chỉ mục, header 12 byte vẫn hợp lệ nên qua được chốt, `load()`
+  trả `Corrupt`, và lượt quét đầy đủ theo sau **xoá sạch mục ổ mạng**. Xác suất nhỏ, hậu quả bằng
+  đúng BUG-024.
+* `NetScanMark` thiếu `#[serde(default)]`: thêm một trường mới sẽ làm mọi `netscan.json` trên 20–40
+  máy đọc ra `None`, tức mốc "quét ổ mạng lần cuối" biến mất đúng vào bản phát hành thêm trường ấy.
+
+**Hướng sửa còn lại** (chưa làm, chờ chốt):
+
+1. Cho ổ mạng một đường làm mới định kỳ — quét lại nền theo lịch riêng, thưa hơn ổ cục bộ vì một
+   lượt mất 140–175 s, và phải bỏ qua khi ổ không gắn.
+2. Phát hành khối `PT15M` đang nằm trên nhánh `edit`, để ổ cục bộ hết cảnh chờ 24 giờ.
+3. Khi băng "khớp nhiều nhất" bật lên, nói luôn chỉ mục cũ tới mức nào và ổ mạng lần cuối quét khi
+   nào — hiện người dùng không có cách nào biết mình đang nhìn dữ liệu cũ.
+4. Phát hành `diag.rs` (cũng đang nằm trên `edit`).
+
+**Bài học.** Người dùng nói "còn bị ngay ở trên ổ" là một dữ kiện thu hẹp phạm vi, không phải một lời
+than. Nó loại BUG-024 khỏi vai trò nguyên nhân duy nhất và chỉ thẳng vào chỗ chung của cả hai vế:
+chỉ mục có tuổi, mà app không nói tuổi đó cho ai biết.

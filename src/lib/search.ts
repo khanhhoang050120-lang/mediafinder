@@ -403,6 +403,52 @@ export function updateStatus(): Promise<UpdateStatus> {
  * của họ. Trong lúc tải, `onProgress` cho biết đã được bao nhiêu phần trăm —
  * không có nó thì màn hình đứng im hàng phút và trông như bị treo.
  */
+/** Lần quét ổ mạng gần nhất đã hoàn tất; `null` khi chưa từng quét xong. */
+export interface NetScanMark {
+  atUnix: number;
+  files: number;
+  drives: number;
+  seconds: number;
+}
+
+export function netScanMark(): Promise<NetScanMark | null> {
+  return invoke<NetScanMark | null>("net_scan_mark");
+}
+
+/** Cỗ máy làm mới chỉ mục còn sống hay không. */
+export interface TaskHealth {
+  taskExists: boolean;
+}
+
+/**
+ * Hỏi xem tác vụ định kỳ còn trên máy không.
+ *
+ * Gọi thưa: mỗi lượt sinh một tiến trình `schtasks.exe`. Chỗ đúng là lúc mở
+ * cửa sổ và sau mỗi lượt quét, không phải mỗi lần gõ phím.
+ */
+export function taskHealth(): Promise<TaskHealth | null> {
+  return invoke<TaskHealth | null>("task_health");
+}
+
+/// Lượt kiểm tra gần nhất của tiến trình làm mới.
+export interface LastCheck {
+  atUnix: number;
+  changed: boolean;
+}
+
+/**
+ * "Cỗ máy làm mới chạy lần cuối lúc nào" — khác với "chỉ mục đổi lần cuối lúc
+ * nào".
+ *
+ * Bản vá gia tăng cố ý không ghi lại cache khi không có gì đổi, nên
+ * `builtAtUnix` đứng yên trên một máy hoàn toàn khoẻ chỉ vì buổi tối không ai
+ * đụng vào tệp nào. Đây là con số trả lời đúng câu "chỉ mục còn được trông
+ * nom không".
+ */
+export function lastCheck(): Promise<LastCheck | null> {
+  return invoke<LastCheck | null>("last_check");
+}
+
 /** Tình hình bộ ghi truy-vấn-0-kết-quả (đo chất lượng tìm kiếm, cục bộ). */
 export interface MissLogStatus {
   enabled: boolean;

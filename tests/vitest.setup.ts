@@ -20,3 +20,15 @@ Object.defineProperty(HTMLElement.prototype, "clientHeight", {
 
 // jsdom không có DragEvent; MouseEvent đủ cho ondragstart của app.
 (globalThis as any).DragEvent = MouseEvent;
+
+// Cửa xoay tải ảnh là trạng thái ở tầng module, dùng chung cho cả tiến trình
+// test. Một nhóm dựng App rồi gỡ đi vẫn để lại các chỗ đang bị chiếm — nhóm
+// chạy sau bị đói slot và đỏ vì lý do chẳng liên quan gì tới nó.
+//
+// Trước khi có dòng này, chạy riêng từng nhóm thì xanh, chạy chung thì đỏ, và
+// SỐ ca đỏ đổi mỗi lần — dấu hiệu kinh điển của trạng thái rò rỉ giữa các
+// nhóm. Dọn ở một chỗ duy nhất, thay vì bắt mười nhóm cùng nhớ.
+import { beforeEach } from "vitest";
+import { resetThumbQueueForTest } from "../src/lib/thumbQueue";
+
+beforeEach(() => resetThumbQueueForTest());

@@ -313,6 +313,58 @@ function click(el) {
   cleanup();
 }
 
+// ---------------------------------------------------------------- TC-2.9b
+// Chỉ mục bị thay khi lớp xem trước / menu chuột phải đang mở.
+//
+// Cả hai đều bám vào vị trí trong danh sách CŨ, mà danh sách sắp bị thay hẳn.
+// Lớp xem trước bám theo `selected` — vừa bị đưa về 0 — nên nó ở lại và lặng
+// lẽ chiếu một tệp người dùng chưa từng chọn. Menu thì tính lại `menuItems`,
+// `hits.indexOf(hit)` thành -1, và mục "Xem trước" biến mất khỏi menu ĐANG MỞ:
+// bốn mục co xuống ba ngay dưới con trỏ, đúng lúc người ta sắp bấm.
+//
+// Trước v1.0.6 chuyện này gần như không xảy ra vì chỉ mục làm mới mỗi ngày một
+// lần; lịch 15 phút đưa nó vào giữa phiên làm việc.
+{
+  baseHandlers(ipc);
+  ipc.reset();
+  const { div, cleanup } = await mountApp();
+  type($(div, "input.search"), "phim");
+  await settle(400);
+
+  // Mở lớp xem trước bằng đúng đường người dùng đi: nháy đúp một dòng.
+  const row = div.querySelector(".row");
+  row?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+  await settle(120);
+  const coPreview = !!div.querySelector(".preview, .overlay, .stage");
+
+  await ipc.emit("index-reloaded", {});
+  await settle(300);
+
+  check(
+    "TC-2.9b index-reloaded đóng lớp xem trước",
+    !coPreview || !div.querySelector(".preview, .overlay, .stage"),
+    coPreview
+      ? "lớp phủ ở lại sau khi chỉ mục bị thay — nó đang chiếu một tệp khác"
+      : "(không mở được lớp phủ trong jsdom, bỏ qua vế này)",
+  );
+
+  // Menu chuột phải: mở rồi cho chỉ mục đổi ngay dưới chân.
+  const row2 = div.querySelector(".row");
+  row2?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+  await settle(80);
+  const coMenu = !!div.querySelector(".menu");
+  await ipc.emit("index-reloaded", {});
+  await settle(300);
+  check(
+    "TC-2.9b index-reloaded đóng menu chuột phải",
+    !coMenu || !div.querySelector(".menu"),
+    coMenu
+      ? "menu ở lại và tự đổi số mục ngay dưới con trỏ"
+      : "(không mở được menu trong jsdom, bỏ qua vế này)",
+  );
+  cleanup();
+}
+
 // ---------------------------------------------------------------- TC-2.10
 // Sự kiện summon phải lấy con trỏ về ô tìm kiếm.
 {
@@ -394,11 +446,20 @@ function click(el) {
     progress: { message: "quét mạng", phase: "network", volumesDone: 1, volumesTotal: 2, finished: false, error: null },
   });
   ipc.on("network_drives", [{ letter: "Z", remote: "\\\\srv\\share" }]);
+  ipc.on("net_scan_mark", null);
   const { div, cleanup } = await mountApp();
   await settle(80);
   const netBtn = chipByText(div, "+ ổ mạng");
   check("TC-2.13a có nút + ổ mạng khi máy có ổ mạng", !!netBtn);
   click(netBtn);
+  await settle(120);
+  // Từ P24, nút này hỏi trước — nó tốn vài phút, không nên chạy vì một cú
+  // bấm nhầm. Chi tiết hộp thoại ở nhóm 12; ở đây chỉ đi qua nó.
+  const confirmBtn = [...document.querySelectorAll("[role=dialog] button")].find((b) =>
+    b.textContent.trim().startsWith("Quét"),
+  );
+  check("TC-2.13a2 hỏi trước khi quét ổ mạng", !!confirmBtn);
+  confirmBtn?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await settle(400);
   check("TC-2.13b gọi request_scan_with_network", ipc.count("request_scan_with_network") === 1);
   const stopBtn = $(div, ".stop");

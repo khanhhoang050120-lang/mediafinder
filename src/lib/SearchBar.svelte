@@ -20,6 +20,7 @@
     dupeMode,
     filtersActive,
     scanning,
+    lastScanHint,
     netDrives,
     inputEl = $bindable(),
     oninput,
@@ -35,6 +36,9 @@
     dupeMode: boolean;
     filtersActive: boolean;
     scanning: boolean;
+    /// Lời nhắc "lần quét gần nhất" cho tooltip nút Quét lại. App dựng câu
+    /// này vì chỉ nó có `meta`; thanh này chỉ hiển thị.
+    lastScanHint: string;
     netDrives: NetworkDrive[];
     /// Ô nhập được đưa ngược ra ngoài vì phím tắt toàn cục và phím Escape đều
     /// phải lấy được con trỏ về đây, mà cả hai đều sống ở cửa sổ chứ không
@@ -132,7 +136,7 @@
       class="chip rescan"
       onclick={() => onscan(false)}
       disabled={scanning}
-      title="Quét lại các ổ gắn trong máy — vài giây"
+      title={`Quét lại các ổ gắn trong máy — vài giây${lastScanHint}`}
     >
       {scanning ? "Đang quét…" : "Quét lại"}
     </button>

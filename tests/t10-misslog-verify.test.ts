@@ -196,20 +196,54 @@ describe("tầng 3 trùng lặp — nút Xác minh trên từng nhóm", () => {
     expect($$(div, ".vtag").length).toBe(0);
   });
 
-  it("một tệp khác nội dung + một tệp không đọc được: badge đỏ, tag đúng từng tệp", async () => {
+  it("trùng hết nhưng còn tệp chưa đọc được: KHÔNG kết luận 'khác nội dung'", async () => {
+    // Bài này từng khoá đúng một hành vi SAI. Tên cũ của nó nói "một tệp khác
+    // nội dung", nhưng dữ liệu bên dưới lại là a+b TRÙNG NHAU và c chỉ chưa
+    // đọc được — không có tệp nào khác nội dung cả. Chú thích cũ của chính bài
+    // đã thừa nhận dữ liệu bị đổi, mà khẳng định thì không đổi theo.
+    //
+    // Hậu quả trên máy người dùng: một nhóm có tệp nằm trên NAS vừa rớt mạng
+    // sẽ hiện cảnh báo đỏ "có tệp khác nội dung", trong khi mọi dòng bên dưới
+    // đều mang nhãn "không đọc được". Người ta đang định XOÁ tệp dựa trên câu
+    // trả lời này. Nguyên tắc mà `verify.rs` tự đặt ra: **không đọc được không
+    // phải là khác**.
     ipc.on("verify_dupe_group", () => ({
       groups: [["D:\\m\\a.mp4", "D:\\m\\b.mp4"]],
       unreadable: ["D:\\m\\c.mp4"],
     }));
-    // Kịch bản gộp: b thật ra khác nội dung → cụm lớn chỉ còn a… dùng dữ liệu
-    // sát thực hơn: a+b trùng, c không đọc được — rồi kịch bản thứ hai bên dưới.
     const { div } = await mountApp();
     await enterDupes(div);
     click(btn(div, "Xác minh"));
     await settle(60);
-    expect(div.querySelector(".vbad")?.textContent).toContain("khác nội dung");
+    expect(
+      div.querySelector(".vbad"),
+      "khong co tep nao khac noi dung ma van bao dong do",
+    ).toBeFalsy();
+    expect(
+      div.querySelector(".vok"),
+      "chua doc het ma da dam ket luan trung tung byte",
+    ).toBeFalsy();
+    expect(div.querySelector(".vunk")?.textContent).toContain("chưa kết luận");
     const tags = $$(div, ".vtag").map((t) => t.textContent!.trim());
     expect(tags).toEqual(["không đọc được"]);
+  });
+
+  it("cả nhóm nằm trên ổ vừa rớt mạng: chưa kết luận, không doạ nhầm", async () => {
+    // Ca thật hay gặp nhất của studio: NAS rớt giữa chừng nên không đọc được
+    // tệp nào. `groups` rỗng — bản đầu rơi vào nhánh else và hiện cảnh báo đỏ.
+    ipc.on("verify_dupe_group", (a: { paths: string[] }) => ({
+      groups: [],
+      unreadable: a.paths,
+    }));
+    const { div } = await mountApp();
+    await enterDupes(div);
+    click(btn(div, "Xác minh"));
+    await settle(60);
+    expect(
+      div.querySelector(".vbad"),
+      "ca nhom khong doc duoc ma bao 'khac noi dung'",
+    ).toBeFalsy();
+    expect(div.querySelector(".vunk")?.textContent).toContain("chưa kết luận");
   });
 
   it("kẻ giả dạng bị tách cụm: đúng tệp đó mang tag 'khác nội dung'", async () => {

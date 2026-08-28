@@ -8,6 +8,7 @@
     type SearchHit,
   } from "./search";
   import { acquireThumbSlot } from "./thumbQueue";
+  import { driveKey, driveLabel, isNetworkDrive } from "./drives";
 
   // Cùng chữ mà các chip lọc dùng, để nhãn và cái chip bật/tắt nó không bao
   // giờ nói khác nhau.
@@ -23,6 +24,8 @@
     thumbSize,
     totalTokens = 0,
     grid = false,
+    showDrive = false,
+    netLetters = undefined,
   }: {
     hit: SearchHit;
     epoch: number;
@@ -35,7 +38,16 @@
     /// CSS của Svelte bị giới hạn theo từng file, một quy tắc viết ở App
     /// không với tới được các class khai báo ở đây.
     grid?: boolean;
+    /// Hiện nhãn ổ đĩa đầu dòng. Chỉ bật khi kết quả trải trên nhiều ổ —
+    /// một nhãn `D:` trên mọi dòng của một danh sách toàn ổ D là mực in
+    /// không nói gì.
+    showDrive?: boolean;
+    /// Chữ cái các ổ mạng đang gắn. Thiếu nó thì ổ mạng ánh xạ (`Y:`) bị
+    /// tô như ổ trong máy — xem ghi chú ở `isNetworkDrive`.
+    netLetters?: Set<string>;
   } = $props();
+
+  const drive = $derived(showDrive ? driveKey(hit.path) : "");
 
   // ---- Tải thumbnail: qua cửa xoay, lỗi tạm thì thử lại ----
   //
@@ -163,6 +175,11 @@
     </svg>
   {/if}
 </span>
+{#if drive}
+  <span class="drive" class:nas={isNetworkDrive(drive, netLetters)} class:grid={grid}>
+    {driveLabel(drive)}
+  </span>
+{/if}
 <span class="text" class:grid={grid}>
   <span class="name">{hit.name}</span>
   <span class="dir">{hit.dir}</span>
@@ -245,6 +262,31 @@
   .fact.res { color: #9fd3ff; }
   .fact.dim { opacity: 0.7; }
 
+  .drive {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #9fd3ff;
+    background: #22313f;
+    border: 1px solid #2f4a63;
+    border-radius: 4px;
+  }
+  /* Cùng ngôn ngữ màu với chip ổ mạng ở hàng lọc bên trên. */
+  .drive.nas {
+    color: #ffc978;
+    background: #3a2c17;
+    border-color: #5c4726;
+  }
+  /* Trong lưới, nhãn nằm đè góc trên-phải của ảnh — chỗ duy nhất còn trống
+     (góc trái đã là nhãn loại, phải-dưới là số từ khớp). */
+  .drive.grid {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+  }
+
   .matched {
     flex: 0 0 auto;
     padding: 2px 7px;
@@ -273,7 +315,10 @@
   .text.grid { flex: 0 0 auto; }
   .text.grid .name { font-size: 12px; white-space: normal; line-height: 1.3; max-height: 2.6em; }
   .text.grid .dir { display: none; }
+  /* Khi cả hai cùng hiện ở lưới, nhãn ổ giữ góc trên-phải và số-từ-khớp
+     lùi xuống dưới nó — hai thứ chồng lên nhau thì không đọc được cái nào. */
   .matched.grid { position: absolute; top: 14px; right: 14px; }
+  .drive.grid ~ .matched.grid { top: 38px; }
   /* Trong lưới thì bức ảnh mang ý nghĩa; mấy con số sẽ làm chật chỗ. */
   .facts.grid { display: none; }
 </style>

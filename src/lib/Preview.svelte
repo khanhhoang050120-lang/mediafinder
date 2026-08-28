@@ -28,6 +28,35 @@
   let loading = $state(true);
   let src = $derived(mediaUrl(epoch, hit.index));
 
+  // Chú thích ngay trên đã nói đúng việc cần làm — nhưng suốt một thời gian
+  // dài **không có dòng mã nào làm nó**. `failed` và `loading` là `$state`
+  // trần, chỉ `src` là `$derived`, nên chúng không bao giờ được đặt lại khi
+  // `hit` đổi. Gặp một tệp không giải mã được rồi bấm mũi tên là **mọi tệp sau
+  // đó** đều báo "Không xem trước được định dạng này", cho tới khi đóng
+  // overlay rồi mở lại. Cùng một kiểu hỏng như `armed` từng mắc: cơ chế sống
+  // trong lời văn chứ không trong mã.
+  //
+  // So với giá trị trước đó chứ không đặt lại ở mọi lần effect chạy — cùng
+  // khuôn mẫu với `lastDrive` bên `App.svelte`, và ở đây nó là bắt buộc chứ
+  // không phải tối ưu: effect lần đầu chạy SAU khi component dựng xong, nên
+  // một tệp hỏng ngay lúc mở (sự kiện `error` bắn trước lượt flush đầu tiên)
+  // sẽ bị chính effect này xoá mất trạng thái hỏng, và người dùng thấy vòng
+  // xoay tải mãi mãi thay vì lối thoát "mở bằng ứng dụng mặc định".
+  //
+  // `null` = chưa chạy lần nào. Không khởi tạo bằng `hit.index` vì đọc state
+  // ngoài closure chỉ bắt được giá trị đầu — Svelte cảnh báo đúng chỗ đó.
+  let tepTruoc: number | null = null;
+  $effect(() => {
+    const i = hit.index;
+    if (tepTruoc === null || i === tepTruoc) {
+      tepTruoc = i;
+      return;
+    }
+    tepTruoc = i;
+    failed = false;
+    loading = true;
+  });
+
   /// Whether the stage may receive mouse input yet.
   ///
   /// The gesture that opens the overlay must not also land on what the overlay

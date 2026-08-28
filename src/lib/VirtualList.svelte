@@ -75,7 +75,11 @@
   }
 
   export function scrollToTop() {
-    viewport?.scrollTo({ top: 0 });
+    if (!viewport) return;
+    // Gán thẳng thay vì `scrollTo({top:0})`: cùng kết quả, nhưng không phụ
+    // thuộc vào một phương thức mà môi trường kiểm thử không có — một ngoại
+    // lệ ném ra ở đây sẽ giết luôn phần việc đứng sau nó trong cùng effect.
+    viewport.scrollTop = 0;
   }
 </script>
 

@@ -19,6 +19,17 @@ use mediafinder::index::persist;
 use mediafinder::index::search::{search, SearchOptions};
 use mediafinder::media::thumbnail::ThumbnailService;
 
+/// mtime của tệp, hoặc 0 nếu không đọc được — chỉ dùng để dựng khoá cache,
+/// nên một tệp không stat được vẫn tra cứu nhất quán trong cùng lượt chạy.
+fn mtime_cua(path: &str) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// Pull a few real media paths out of the on-disk index.
 fn sample_paths(limit: usize) -> Vec<(String, &'static str)> {
     let cache = match persist::load() {
@@ -64,9 +75,12 @@ fn renders_real_thumbnails_from_the_users_own_library() {
     std::fs::create_dir_all(&out_dir).expect("create output dir");
 
     let mut rendered = 0;
-    for (id, (path, label)) in paths.iter().enumerate() {
+    for (path, label) in paths.iter() {
         let started = std::time::Instant::now();
-        match service.get(id as u64, path, 192) {
+        // mtime lấy từ đĩa: khoá cache nay theo danh tính tệp, không theo vị trí
+        // trong chỉ mục (xem ghi chú ở CacheKey).
+        let mtime = mtime_cua(path);
+        match service.get(path, mtime, 192) {
             Ok(png) => {
                 // A PNG signature is the cheapest proof that what came back is
                 // an image and not, say, an empty buffer.
@@ -107,11 +121,12 @@ fn the_cache_makes_a_second_request_far_cheaper() {
     let service = ThumbnailService::new();
 
     let cold = std::time::Instant::now();
-    let first = service.get(0, path, 192).expect("first render");
+    let mtime = mtime_cua(path);
+    let first = service.get(path, mtime, 192).expect("first render");
     let cold = cold.elapsed();
 
     let warm = std::time::Instant::now();
-    let second = service.get(0, path, 192).expect("cached render");
+    let second = service.get(path, mtime, 192).expect("cached render");
     let warm = warm.elapsed();
 
     println!(
@@ -177,7 +192,7 @@ fn network_thumbnails() {
 
     for (n, (path, drive)) in paths.iter().enumerate() {
         let started = std::time::Instant::now();
-        let result = service.get(n as u64, path, 192);
+        let result = service.get(path, mtime_cua(path), 192);
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         total_ms += ms;
         slowest = slowest.max(ms);

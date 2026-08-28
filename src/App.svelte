@@ -7,6 +7,9 @@
   import FirstRun from "./lib/FirstRun.svelte";
   import MediaRow from "./lib/MediaRow.svelte";
   import MissLogControls from "./lib/MissLogControls.svelte";
+  import DriveChips from "./lib/DriveChips.svelte";
+  import NetScanConfirm from "./lib/NetScanConfirm.svelte";
+  import { bucketsFor, filterByDrive, networkLetters } from "./lib/drives";
   import Preview from "./lib/Preview.svelte";
   import ScanStatusBar from "./lib/ScanStatusBar.svelte";
   import SearchBar from "./lib/SearchBar.svelte";
@@ -15,6 +18,7 @@
   import { loadPrefs, savePrefs } from "./lib/prefs";
   import { prefetchThumb } from "./lib/thumbQueue";
   import { ScanState } from "./lib/scanState.svelte";
+  import FreshnessNote from "./lib/FreshnessNote.svelte";
   import {
     coalesce,
     formatCount,
@@ -23,7 +27,10 @@
     openFile,
     enrichStatus,
     hotkeyStatus,
+    netScanMark,
     networkDrives,
+    taskHealth,
+    lastCheck,
     revealInExplorer,
     searchFiles,
     startFileDrag,
@@ -34,7 +41,10 @@
     type HotkeyStatus,
     type IndexMeta,
     type MediaKind,
+    type NetScanMark,
     type NetworkDrive,
+    type TaskHealth,
+    type LastCheck,
     type Order,
     type RelaxedInfo,
     type SearchHit,
@@ -63,7 +73,48 @@
   const prefs = loadPrefs();
 
   let query = $state("");
-  let hits = $state<SearchHit[]>([]);
+  /// Kết quả thô từ backend, trước khi lọc theo ổ.
+  let allHits = $state<SearchHit[]>([]);
+  /// Ổ đang xem; `null` là "Tất cả".
+  ///
+  /// KHÔNG lưu qua các phiên, khác với lưới/sắp xếp/loại tệp: một bộ lọc vô
+  /// hình đang chặn kết quả là màn hình khó hiểu nhất, và mở app ra thấy
+  /// "không tìm thấy gì" chỉ vì phiên trước lỡ lọc ổ Z là cái bẫy không đáng
+  /// đặt.
+  let drive = $state<string | null>(null);
+
+  /// Cái mà toàn bộ giao diện làm việc trên đó — bàn phím, kéo-thả, xem
+  /// trước, tải trước ảnh đều nhìn cùng một danh sách này. Lọc ở một chỗ duy
+  /// nhất thay vì rắc `filterByDrive` khắp nơi: chỉ cần một chỗ quên là con
+  /// trỏ bàn phím trỏ vào một tệp không có trên màn hình.
+  const hits = $derived(filterByDrive(allHits, drive));
+  // Danh sách ổ mạng đang gắn. Khai báo ở đây chứ không cạnh màn hình chạy
+  // lần đầu: nay có ba chỗ đọc nó — màn chạy lần đầu, hộp thoại quét mạng,
+  // và việc phân biệt ổ mạng ánh xạ trong hàng chip.
+  let netDrives = $state<NetworkDrive[]>([]);
+  networkDrives().then((d) => (netDrives = d));
+
+  /// Chữ cái của các ổ mạng đang gắn — backend đã trả về từ trước, chỉ là
+  /// trước đây không ai truyền nó vào chỗ cần. Thiếu nó thì ổ mạng ánh xạ
+  /// (`Y:`, `Z:`…) bị coi là ổ trong máy, và nhánh phân biệt NAS là mã chết.
+  const netLetters = $derived(networkLetters(netDrives));
+  const driveBuckets = $derived(bucketsFor(allHits, netLetters));
+
+  // Đổi ổ là đổi danh sách bên dưới con trỏ. Không đưa nó về đầu thì
+  // `selected` trỏ vào một vị trí của danh sách cũ — Enter mở nhầm tệp, hoặc
+  // mở một tệp không có trên màn hình.
+  //
+  // So với giá trị trước đó chứ không chạy mỗi lần effect kích: lần chạy đầu
+  // xảy ra lúc dựng component, khi chưa có danh sách nào để mà cuộn — và khi
+  // `listRef` còn chưa tồn tại.
+  let lastDrive: string | null = null;
+  $effect(() => {
+    const now = drive;
+    if (now === lastDrive) return;
+    lastDrive = now;
+    selectOnly(0);
+    listRef?.scrollToTop();
+  });
   let epoch = $state(0);
   let selected = $state(0);
   let elapsedMs = $state(0);
@@ -87,6 +138,11 @@
 
   const scan = new ScanState({
     onreload: (m) => {
+      // So trước khi thay: `meta` lúc này vẫn là bản trước lượt quét, nên
+      // đây là chỗ duy nhất biết được lượt vừa rồi thật sự đổi những gì.
+      // Không có dòng này thì "Quét lại" xong trông y hệt lúc chưa bấm —
+      // người dùng không có cách nào biết nó đã chạy hay chưa.
+      scanOutcome = describeScan(meta, m);
       meta = m;
       if (query.trim()) runSearch();
     },
@@ -213,6 +269,28 @@
 
   indexStatus().then((m) => (meta = m));
 
+  // Tuổi chỉ mục và sức khoẻ cỗ máy làm mới — hai thứ FreshnessNote cần để nói
+  // đúng chuyện gì đang xảy ra. Hỏi một lần lúc mở cửa sổ và sau mỗi lượt quét,
+  // KHÔNG hỏi mỗi lần gõ phím: `task_health` sinh một tiến trình `schtasks.exe`.
+  // Khai báo ở đây chứ không cạnh hộp thoại "+ ổ mạng": nay có hai chỗ đọc
+  // nó — hộp thoại xác nhận, và dòng tuổi chỉ mục hiện ngay tại điểm hỏng.
+  let netMark = $state<NetScanMark | null>(null);
+  let health = $state<TaskHealth | null>(null);
+  let check = $state<LastCheck | null>(null);
+
+  function refreshFreshness() {
+    netScanMark()
+      .then((m) => (netMark = m))
+      .catch(() => {});
+    taskHealth()
+      .then((h) => (health = h))
+      .catch(() => {});
+    lastCheck()
+      .then((c) => (check = c))
+      .catch(() => {});
+  }
+  refreshFreshness();
+
   // Hỏi một lần: việc đăng ký xảy ra lúc khởi động và câu trả lời không đổi.
   let hotkey = $state<HotkeyStatus | null>(null);
   hotkeyStatus().then((h) => (hotkey = h));
@@ -223,12 +301,28 @@
   $effect(() => {
     const stop = listen("index-reloaded", async () => {
       meta = await indexStatus();
+
+      // Đóng mọi thứ đang phủ lên danh sách, TRƯỚC khi chạy lại tìm kiếm.
+      //
+      // Cả hai đều bám vào vị trí trong danh sách cũ, mà danh sách sắp bị thay
+      // hẳn. Lớp xem trước bám theo `selected` — vừa bị đưa về 0 — nên nó ở lại
+      // và lặng lẽ chiếu một tệp người dùng chưa từng chọn. Menu chuột phải thì
+      // tính lại `menuItems`, `hits.indexOf(hit)` thành -1, và mục "Xem trước"
+      // biến mất khỏi menu ĐANG MỞ: bốn mục co xuống ba ngay dưới con trỏ, đúng
+      // lúc người ta sắp bấm.
+      //
+      // Trước v1.0.6 chuyện này gần như không xảy ra vì chỉ mục làm mới mỗi
+      // ngày một lần; lịch 15 phút đưa nó vào giữa phiên làm việc.
+      preview = false;
+      menu = null;
+
       // Số hiệu tệp là vị trí trong chỉ mục, nên mọi kết quả đang hiện giờ đều
       // trỏ vào một tệp khác. Chạy lại là câu trả lời trung thực duy nhất; giữ
       // danh sách cũ là hiện tên đúng bên cạnh đường dẫn sai.
       if (query.trim()) runSearch();
-      else hits = [];
+      else allHits = [];
       refreshEnrich();
+      refreshFreshness();
     });
     return () => {
       stop.then((off) => off());
@@ -286,8 +380,22 @@
 
   // Hỏi một lần lúc khởi động: ánh xạ ổ đĩa hiếm khi đổi giữa chừng, và đây là
   // thứ quyết định nút ổ mạng có tồn tại hay không.
-  let netDrives = $state<NetworkDrive[]>([]);
-  networkDrives().then((d) => (netDrives = d));
+
+  /// Hộp thoại xác nhận trước khi quét ổ mạng.
+  ///
+  /// Nút "+ ổ mạng" không mang trạng thái — bấm lần nào cũng chạy lại trọn
+  /// vài phút. Người dùng bấm lần hai vì tưởng nó là một nút khác, rồi ngồi
+  /// chờ một việc mình không định làm. Hỏi trước, kèm số liệu lần trước để
+  /// câu hỏi có sức nặng.
+  let askNetScan = $state(false);
+
+  function beginNetScan() {
+    // Đọc lại mỗi lần mở: lượt quét vừa xong đã ghi dấu vết mới.
+    netScanMark()
+      .then((m) => (netMark = m))
+      .catch(() => (netMark = null))
+      .finally(() => (askNetScan = true));
+  }
 
   // Bản mới, nếu backend đã tìm thấy một bản lúc khởi động. Chỉ đọc kết quả
   // có sẵn — việc hỏi máy chủ xảy ra một lần ở Rust, không phải mỗi lần mở
@@ -333,7 +441,33 @@
     };
   });
 
+  /// Một dòng ngắn ở thanh trạng thái sau khi quét xong: lượt vừa rồi làm
+  /// được gì. Tự tắt sau một lúc — nó là tin, không phải trạng thái.
+  let scanOutcome = $state<string | null>(null);
+  let outcomeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /// So hai bản metadata thành một câu người đọc hiểu ngay.
+  ///
+  /// Chênh lệch số tệp là thứ duy nhất đo được từ đây, và nó đủ: người vừa
+  /// chép tệp vào muốn biết đúng một điều — máy đã thấy chúng chưa.
+  function describeScan(before: IndexMeta | null, after: IndexMeta): string {
+    const delta = after.fileCount - (before?.fileCount ?? after.fileCount);
+    if (delta > 0) return `Đã quét lại · thêm ${formatCount(delta)} tệp`;
+    if (delta < 0) return `Đã quét lại · bớt ${formatCount(-delta)} tệp`;
+    return "Đã quét lại · không có gì đổi";
+  }
+
+  $effect(() => {
+    if (!scanOutcome) return;
+    clearTimeout(outcomeTimer);
+    // Tám giây: đủ đọc một dòng ngắn, không đủ để thành một thứ đứng mãi ở
+    // thanh trạng thái mà người ta thôi nhìn.
+    outcomeTimer = setTimeout(() => (scanOutcome = null), 8000);
+    return () => clearTimeout(outcomeTimer);
+  });
+
   function startScan(withNetwork: boolean) {
+    scanOutcome = null;
     error = null;
     scan.start(withNetwork);
   }
@@ -351,10 +485,12 @@
     startFileDrag(paths).catch((err) => (error = String(err)));
   }
 
+  const driveKeyOf = (h: SearchHit) => bucketsFor([h], netLetters)[0]?.id ?? "";
+
   function runSearch() {
     const q = query.trim();
     if (!q) {
-      hits = [];
+      allHits = [];
       relaxed = null;
       elapsedMs = 0;
       return;
@@ -364,7 +500,11 @@
       .then((res) => {
         // `null` nghĩa là một phím gõ mới hơn đã thay thế lần này rồi.
         if (!res) return;
-        hits = res.hits;
+        allHits = res.hits;
+        // Ổ vừa chọn có thể không còn kết quả nào trong lần tìm mới — giữ
+        // nguyên là để người dùng nhìn vào một danh sách rỗng mà không hiểu
+        // vì sao. Về "Tất cả" khi ổ đó biến mất khỏi kết quả.
+        if (drive && !res.hits.some((h) => driveKeyOf(h) === drive)) drive = null;
         epoch = res.epoch;
         relaxed = res.relaxed;
         elapsedMs = res.elapsedMs;
@@ -478,7 +618,7 @@
     // component đều nghe trên `window`, và `stopPropagation` không chặn được
     // một trình nghe anh em trên cùng một đích — thiếu chốt chặn này thì
     // Escape sẽ vừa đóng trình đơn *vừa* xoá ô tìm kiếm trong cùng một phím.
-    if (menu || preview || updateNoticeOpen) return;
+    if (menu || preview || updateNoticeOpen || askNetScan) return;
 
     // Chế độ trùng lặp có danh sách riêng, nhưng bàn phím vẫn xử lý ở đây —
     // một chủ sở hữu duy nhất, vì hai trình nghe anh em trên `window` không
@@ -595,7 +735,8 @@
         if (error) error = null;
         else if (query) {
           query = "";
-          hits = [];
+          allHits = [];
+          drive = null;
           relaxed = null;
         }
         inputEl?.focus();
@@ -613,13 +754,48 @@
     !!meta && !scan.scanning && (!meta.loaded || meta.fileCount === 0),
   );
 
+  /// Phần đuôi tooltip nút "Quét lại": lần gần nhất lúc nào, ra bao nhiêu.
+  ///
+  /// Nói bằng tooltip chứ không chặn bằng hộp thoại — quét lại chỉ tốn vài
+  /// giây (bản vá gia tăng), nên bắt bấm hai lần cho một việc chớp mắt là
+  /// đánh đổi sai. Ai muốn biết thì rê chuột; ai không thì không bị cản.
+  const lastScanHint = $derived(
+    meta?.builtAtUnix
+      ? `
+Lần gần nhất: ${formatWhen(meta.builtAtUnix)} · ${formatCount(meta.fileCount)} tệp`
+      : "",
+  );
+
+  /// Phần "quét lúc…" của dòng chân — nói **hai** mốc khi chúng khác nhau.
+  ///
+  /// Trước đây chỗ này in đúng một mốc, `meta.builtAtUnix`, và gọi nó là "quét
+  /// lúc". Sai: `persist.rs` đóng dấu `built_at_unix = now_unix()` ở mọi lần
+  /// ghi cache, kể cả lượt vá gia tăng ổ cục bộ. Nên sau lượt vá lúc 16:15,
+  /// dòng này nói "quét lúc 16:15" trong khi nửa ổ mạng vẫn là bản 11:23 —
+  /// người dùng đọc nó rồi kết luận chỉ mục mới tinh, vậy phần mềm hỏng. Với
+  /// lịch 15 phút, câu sai ấy lặp lại 96 lần mỗi ngày.
+  const scanWhen = $derived.by(() => {
+    const cucBo = meta?.builtAtUnix ?? 0;
+    if (!cucBo) return "";
+    // Chưa từng quét ổ mạng thì không có mốc thứ hai để nói, và nói "ổ mạng:
+    // chưa quét" ở chân cửa sổ là chỗ sai — dòng cảnh báo tại điểm hỏng mới là
+    // chỗ đúng để nêu chuyện đó.
+    // Không có mốc ổ mạng thì nói rõ dòng này CHỈ nói về ổ trong máy. Câu
+    // "quét lúc …" cũ là thứ đã khiến người dùng tưởng cả chỉ mục vừa mới —
+    // và `netscan.json` vắng mặt trên mọi máy vừa nâng cấp, nên nhánh này là
+    // nhánh thường gặp chứ không phải ca hiếm.
+    if (!netMark) return `ổ trong máy ${formatWhen(cucBo)}`;
+    return `ổ trong máy ${formatWhen(cucBo)} · ổ mạng ${formatWhen(netMark.atUnix)}`;
+  });
+
   const statusLine = $derived(
     !meta
       ? "Đang tải…"
       : meta.problem
         ? meta.problem
-        : `${formatCount(meta.fileCount)} tệp · ${formatCount(meta.dirCount)} thư mục · quét lúc ${formatWhen(meta.builtAtUnix)}`,
+        : `${formatCount(meta.fileCount)} tệp · ${formatCount(meta.dirCount)} thư mục · ${scanWhen}`,
   );
+
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -636,10 +812,11 @@
     {filtersActive}
     {netDrives}
     scanning={scan.scanning}
+    {lastScanHint}
     oninput={onInput}
     onchange={rerun}
     ontoggledupes={() => (dupeMode = !dupeMode)}
-    onscan={startScan}
+    onscan={(withNetwork) => (withNetwork ? beginNetScan() : startScan(false))}
   />
 
   {#if showFilters || filtersActive}
@@ -680,7 +857,18 @@
       <div class="partial">
         Không có tệp nào khớp đủ <b>{relaxed.totalTokens}</b> từ.
         Đang hiện các tệp khớp nhiều nhất — <b>{relaxed.bestMatched}/{relaxed.totalTokens}</b> từ.
+        <FreshnessNote
+          builtAtUnix={meta?.builtAtUnix ?? 0}
+          {netMark}
+          {health}
+          {check}
+          hasNetDrives={netDrives.length > 0}
+        />
       </div>
+    {/if}
+
+    {#if allHits.length}
+      <DriveChips buckets={driveBuckets} bind:selected={drive} total={allHits.length} />
     {/if}
 
     <div class="results" class:grid bind:clientWidth={resultsWidth}>
@@ -712,6 +900,8 @@
                 {hit}
                 {epoch}
                 {grid}
+                showDrive={driveBuckets.length > 1 && !drive}
+                {netLetters}
                 thumbSize={grid ? THUMB_GRID : THUMB_LIST}
                 totalTokens={relaxed?.totalTokens ?? 0}
               />
@@ -747,6 +937,13 @@
             Đang tìm…
           {:else}
             Không tìm thấy kết quả nào
+            <FreshnessNote
+              builtAtUnix={meta?.builtAtUnix ?? 0}
+              {netMark}
+              {health}
+              {check}
+              hasNetDrives={netDrives.length > 0}
+            />
             <br />
             <MissLogControls />
           {/if}
@@ -757,6 +954,9 @@
 
   <div class="status">
     <span>{statusLine}</span>
+    {#if scanOutcome}
+      <span class="outcome">{scanOutcome}</span>
+    {/if}
     {#if update?.available && !updateNoticeOpen}
       <!-- Lời mời đã bị "Để sau" thu về đây: đứng giữa chân cửa sổ, đủ thấy
            mà không chắn việc, và bấm vào là hộp thoại quay lại. -->
@@ -803,6 +1003,17 @@
     onclose={() => (preview = false)}
     onstep={previewStep}
     onopen={() => open(hits[selected])}
+  />
+{/if}
+
+{#if askNetScan}
+  <NetScanConfirm
+    mark={netMark}
+    onconfirm={() => {
+      askNetScan = false;
+      startScan(true);
+    }}
+    oncancel={() => (askNetScan = false)}
   />
 {/if}
 
@@ -989,5 +1200,11 @@
     align-items: center;
   }
   .timing { flex: 0 0 auto; }
+  /* Tin vừa xảy ra, không phải trạng thái thường trực — màu xanh của thông
+     báo tốt, và tự biến mất sau tám giây. */
+  .outcome {
+    flex: 0 0 auto;
+    color: #7ed2a2;
+  }
   .ver { opacity: 0.75; }
 </style>

@@ -100,7 +100,41 @@ const _: () = assert!(
     "hàng đợi phải chứa hơn một màn hình"
 );
 
-type CacheKey = (u64, u32);
+/// Khoá cache: `(băm đường dẫn, mtime, cạnh tính bằng điểm ảnh)`.
+///
+/// **Khoá theo thứ bức ảnh MÔ TẢ, không theo chỗ nó tình cờ đứng.** Bản đầu
+/// khoá theo `(chỉ số trong chỉ mục, kích thước)` và điều đó sai một cách âm
+/// thầm: chỉ số là **vị trí**, nên sau một lượt dựng lại chỉ mục thì số 42 chỉ
+/// vào một tệp khác. Yêu cầu mới mang epoch mới, đi lọt chốt epoch ở
+/// `protocol.rs`, rồi trúng cache dưới đúng khoá `(42, 64)` và nhận về ảnh của
+/// tệp cũ. Người dựng phim thấy khung hình clip A nằm cạnh tên và đường dẫn
+/// clip B — đúng cái mà chú thích đầu `protocol.rs` tuyên bố không bao giờ xảy
+/// ra ("an in-flight request would quietly paint the wrong picture next to the
+/// right name"). Chốt epoch chỉ chặn được yêu cầu **đang bay**; nó không với
+/// tới cache nằm sau nó.
+///
+/// **Vì sao không nhét epoch vào khoá.** Cách đó cũng đúng, nhưng mỗi lượt nạp
+/// lại chỉ mục sẽ làm mọi khoá đổi hết, tức vứt sạch cache. Từ v1.0.6 chỉ mục
+/// tự làm mới **mỗi 15 phút**, nên đó là vài lần giải mã lại mỗi giờ ngay dưới
+/// tay người đang cuộn — sửa một lỗi đúng bằng cách tạo một lỗi khác.
+///
+/// `mtime` có mặt để bắt ca cùng đường dẫn nhưng nội dung đã thay: xuất lại
+/// một bản dựng đè lên chính nó thì ảnh cũ phải hết hiệu lực.
+type CacheKey = (u64, i64, u32);
+
+/// Dựng khoá từ danh tính thật của tệp.
+///
+/// Băm đường dẫn thay vì giữ nguyên chuỗi: khoá nằm trong một `LruCache` có
+/// hàng nghìn mục, và giữ vài nghìn chuỗi đường dẫn dài chỉ để so sánh là trả
+/// tiền bộ nhớ cho việc không cần. Hạ chữ thường trước khi băm vì Windows
+/// không phân biệt hoa thường trong đường dẫn — cùng một tệp không được có hai
+/// khoá.
+fn cache_key(path: &str, mtime: i64, size: u32) -> CacheKey {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.to_lowercase().hash(&mut h);
+    (h.finish(), mtime, size)
+}
 
 struct Job {
     key: CacheKey,
@@ -177,8 +211,11 @@ impl ThumbnailService {
     ///
     /// Called from the asset-protocol handler, which already runs off the UI
     /// thread, so blocking here never stalls the window.
-    pub fn get(&self, id: u64, path: &str, size: u32) -> Result<Arc<Vec<u8>>, ThumbError> {
-        let key = (id, size);
+    /// `mtime` đến từ chính mục trong chỉ mục; nó cùng với đường dẫn làm nên
+    /// danh tính của bức ảnh. Cố ý **không** nhận chỉ số trong chỉ mục nữa —
+    /// xem ghi chú ở [`CacheKey`].
+    pub fn get(&self, path: &str, mtime: i64, size: u32) -> Result<Arc<Vec<u8>>, ThumbError> {
+        let key = cache_key(path, mtime, size);
         if let Some(hit) = self.cache.lock().get(&key).cloned() {
             return Ok(hit);
         }
@@ -453,7 +490,7 @@ mod tests {
     #[test]
     fn service_reports_unavailable_for_a_missing_file() {
         let svc = ThumbnailService::new();
-        let r = svc.get(1, r"D:\definitely\not\here\nope.mp4", 128);
+        let r = svc.get(r"D:\definitely\not\here\nope.mp4", 111, 128);
         assert!(r.is_err());
     }
 
@@ -466,6 +503,13 @@ mod tests {
 #[cfg(test)]
 mod miss_cache_tests {
     use super::*;
+
+    /// Đường dẫn dùng chung cho cả nhóm. Hai hằng số thay cho những
+    /// chuỗi rải rác trước đây — một trong số đó từng lọt một ký tự
+    /// backspace thật vào mã nguồn mà vẫn biên dịch được, vì nó nằm
+    /// trong raw string.
+    const KHONG_TON_TAI: &str = r"C:\duong\dan\khong\ton\tai.mp4";
+    const BAT_KY: &str = r"C:\bat\ky.mp4";
 
     /// Hàng đợi đầy phải trả `Busy` — và tuyệt đối không được ghi vào
     /// miss-cache, vì "đang bận" là lời mời hỏi lại chứ không phải câu trả
@@ -483,20 +527,23 @@ mod miss_cache_tests {
         let (plug_tx, _plug_rx) = mpsc::sync_channel(1);
         svc.jobs
             .try_send(Job {
-                key: (0, 0),
+                key: (0, 0, 0),
                 path: String::new(),
                 size: 0,
                 reply: plug_tx,
             })
             .expect("job moi phai vao duoc hang con trong");
 
-        let res = svc.get(9, r"C:at\ky.mp4", 64);
+        let res = svc.get(BAT_KY, 222, 64);
         assert!(
             matches!(res, Err(ThumbError::Busy)),
             "hang day phai la Busy, nhan duoc: {res:?}"
         );
         assert!(
-            svc.misses.lock().peek(&(9u64, 64u32)).is_none(),
+            svc.misses
+                .lock()
+                .peek(&cache_key(BAT_KY, 222, 64))
+                .is_none(),
             "Busy bi ghi vao miss-cache — cac luot hoi lai se bi nuot oan"
         );
     }
@@ -509,11 +556,11 @@ mod miss_cache_tests {
     #[test]
     fn miss_cache_tra_loi_ngay_khong_hoi_dia() {
         let svc = ThumbnailService::new();
-        let key = (7u64, 64u32);
+        let key = cache_key(KHONG_TON_TAI, 333, 64);
         svc.misses.lock().put(key, std::time::Instant::now());
 
         let t = std::time::Instant::now();
-        let res = svc.get(7, r"C:\duong\dan\khong\ton\tai.mp4", 64);
+        let res = svc.get(KHONG_TON_TAI, 333, 64);
         assert!(
             matches!(res, Err(ThumbError::Unavailable)),
             "phai la Unavailable, nhan duoc: {res:?}"
@@ -529,7 +576,7 @@ mod miss_cache_tests {
     #[test]
     fn miss_het_han_thi_hoi_lai() {
         let svc = ThumbnailService::new();
-        let key = (8u64, 64u32);
+        let key = cache_key(KHONG_TON_TAI, 444, 64);
         svc.misses.lock().put(
             key,
             std::time::Instant::now() - MISS_TTL - std::time::Duration::from_secs(1),
@@ -539,7 +586,7 @@ mod miss_cache_tests {
         // Shell, thứ cố ý KHÔNG bị ghi nhớ — tệp biến mất có thể quay lại).
         // Bất biến cần giữ: sau lần hỏi này, mục ghi nhớ CŨ không còn ngồi đó
         // trả lời thay — hoặc đã bị nhổ đi, hoặc đã được làm tươi.
-        let _ = svc.get(8, r"C:\duong\dan\khong\ton\tai.mp4", 64);
+        let _ = svc.get(KHONG_TON_TAI, 444, 64);
         let misses = svc.misses.lock();
         if let Some(when) = misses.peek(&key) {
             assert!(
@@ -547,5 +594,76 @@ mod miss_cache_tests {
                 "muc ghi nho het han van con nguyen — expiry khong chay"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_key_tests {
+    use super::*;
+
+    /// **Bất biến trung tâm: ảnh phải đi theo TỆP, không theo vị trí.**
+    ///
+    /// Bản đầu khoá cache theo `(chỉ số trong chỉ mục, kích thước)`. Chỉ số là
+    /// một **vị trí**, nên sau một lượt dựng lại chỉ mục thì cùng một số chỉ
+    /// vào tệp khác — và cache trả về ảnh của tệp cũ dưới cái tên mới. Chốt
+    /// epoch ở `protocol.rs` không cứu được: nó chỉ từ chối yêu cầu **đang
+    /// bay** mang epoch cũ, còn yêu cầu mới mang epoch **đúng** thì đi lọt rồi
+    /// trúng cache.
+    ///
+    /// Từ v1.0.6 chỉ mục tự làm mới mỗi 15 phút, nên cửa sổ ấy không còn hiếm.
+    /// Với người dựng phim chọn clip bằng khung hình, ảnh sai cạnh tên đúng là
+    /// kiểu hỏng tệ nhất: nó không báo lỗi, nó chỉ khiến người ta chọn nhầm.
+    #[test]
+    fn hai_tep_khac_nhau_khong_bao_gio_dung_chung_khoa() {
+        let a = cache_key(r"D:\du_an\canh_mo_dau.mp4", 1_700_000_000, 64);
+        let b = cache_key(r"D:\du_an\canh_ket.mp4", 1_700_000_000, 64);
+        assert_ne!(
+            a, b,
+            "hai tep khac nhau dung chung khoa — anh cua tep nay se hien canh ten tep kia"
+        );
+    }
+
+    /// Và điều ngược lại phải giữ: **cùng một tệp thì cùng một khoá**, kể cả
+    /// sau khi chỉ mục được dựng lại và vị trí của nó dịch đi.
+    ///
+    /// Đây là lý do khoá theo đường dẫn chứ không nhét epoch vào khoá. Nhét
+    /// epoch cũng chặn được lỗi trên, nhưng mỗi lượt nạp lại sẽ làm mọi khoá
+    /// đổi hết — tức vứt sạch cache vài lần mỗi giờ, ngay dưới tay người đang
+    /// cuộn. Sửa một lỗi bằng cách tạo một lỗi khác.
+    #[test]
+    fn cung_mot_tep_thi_khoa_song_sot_qua_lan_dung_lai_chi_muc() {
+        let truoc = cache_key(r"D:\du_an\canh_mo_dau.mp4", 1_700_000_000, 64);
+        let sau = cache_key(r"D:\du_an\canh_mo_dau.mp4", 1_700_000_000, 64);
+        assert_eq!(truoc, sau, "cung tep ma khoa doi — cache bi vut di vo co");
+    }
+
+    /// Windows không phân biệt hoa thường trong đường dẫn, nên cùng một tệp
+    /// viết hai kiểu không được sinh ra hai mục cache.
+    #[test]
+    fn hoa_thuong_khong_tao_ra_hai_muc() {
+        assert_eq!(
+            cache_key(r"D:\Du_An\Canh.mp4", 5, 64),
+            cache_key(r"d:\du_an\canh.mp4", 5, 64)
+        );
+    }
+
+    /// Xuất lại một bản dựng đè lên chính nó: đường dẫn không đổi, nội dung
+    /// đổi. `mtime` có mặt trong khoá đúng để bắt ca này.
+    #[test]
+    fn cung_duong_dan_nhung_noi_dung_moi_thi_khoa_phai_doi() {
+        assert_ne!(
+            cache_key(r"D:\du_an\canh.mp4", 1_700_000_000, 64),
+            cache_key(r"D:\du_an\canh.mp4", 1_700_009_999, 64)
+        );
+    }
+
+    /// Hai cỡ ảnh của cùng một tệp là hai bức ảnh khác nhau — danh sách dùng
+    /// 64px, lưới dùng 256px.
+    #[test]
+    fn hai_co_anh_la_hai_muc_rieng() {
+        assert_ne!(
+            cache_key(r"D:\du_an\canh.mp4", 5, 64),
+            cache_key(r"D:\du_an\canh.mp4", 5, 256)
+        );
     }
 }

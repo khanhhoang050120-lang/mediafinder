@@ -9,6 +9,7 @@ import { mount, unmount } from "svelte";
 import { settle } from "./helpers";
 import Preview from "../src/lib/Preview.svelte";
 import type { SearchHit } from "../src/lib/search";
+import { propsPhanUng } from "./runes.svelte";
 
 function mkHit(i: number, name: string, kind: SearchHit["kind"]): SearchHit {
   return {
@@ -38,18 +39,24 @@ function mountPreview(hit: SearchHit) {
   stepped = [];
   const div = document.createElement("div");
   document.body.appendChild(div);
-  const app = mount(Preview, {
-    target: div,
-    props: {
-      hit,
-      epoch: 9,
-      position: 1,
-      total: 5,
-      onclose: () => closed++,
-      onstep: (d: number) => stepped.push(d),
-      onopen: () => {},
-    },
+  // Props phải phản ứng được: bài "bước sang tệp khác" cần đổi `hit` trên một
+  // overlay ĐANG GẮN, đúng như khi người dùng bấm mũi tên.
+  const props = propsPhanUng({
+    hit,
+    epoch: 9,
+    position: 1,
+    total: 5,
+    onclose: () => closed++,
+    onstep: (d: number) => stepped.push(d),
+    onopen: () => {},
   });
+  const app = mount(Preview, { target: div, props });
+  const rerender = async (h: SearchHit) => {
+    // Overlay giữ nguyên, chỉ `hit` đổi — đúng như khi bấm mũi tên lướt qua
+    // kết quả. Đây là con đường mà vết hỏng cũ bám theo được.
+    props.hit = h;
+    await settle(20);
+  };
   let done = false;
   const cleanup = () => {
     if (done) return;
@@ -58,7 +65,7 @@ function mountPreview(hit: SearchHit) {
     div.remove();
   };
   pending.push(cleanup);
-  return { div, cleanup };
+  return { div, cleanup, rerender };
 }
 
 const stage = (div: Element) => div.querySelector(".stage")!;
@@ -164,6 +171,27 @@ describe("phím Space — tạm dừng video, đóng với ảnh/nhạc", () => 
     expect(div.querySelector(".fallback"), "fallback chưa hiện").toBeTruthy();
     space();
     expect(closed).toBe(1);
+  });
+
+  it("bước sang tệp khác thì QUÊN vết hỏng của tệp trước", async () => {
+    // Chú thích "Reset per file, not per open" đã nằm trong Preview.svelte từ
+    // lâu, nhưng suốt thời gian đó KHÔNG có dòng mã nào làm việc ấy: `failed`
+    // và `loading` là `$state` trần, chỉ `src` là `$derived`. Gặp một .mkv
+    // không giải mã được rồi bấm mũi tên là mọi tệp sau đó đều báo "Không xem
+    // trước được định dạng này", cho tới khi đóng overlay rồi mở lại.
+    //
+    // Cùng một kiểu hỏng như `armed` từng mắc: cơ chế sống trong lời văn chứ
+    // không trong mã.
+    const { div, rerender } = mountPreview(mkHit(1, "hong.mkv", "video"));
+    div.querySelector("video")!.dispatchEvent(new Event("error"));
+    await settle(20);
+    expect(div.querySelector(".fallback"), "tep dau phai bao hong").toBeTruthy();
+
+    await rerender(mkHit(2, "lanh.mp4", "video"));
+    expect(
+      div.querySelector(".fallback"),
+      "vet hong cua tep truoc bam sang tep sau",
+    ).toBeFalsy();
   });
 
   it("gợi ý phím dưới chân chỉ nhắc Space khi là video", async () => {

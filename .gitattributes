@@ -5,6 +5,14 @@
 *.png binary
 *.ico binary
 
+# Mã nguồn có chứa byte NUL thật, và git đoán nhầm là tệp nhị phân.
+#
+# `persist.rs` khai báo `const MAGIC: &[u8; 8] = b"MFIDX\0\0\0";` — ba byte NUL
+# nằm thẳng trong nguồn, nên `git diff` in "Bin 9365 -> 10316 bytes" thay vì
+# nội dung. Người duyệt không đọc được thay đổi ở đúng tệp giữ định dạng chỉ
+# mục, tức chỗ mà một sai sót làm mất toàn bộ dữ liệu đã quét.
+src-tauri/src/index/persist.rs diff
+
 # Lockfiles: keep diffs readable but do not treat as source in reviews.
 package-lock.json linguist-generated=true
 src-tauri/Cargo.lock linguist-generated=true

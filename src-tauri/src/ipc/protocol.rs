@@ -68,14 +68,15 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
         return error(StatusCode::NOT_FOUND);
     }
     let path = snapshot.full_path(index);
+    // Lấy luôn mtime khi còn giữ snapshot: cùng với đường dẫn, nó là danh tính
+    // của bức ảnh trong cache. Khoá theo chỉ số thì sai — chỉ số là vị trí, và
+    // sau một lượt dựng lại chỉ mục thì cùng một số chỉ vào tệp khác.
+    let mtime = snapshot.mtime(index);
     // Release the snapshot before the slow part so a rebuild is not held up by
     // a thumbnail decode.
     drop(snapshot);
 
-    match app
-        .state::<ThumbnailService>()
-        .get(index as u64, &path, size)
-    {
+    match app.state::<ThumbnailService>().get(&path, mtime, size) {
         Ok(png) => Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "image/png")

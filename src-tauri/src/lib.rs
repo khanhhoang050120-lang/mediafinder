@@ -13,12 +13,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub mod diag;
 pub mod index;
 pub mod ipc;
+pub mod lastcheck;
 pub mod media;
 pub mod misslog;
+pub mod netscan_mark;
 pub mod ntfs;
 pub mod preflight;
 pub mod setup;
 pub mod state;
+pub mod taskhealth;
 pub mod update;
 pub mod walk;
 
@@ -143,6 +146,9 @@ pub fn run_gui() {
             ipc::commands::search,
             ipc::commands::index_status,
             ipc::commands::open_file,
+            ipc::commands::net_scan_mark,
+            taskhealth::task_health,
+            lastcheck::last_check,
             ipc::commands::verify_dupe_group,
             ipc::commands::miss_log_status,
             ipc::commands::miss_log_set_enabled,
@@ -607,6 +613,9 @@ fn finish_network_scan(
         w.flush();
     }
     tracing::info!("{message} [{:.1}s]", outcome.seconds);
+    // Quy tắc "chỉ lượt đi trọn mới để lại dấu vết" sống trong
+    // `netscan_mark::record_outcome` — một chỗ, có kiểm thử gọi tới.
+    crate::netscan_mark::record_outcome(&outcome);
     outcome
 }
 
@@ -779,6 +788,11 @@ pub fn run_incremental() -> bool {
             changes.len(),
             started.elapsed().as_secs_f64()
         );
+        // Đóng dấu "đã kiểm" dù không ghi lại cache. Đây chính là ca mà
+        // `built_at_unix` không nói được: máy khoẻ, tác vụ vừa chạy, nhưng vì
+        // không có gì đổi nên mốc trong `index.bin` đứng yên — và giao diện
+        // tưởng chỉ mục đã cũ hàng giờ.
+        lastcheck::record(false);
         finish_incremental(
             progress,
             &format!("Không có thay đổi nào — {} tệp", ix.len()),
@@ -839,6 +853,10 @@ pub fn run_incremental() -> bool {
             return false;
         }
     }
+
+    // Đóng dấu SAU khi cache đã ghi thành công. Đặt trước đó thì một lượt ghi
+    // hỏng vẫn để lại dấu "vừa kiểm xong", tức nói dối đúng lúc cần nói thật.
+    lastcheck::record(true);
 
     finish_incremental(
         progress,
