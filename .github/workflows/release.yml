@@ -176,6 +176,32 @@ jobs:
           # không kèm chữ ký — và không máy nào cập nhật lên được.
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
+          # BẮT BUỘC khi phát hành từ một nhánh KHÔNG phải nhánh mặc định.
+          #
+          # tauri-action luôn gửi kèm `target_commitish` khi tạo Release:
+          #
+          #     target_commitish: commitish || context.sha
+          #
+          # Mặc định đó là SHA của commit đang được tag. Nếu commit ấy nằm
+          # ngoài nhánh mặc định thì GitHub **từ chối** bằng HTTP 403
+          # "Resource not accessible by integration" — một thông điệp nói về
+          # quyền, trong khi nguyên nhân chẳng liên quan gì tới quyền. Nó đã
+          # làm mất bốn lượt chẩn đoán đi sai hướng.
+          #
+          # Đo được, mỗi phép đổi đúng một biến, tag `v1.0.6` đã tồn tại:
+          #   tag_name + name + draft                        -> 201
+          #   + prerelease                                   -> 201
+          #   + target_commitish = 99fc80b (trên `edit`)     -> 403
+          #   + target_commitish = master                    -> 201
+          #
+          # Trường này an toàn để ép về nhánh mặc định: tài liệu của chính
+          # input nói "unused if the Git tag already exists", và tag luôn tồn
+          # tại trước khi workflow chạy (workflow kích hoạt bởi việc đẩy tag).
+          # Nên Release vẫn gắn đúng vào tag, tức đúng commit trên `edit`.
+          #
+          # Dùng biểu thức chứ không viết cứng "master": đổi tên nhánh mặc
+          # định thì chỗ này vẫn đúng.
+          releaseCommitish: ${{ github.event.repository.default_branch }}
           # __VERSION__ được thay bằng version trong tauri.conf.json.
           tagName: v__VERSION__
           releaseName: MediaFinder v__VERSION__

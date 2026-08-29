@@ -1207,3 +1207,88 @@ Ba chốt chặn phải đi kèm, tìm ra lúc phản biện chứ không phải
 **Bài học.** Người dùng nói "còn bị ngay ở trên ổ" là một dữ kiện thu hẹp phạm vi, không phải một lời
 than. Nó loại BUG-024 khỏi vai trò nguyên nhân duy nhất và chỉ thẳng vào chỗ chung của cả hai vế:
 chỉ mục có tuổi, mà app không nói tuổi đó cho ai biết.
+
+
+## BUG-026 🟠 — Không phát hành được từ nhánh khác `master`, và thông báo lỗi chỉ sai hướng
+
+**Triệu chứng.** Đẩy tag `v1.0.6` (nằm trên nhánh `edit`) thì workflow Release dựng xong hoàn toàn
+— 272 test Rust xanh, bộ cài đóng gói xong, có cả chữ ký cập nhật — rồi chết ở bước cuối:
+
+```
+Looking for a draft release with tag v1.0.6...
+Couldn't find release with tag v1.0.6. Creating one.
+Error: Resource not accessible by integration
+      https://docs.github.com/rest/releases/releases#create-a-release
+```
+
+Mọi bản trước (v1.0.0 → v1.0.5) đều phát hành trót lọt với **cùng tệp workflow ấy**.
+
+**Thông báo lỗi nói dối về nguyên nhân.** "Resource not accessible by integration" là thông điệp
+GitHub trả về khi token thiếu quyền. Nó khiến bốn lượt chẩn đoán đi sai hướng:
+
+| Giả thuyết | Bác bỏ bằng |
+|---|---|
+| Cài đặt repo đang ở read-only | ảnh chụp Settings: đã ở "Read and write permissions" |
+| Token được cấp quyền lúc tạo lượt chạy, nên phải chạy lượt mới | lượt chạy hoàn toàn mới, sau khi đổi cài đặt — vẫn 403 |
+| `tauri-action@v0` tự đổi phiên bản | nhãn `v0` không đổi từ 14/03/2026, trước v1.0.5 nhiều tháng |
+| Có ruleset hoặc luật bảo vệ tag | `/rulesets` rỗng; `/tags/protection` cũng rỗng |
+
+Thứ lật được vụ này là **log của chính lượt chạy**, nơi in ra:
+
+```
+GITHUB_TOKEN Permissions
+  Contents: write
+```
+
+Token **có** quyền ghi mà API vẫn 403. Mâu thuẫn đó loại bỏ toàn bộ hướng "quyền" và buộc phải đo
+thay vì đoán.
+
+**Cách tìm ra.** Dựng một workflow chẩn đoán gọi thẳng `POST /releases`, chạy 30 giây thay vì 17
+phút. Bài học nằm ngay ở đây: bản đầu của nó chỉ **in** mã HTTP rồi kết thúc "success" bất kể kết
+quả — nên toàn bộ thông tin nằm trong log, thứ chỉ đọc được khi đăng nhập. Phải viết lại thành **mỗi
+phép thử một job, job đỏ khi không phải 201**, vì kết luận của job thì đọc được qua API công khai.
+*Một phép đo mà người cần nó không đọc được thì không phải phép đo.*
+
+Đọc mã nguồn `tauri-action` tại đúng SHA đang chạy (`84b9d35`) thì thấy nó luôn gửi kèm một trường
+mà phép thử của tôi không gửi:
+
+```ts
+const createdRelease = await github.rest.repos.createRelease({
+  owner, repo, tag_name: tagName, name: releaseName, body, draft, prerelease,
+  target_commitish: commitish || context.sha,   // ← đây
+  generate_release_notes: generateReleaseNotes,
+});
+```
+
+**Nguyên nhân, đo bằng phép thử một-biến** trên tag `v1.0.6` (đã tồn tại):
+
+| Payload | Kết quả |
+|---|---|
+| `tag_name` + `name` + `draft` | **201** |
+| + `prerelease: true` | **201** |
+| + `target_commitish: 99fc80b` (commit trên `edit`) | **403** |
+| + `target_commitish: master` | **201** |
+
+⇒ **GitHub từ chối tạo Release khi `target_commitish` trỏ vào một commit nằm ngoài nhánh mặc định**,
+và trả về một mã lỗi nói về quyền. Đó cũng là lời giải cho tương quan lịch sử: v1.0.0–v1.0.5 đều
+được tag trên `master`, còn v1.0.6 là bản đầu tiên tag trên `edit`.
+
+**Cách sửa.** `tauri-action` có input `releaseCommitish`, tài liệu của nó ghi rõ *"unused if the Git
+tag already exists"*. Mà tag **luôn** tồn tại trước khi workflow chạy — chính việc đẩy tag kích hoạt
+nó. Nên ép trường này về nhánh mặc định là an toàn: Release vẫn gắn đúng vào tag, tức đúng commit
+trên `edit`.
+
+```yaml
+releaseCommitish: ${{ github.event.repository.default_branch }}
+```
+
+Dùng biểu thức chứ không viết cứng `master`, để đổi tên nhánh mặc định thì chỗ này vẫn đúng.
+
+**Vì sao đáng ghi lại.** Kế hoạch phát hành theo đợt (BUG-025, mục "phát hành từ `edit`, giữ
+`master` làm bản cứu vớt") **không thể chạy** nếu thiếu dòng này — mà không có gì trong thông báo
+lỗi gợi ý điều đó. Bất kỳ ai sau này thử phát hành từ một nhánh không phải mặc định đều sẽ vấp đúng
+cái bẫy ấy và đi đúng bốn hướng sai như tôi.
+
+**Bài học.** Một thông báo lỗi nói về X không có nghĩa nguyên nhân là X. Khi bằng chứng trực tiếp
+(`Contents: write` in ngay trong log) mâu thuẫn với thông báo, thì tin bằng chứng và bỏ thông báo —
+đừng tìm cách giải thích để bằng chứng khớp với thông báo. Tôi đã làm ngược trong bốn lượt.
