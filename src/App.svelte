@@ -93,13 +93,25 @@
     const now = drive;
     if (now === lastDrive) return;
     lastDrive = now;
-    selected = 0;
+    // Dọn CẢ BA, không riêng `selected`. `selection` và `anchor` là các chỉ số
+    // TRONG `hits`, mà đổi ổ là thay hẳn `hits` bằng một danh sách khác — nên
+    // mọi chỉ số cũ đều trỏ vào tệp khác với tệp người dùng đã chọn.
+    //
+    // Bỏ sót `selection` là lỗi tốn kém nhất trong ba: `targetsFor` lấy cả tập
+    // khi dòng bị kéo nằm trong tập, nên màn hình tô một dòng mà cú kéo mang
+    // đi nhiều tệp — đúng cái mà chú thích của `targetsFor` nói phải tránh.
+    // Bỏ sót `anchor` thì nhẹ hơn nhưng cùng loại: Shift+click sau đó tính dải
+    // từ một chỗ người dùng chưa từng bấm.
+    selectOnly(0);
     listRef?.scrollToTop();
   });
   let epoch = $state(0);
   let selected = $state(0);
   let elapsedMs = $state(0);
   let searching = $state(false);
+  /// Số hiệu lần tìm gần nhất. Không phải `$state`: không có gì trên màn hình
+  /// đọc nó, nó chỉ để một lần gọi tự biết mình đã bị thay thế hay chưa.
+  let lanTim = 0;
   let activeKinds = $state<MediaKind[]>(prefs.activeKinds);
   let relaxed = $state<RelaxedInfo | null>(null);
   let order = $state<Order>(prefs.order);
@@ -395,6 +407,13 @@
       elapsedMs = 0;
       return;
     }
+    // Đánh số từng lần gọi để `.finally` biết mình có còn là lần mới nhất
+    // không. Phần DỮ LIỆU đã được `searchFiles` chống tráo đúng (nó trả `null`
+    // cho lần đã bị thay thế), nhưng `.finally` thì chạy cho MỌI lần — kể cả
+    // lần đã bỏ. Một lần gọi cũ trả lời muộn sẽ tắt cờ đang-tìm của lần mới,
+    // và màn hình rơi vào nhánh "Không tìm thấy kết quả nào" trong khi thật
+    // ra là CHƯA có kết quả. Thông báo khẳng định một điều app chưa xác minh.
+    const lan = ++lanTim;
     searching = true;
     searchFiles(q, activeKinds, filters, 5000, order)
       .then((res) => {
@@ -413,8 +432,14 @@
         selectOnly(0);
         listRef?.scrollToTop();
       })
-      .catch((e) => (error = String(e)))
-      .finally(() => (searching = false));
+      .catch((e) => {
+        // Lỗi của một lần đã bị thay thế cũng không được hiện: người dùng đã
+        // gõ tiếp, câu hỏi cũ không còn là câu họ đang hỏi.
+        if (lan === lanTim) error = String(e);
+      })
+      .finally(() => {
+        if (lan === lanTim) searching = false;
+      });
   }
 
   /// Chạy lại chỉ khi có gì đó để chạy. Các chip gọi vào đây, và ô tìm kiếm

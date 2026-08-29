@@ -361,3 +361,93 @@ describe("t10 — số hiệu hiện ra phải là số hiệu THẬT của bả
     expect(await doc("package.json")).toBe(cargo);
   });
 });
+
+describe("t10 — đổi ổ phải dọn cả tập đã chọn", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    dungIpc(HITS);
+  });
+
+  it("Ctrl+A rồi đổi ổ thì không còn kéo theo tệp của ổ khác", async () => {
+    const div = await goTimKiem();
+    // Ctrl+A chỉ tác dụng khi con trỏ KHÔNG ở trong ô tìm kiếm — bấm vào một
+    // dòng kết quả trước, đúng như người dùng thật làm.
+    (div.querySelector(".row") as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    (div.querySelector("input.search") as HTMLInputElement).blur();
+    await settle(60);
+    // Chọn hết 4 kết quả (2 trên D:, 2 trên Y:).
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }),
+    );
+    await settle(60);
+    expect(div.querySelectorAll(".row.sel").length, "Ctrl+A phải chọn cả 4").toBe(4);
+
+    // Sang ổ D: — danh sách còn 2 dòng.
+    bam(chips(div)[1]);
+    await settle(90);
+    expect(div.querySelectorAll(".row").length).toBe(2);
+
+    // Đây là điều quan trọng: sau khi đổi ổ, số dòng ĐANG CHỌN không được
+    // nhiều hơn số dòng đang thấy. Nếu tập chọn còn giữ chỉ số của danh sách
+    // cũ thì một cú kéo sẽ mang theo những tệp người dùng không hề nhìn thấy
+    // — đúng cái mà chú thích của `targetsFor` nói là phải tránh.
+    expect(div.querySelectorAll(".row.sel").length, "đổi ổ phải dọn tập đã chọn").toBe(1);
+  });
+});
+
+describe("t10 — không nói 'không tìm thấy' khi vẫn đang tìm", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("lần tìm cũ về sau không được tắt trạng thái đang-tìm của lần mới", async () => {
+    dungIpc(HITS);
+    // Lần gọi A chậm, lần gọi B nhanh — A trả lời SAU B, đúng thứ tự gây lỗi.
+    const chos: ((v: unknown) => void)[] = [];
+    ipc.on("search", (a: { id: number }) => {
+      const dap = { id: a.id, hits: HITS, epoch: 3, relaxed: null, elapsedMs: 1, total: 4 };
+      // Lần đầu treo lại, các lần sau trả ngay.
+      return new Promise((r) => chos.push(() => r(dap)));
+    });
+
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    const app = mount(App, { target: div });
+    dangMo.push(() => {
+      unmount(app);
+      div.remove();
+    });
+    await settle(90);
+
+    const o = div.querySelector("input.search") as HTMLInputElement;
+    o.value = "a";
+    o.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle(120); // lần A bay đi, bị treo
+
+    o.value = "ab";
+    o.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle(120); // lần B cũng đang bay, chưa về
+
+    // Giờ lần A mới trả lời. Nó ĐÃ BỊ THAY THẾ nên dữ liệu bị bỏ đúng — nhưng
+    // `.finally` vẫn chạy và tắt cờ đang-tìm. Nếu B chưa xong, màn hình rơi
+    // vào nhánh "Không tìm thấy kết quả nào" trong khi thực tế là CHƯA có
+    // kết quả — thông báo khẳng định một điều app chưa hề xác minh.
+    expect(chos.length, "phải có hai lần gọi đang bay").toBe(2);
+
+    // A trả lời trước, trong khi B VẪN ĐANG BAY.
+    chos[0]!(null);
+    await settle(120);
+
+    // Đây là khoảnh khắc quyết định: chưa có kết quả nào, B chưa về. Màn hình
+    // không được khẳng định "không tìm thấy" — nó chưa biết điều đó.
+    expect(
+      div.textContent,
+      "nói 'không tìm thấy' trong khi lần tìm mới vẫn đang chạy",
+    ).not.toContain("Không tìm thấy kết quả nào");
+
+    // B về, kết quả hiện ra.
+    chos[1]!(null);
+    await settle(120);
+    expect(div.textContent).toContain("alpha.mp4");
+  });
+});

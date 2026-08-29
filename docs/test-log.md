@@ -1164,3 +1164,143 @@ nói một đằng, bộ cài một nẻo, và **không có gì bắt được**
 
 Vòng kiểm: `npm run check` 0 lỗi/121 tệp · `npm test` **92 pass** (88 + 4 mới) · `cargo test`
 231 pass. Rust không đổi dòng nào.
+
+## P35 — BUG-025: ổ mạng tự quét lại theo lịch
+
+### Nguyên nhân gốc, xác định bằng bằng chứng chứ không phải suy đoán
+
+`scan_network_volumes()` trước bản vá này có **đúng một chỗ gọi**: nút "+ Ổ mạng". Tác vụ Windows
+chạy mỗi ngày dùng `--index`, chạy **elevated** — mà ổ mạng ánh xạ thuộc về phiên đăng nhập nên
+tiến trình elevated **không nhìn thấy chúng** (CHECK-007).
+
+Nên đây không phải "ai đó quên gọi": đường quét tự động đang có về mặt kỹ thuật **không thể**
+chạm tới ổ mạng. Hệ quả: ổ trong máy cập nhật mỗi ngày trong 1 mili giây, còn phần NAS của chỉ
+mục đứng im vĩnh viễn cho tới khi có người tự bấm nút.
+
+### Chi phí thật, đo từ log của máy studio
+
+| Ổ | Máy chủ | Thời gian | Thư mục | Tệp media |
+|---|---|---|---|---|
+| `F:` | .214 | 13,1s | 4.108 | 146.662 |
+| `H:` | .214 | 18,7s | 8.394 | 31.909 |
+| **`Y:`** | .213 | **477,0s** | 7.686 | 159.095 |
+| `Z:` | .213 | 15,1s | 958 | 18.953 |
+
+Tổng **8 phút 44**, riêng `Y:` chiếm **91%**. Con số đó quyết định lịch thưa (12 tiếng) chứ
+không dày: quét bốn lần/ngày là 35 phút đọc mạng mỗi máy mỗi ngày, nhân 20–40 máy thì cái giá
+đổ hết lên chính NAS mọi người đang cần dùng.
+
+### Một giả thuyết đã bác bỏ — và cách nó suýt lọt
+
+Thấy `rayon` chỉ dùng 12 luồng (bằng số CPU), tôi nghi đó là nguyên nhân: với I/O mạng thì luồng
+chủ yếu là *chờ*, không tốn CPU. Phép đo đầu ủng hộ rất mạnh — 64 luồng nhanh hơn **11 lần**.
+
+Phép đo đó **tự lừa mình**: nó chạy 12 luồng trên thư mục lạnh, rồi chạy 64 luồng trên chính thư
+mục vừa được Windows cache. Đo lại bằng hai mẫu riêng biệt cùng lạnh thì **12 luồng còn nhanh
+hơn 64** — 987 so với 586 thư mục/giây.
+
+Nếu không đo lại, tôi đã đề xuất một bản sửa dựa trên phép đo sai, và nó sẽ "hoạt động" đúng
+nghĩa không làm gì cả. Bài học: một phép đo mà thứ tự chạy quyết định kết quả thì không phải
+phép đo.
+
+Phần chưa giải thích được: 8 lần kích thước chỉ lý giải ~121 giây, còn thực tế 477. **Còn hệ số
+~4 lần chưa rõ.** Không đoán — ghi lại để điều tra riêng.
+
+### Bản sửa — [netsched.rs](../src-tauri/src/netsched.rs), module riêng
+
+Lịch chạy **trong tiến trình GUI**, vì đó là nơi duy nhất thấy được ổ mạng.
+
+| Tham số | Giá trị | Vì sao |
+|---|---|---|
+| Lượt đầu | 5 phút sau khởi động | Lúc đăng nhập máy bận nhất; chen 8 phút đọc mạng vào đó là tranh băng thông với chính việc người dùng đang mở |
+| Giữa hai lượt | 12 tiếng | ~2 lượt/ngày, xem bảng chi phí |
+| Giãn giữa các máy | 0–20 phút, theo tên máy | 40 máy cùng đăng nhập 8h sáng mà không giãn thì cùng nện vào NAS một lúc |
+| Nhịp kiểm tra | 1 phút | Ngủ thẳng 12 tiếng thì máy ngủ đông 8 tiếng sẽ đẩy lượt quét lùi 8 tiếng |
+
+Độ giãn băm từ `COMPUTERNAME` chứ không dùng số ngẫu nhiên: không phải thêm thư viện chỉ để lấy
+một con số, và quan trọng hơn — nó **ổn định**, máy A luôn quét sớm hơn máy B thay vì hai máy
+bốc thăm lại mỗi lần khởi động rồi thỉnh thoảng trùng nhau.
+
+Lịch **không bắn sự kiện** cho giao diện: `watch_cache` đã theo dõi đúng tệp mà
+`scan_network_volumes` ghi và tự bắn `index-reloaded`. Bắn thêm là hai đường cùng nói một tin,
+và đường thứ hai sẽ lặng lẽ sai đi khi cách lưu đổi.
+
+### Kiểm thử — 9 ca, đều là ca về hành vi sai chứ không phải ca trang trí
+
+Thử bằng cách phá mã:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Bỏ phần giãn giờ (40 máy cùng nện vào NAS) | **1 ca đỏ** ✅ |
+| Lượt đầu tính từ mốc 0 (quét ngay lúc đăng nhập) | **3 ca đỏ** ✅ |
+| Bỏ `saturating_sub` (đồng hồ lùi → quét mỗi phút) | **1 ca đỏ** ✅ |
+
+### Chạy thật — thứ mà kiểm thử đơn vị không thay được
+
+Lần chạy đầu **không thấy dòng log nào của lịch**. Nguyên nhân hoá ra không phải mã sai: một bản
+dev build cũ đang chạy và **single-instance** khiến bản mới thoát ngay, nên log tôi đọc là của
+tiến trình cũ. Tắt bản cũ rồi chạy lại:
+
+```
+INFO mediafinder::netsched: lịch quét ổ mạng: lượt đầu sau 5 phút
+     (giãn thêm 16 phút cho máy này), rồi mỗi 12 tiếng
+```
+
+Máy này bốc được 16 phút, nên lượt đầu rơi vào phút thứ 21. Cả móc `setup` lẫn phần giãn giờ đều
+chạy đúng trên bản build thật.
+
+### Vòng kiểm
+
+`cargo test` **235 pass** (226 + 9) · clippy **0 warning** · fmt sạch · `cargo build` sạch.
+
+### Chạy thật trọn một lượt — và con số lật lại kết luận
+
+Lượt quét tự động đầu tiên, đo trên bản `tauri dev` của người dùng:
+
+```
+10:03:45  lịch quét ổ mạng: lượt đầu sau 5 phút (giãn thêm 16 phút cho máy này)
+10:25:45  quét ổ mạng: F:, H:, Y:, Z:
+10:27:35  lịch quét ổ mạng xong: 4 ổ · 358772 tệp · 109.9s
+10:27:38  cache đã thay đổi bên ngoài — nạp lại: 408548 tệp
+```
+
+Chạy lúc 10:25, đúng dự đoán 10:24. Toàn chuỗi hoạt động: lịch → quét → hợp nhất → `watch_cache`
+phát hiện → nạp lại. Chỉ mục từ 400.024 lên **408.548** — **8.524 tệp mới** mà trước bản vá này
+sẽ không ai tìm ra cho tới khi có người tự bấm nút.
+
+**Con số buộc phải sửa lại kết luận:**
+
+| Ổ | Lần đo đầu | Lần này | |
+|---|---|---|---|
+| `F:` | 13,1s | **0,7s** | |
+| `H:` | 18,7s | **2,7s** | |
+| `Y:` | **477,0s** | **87,6s** | ↓ 5,4× |
+| `Z:` | 15,1s | 15,7s | |
+| **Tổng** | **523,9s** | **109,9s** | ↓ 4,8× |
+
+Không phải 8 phút 44 mà **1 phút 50**.
+
+Và đây chính là "hệ số ~4 lần chưa giải thích được" đã ghi ở trên. Câu trả lời: 477 giây là lần
+quét **lạnh hoàn toàn**, chưa có gì trong cache thư mục của Windows. Lần này cây đã ấm nên còn
+87,6 giây.
+
+Điều đáng giữ lại về cách làm: hệ số đó được ghi là "chưa biết" thay vì được lấp bằng một phỏng
+đoán nghe hợp lý. Câu trả lời đến từ phép đo thứ hai, không từ suy luận.
+
+**Hệ quả cho lịch:** `GIUA_HAI_LUOT = 12 tiếng` đặt dựa trên số liệu xấu nhất, nên nó **thưa hơn
+mức cần thiết**. Với 110 giây thực tế, 3–4 lượt/ngày là khả thi.
+
+Chưa đổi, có chủ đích. Mới hai phép đo mà chênh nhau 5 lần — chưa đủ để biết cái nào là thường
+lệ. Và 110 giây này đo trên máy vừa quét xong nên cache còn ấm; máy vừa đăng nhập buổi sáng gần
+với trường hợp lạnh hơn. Để lịch chạy vài ngày, có 5–6 phép đo ở các thời điểm khác nhau rồi mới
+quyết — dựa trên dữ liệu chứ không trên một lần may mắn.
+
+### Một sai sót trong cách tôi tự kiểm
+
+Phép thử "chạy thật" ở phần trên đọc `%LOCALAPPDATA%\mediafinder\logs\mediafinder.log`, nhưng
+bản `tauri dev` **không ghi vào tệp đó** — nó chỉ in ra terminal, và tệp log dừng ở một phiên
+v1.0.6 cũ. Nên thứ tôi tưởng là bằng chứng thực ra là log của phiên khác. Bằng chứng thật là
+terminal của người dùng.
+
+Cùng loại với lỗi cache ở trên: cả hai đều là phép đo trông giống phép đo đúng nhưng đang nhìn
+vào nhầm thứ.
