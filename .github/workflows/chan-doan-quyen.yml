@@ -57,6 +57,13 @@ jobs:
           echo "HTTP $code"
           head -c 500 /tmp/doc.json; echo
 
+      # Lượt chạy trước đã dùng một tag CHƯA tồn tại và trả về 201 — tức quyền
+      # hoàn toàn bình thường trên ref dạng tag. Lượt này đổi ĐÚNG MỘT BIẾN:
+      # dùng `v1.0.6`, tag ĐÃ tồn tại và trỏ vào một commit KHÔNG nằm trên
+      # nhánh mặc định. Đó chính là điều kiện mà tauri-action gặp.
+      #
+      # 201 -> chuyện tag không liên quan, lỗi nằm trong tauri-action.
+      # 403 -> tìm ra rồi, và nó chưa bao giờ là chuyện quyền.
       - name: GHI — thử tạo một release nháp (đây là bước đang hỏng)
         id: ghi
         env:
@@ -68,7 +75,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/releases" \
-            -d '{"tag_name":"chan-doan-tam-xoa-ngay","name":"chan doan - se tu xoa","draft":true,"body":"Ban nhap do workflow chan doan tao ra. Neu con sot lai, xoa tay."}')
+            -d '{"tag_name":"v1.0.6","name":"chan doan - se tu xoa","draft":true,"body":"Ban nhap do workflow chan doan tao ra. Neu con sot lai, xoa tay."}')
           echo "HTTP $code"
           echo "----- NGUYEN VAN PHAN HOI -----"
           cat /tmp/ghi.json; echo
