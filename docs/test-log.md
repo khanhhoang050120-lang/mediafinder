@@ -1052,3 +1052,87 @@ Sau lượt thử trên máy trắng, hai đường tôi không tự kiểm đư
 Điều thứ hai đóng lại phần còn dở ở lượt trước: khi đó tôi chỉ đo được bằng gỡ im lặng — đường đó
 **cố ý bỏ qua** bước xin quyền, nên tác vụ còn sót lại và tôi không biết đường xin quyền có chạy
 được không. Nay biết là chạy được.
+
+---
+
+## P34 — Lọc kết quả theo ổ đĩa (nhánh `version2`)
+
+Tính năng đầu tiên dựng trên nền v1.0.4 sau khi quay về mốc đó. Bản thiết kế đặt ra ba lớp;
+lớp thứ ba (gom nhóm kết quả theo ổ) **bị chính bản thiết kế bác bỏ** vì nó phá thứ tự liên
+quan — cái quý nhất mà phần tìm kiếm đang có. Nên chỉ dựng hai lớp:
+
+| Lớp | Là gì | Tệp |
+|---|---|---|
+| 1 | Hàng chip trên đầu danh sách: `Tất cả 4` · `D: 2` · `Y: 2` | [DriveChips.svelte](../src/lib/DriveChips.svelte) |
+| 2 | Nhãn ổ nhỏ trên từng dòng kết quả | [MediaRow.svelte](../src/lib/MediaRow.svelte) |
+| — | Phần nhận diện ổ, đếm, lọc | [drives.ts](../src/lib/drives.ts) |
+
+Ràng buộc cốt lõi: **lọc chạy hoàn toàn ở giao diện, trên danh sách kết quả đã có** — không
+thêm một lần tìm kiếm nào, không đụng tới `search.rs`. Đây không phải chi tiết kỹ thuật mà là
+toàn bộ lý do tính năng đáng làm: bấm chip phải cho kết quả tức thì, không phải chờ NAS.
+Bộ kiểm thử canh đúng điều này bằng `expect(ipc.count("search")).toBe(0)`.
+
+### Lỗi nghiêm trọng nhất được chặn trước khi nó kịp ra bản phát hành
+
+Cách nhận dạng ổ mạng hiển nhiên là "đường dẫn bắt đầu bằng `\\`". Đo bằng `net use` trên máy
+studio thì **cả bốn ổ NAS đều là ổ ánh xạ** — `F:`, `H:`, `Y:`, `Z:` — và chỉ mục lưu chúng
+dưới dạng `Y:\PROJECT…`. Cách nhận dạng hiển nhiên kia sẽ khiến toàn bộ nhánh phân biệt ổ mạng
+thành **mã chết trên mọi máy**: không chip cam, không nhãn cam, ổ mạng không bị đẩy xuống cuối
+hàng.
+
+Điều khiến nó nguy hiểm là **không ai báo lỗi**: phần đếm và phần lọc vẫn chạy đúng: tính năng
+chỉ lặng lẽ giải đúng một nửa vấn đề nó sinh ra để giải. Cách chặn: `isNetworkDrive` nhận thêm
+tập chữ cái ổ mạng, lấy từ lệnh `network_drives` mà backend đã có sẵn từ v1.0.4.
+
+### Kiểm thử — [t10-drives.test.ts](../tests/t10-drives.test.ts), 12 ca
+
+Hai tầng, cố ý. Chín ca đầu kiểm `drives.ts` thuần. Ba ca sau **dựng App thật rồi bấm chip** —
+vì các hàm thuần chạy đúng không chứng minh được rằng chúng đã được *nối* vào danh sách kết
+quả. Bản v1.0.6 từng có đúng lỗi kiểu này.
+
+### Thử bằng cách phá mã (mutation testing)
+
+Một bài kiểm thử xanh chỉ có giá trị nếu nó đỏ khi mã sai. Ba phép phá:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| `filterByDrive` trả nguyên danh sách, không lọc | **3 ca đỏ** ✅ |
+| `isNetworkDrive` bỏ qua danh sách ổ ánh xạ (đúng lỗi v1.0.6) | **2 ca đỏ** ✅ |
+| Hàng chip hiện cả khi chỉ có một ổ | **1 ca đỏ** ✅ |
+
+Cả ba đều bị bắt. Phép thứ hai là phép đáng giá nhất: nó chứng minh bộ kiểm thử bắt được đúng
+loại lỗi *im lặng* đã mô tả ở trên.
+
+### Vòng kiểm trước khi giao
+
+| Bước | Kết quả |
+|---|---|
+| `cargo test` | **231 pass**, 0 fail — bằng đúng mốc trước khi sửa |
+| `cargo clippy --all-targets` | **0 warning** |
+| `cargo fmt --check` | sạch |
+| `npm run check` | **0 lỗi / 121 tệp** |
+| `npm test` | **88 pass** (76 cũ + 12 mới), 0 fail |
+
+Rust không đổi một dòng nào — đúng như thiết kế, tính năng này sống trọn ở giao diện.
+
+### Hai quyết định đáng ghi lại
+
+**Bộ lọc ổ KHÔNG được lưu qua các phiên**, khác với lưới / sắp xếp / loại tệp. Mở app ra thấy
+"không tìm thấy gì" chỉ vì phiên trước lỡ lọc ổ `Z:` là cái bẫy không đáng đặt. Cùng lý do đó,
+khi một lần tìm mới không còn kết quả nào ở ổ đang chọn thì bộ lọc **tự buông** — màn hình rỗng
+trong khi tệp vẫn nằm ngay đó, chỉ ở ổ khác, là kiểu hỏng khó hiểu nhất.
+
+Điều này là bài học rút thẳng từ chính báo cáo của người dùng ở P33: "tìm kiếm bản 6 kém hơn
+bản 4" hoá ra là **chip lọc Video đang bật** trong khi tệp cần tìm là ảnh `.avif`. Một bộ lọc
+đang âm thầm chặn kết quả mà màn hình không nói ra là lỗi đắt hơn nhiều so với việc quên mất
+lựa chọn của người dùng giữa hai phiên.
+
+**Đổi ổ thì đưa con trỏ bàn phím về đầu danh sách.** Không làm thì `selected` còn trỏ vào vị
+trí của danh sách cũ, và Enter mở nhầm tệp — hoặc mở một tệp không hề có trên màn hình.
+
+### Một lỗ hổng của môi trường kiểm thử, không phải của mã
+
+`$effect` cuộn danh sách về đầu gọi `Element.scrollTo` — **jsdom không cài đặt hàm này**, gọi
+vào là ném `TypeError`, trong khi trình duyệt thật thì không. Đã vá trong
+[vitest.setup.ts](../tests/vitest.setup.ts), cùng chỗ với các lỗ hổng jsdom đã biết khác
+(`ResizeObserver`, `clientHeight`, `DragEvent`).

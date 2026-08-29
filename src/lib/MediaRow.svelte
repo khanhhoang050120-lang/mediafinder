@@ -8,6 +8,7 @@
     type SearchHit,
   } from "./search";
   import { acquireThumbSlot } from "./thumbQueue";
+  import { driveKey, driveLabel, isNetworkDrive } from "./drives";
 
   // Cùng chữ mà các chip lọc dùng, để nhãn và cái chip bật/tắt nó không bao
   // giờ nói khác nhau.
@@ -23,6 +24,8 @@
     thumbSize,
     totalTokens = 0,
     grid = false,
+    showDrive = false,
+    netLetters = undefined,
   }: {
     hit: SearchHit;
     epoch: number;
@@ -35,7 +38,16 @@
     /// CSS của Svelte bị giới hạn theo từng file, một quy tắc viết ở App
     /// không với tới được các class khai báo ở đây.
     grid?: boolean;
+    /// Có vẽ nhãn ổ đầu dòng không. Cha quyết định, vì chỉ cha mới biết kết
+    /// quả có trải trên nhiều ổ hay không — một nhãn `D:` trên mọi dòng khi
+    /// tất cả đều nằm ở D thì chỉ là mực in không nói gì.
+    showDrive?: boolean;
+    /// Chữ cái các ổ mạng đang gắn. Thiếu nó thì ổ mạng ánh xạ (`Y:`) bị tô
+    /// như ổ trong máy — xem ghi chú ở `isNetworkDrive`.
+    netLetters?: Set<string>;
   } = $props();
+
+  const drive = $derived(showDrive ? driveKey(hit.path) : "");
 
   // ---- Tải thumbnail: qua cửa xoay, lỗi tạm thì thử lại ----
   //
@@ -163,6 +175,16 @@
     </svg>
   {/if}
 </span>
+{#if drive}
+  <!--
+    Nhãn ổ đầu dòng. Bản thiết kế đặt nó ngay sau biểu tượng loại tệp, trước
+    tên — để mắt bắt được "tệp này nằm ở đâu" mà không phải đọc hết đường dẫn
+    dài phía dưới.
+  -->
+  <span class="drive" class:nas={isNetworkDrive(drive, netLetters)} class:grid={grid}>
+    {driveLabel(drive)}
+  </span>
+{/if}
 <span class="text" class:grid={grid}>
   <span class="name">{hit.name}</span>
   <span class="dir">{hit.dir}</span>
@@ -264,6 +286,35 @@
     object-fit: contain;
     border-radius: 6px;
   }
+  /* Nhãn ổ — chế độ danh sách. Cùng ngôn ngữ hình khối với `.fact` để nó đọc
+     như một mẩu dữ kiện chứ không phải một nút bấm. */
+  .drive {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: #9fd3ff;
+    background: #22313f;
+    border: 1px solid #2f4a63;
+    white-space: nowrap;
+  }
+  /* Ổ mạng mang màu riêng — chậm hơn, thường là kho lưu trữ. */
+  .drive.nas {
+    color: #f0c081;
+    background: #3a2c17;
+    border-color: #5c4726;
+  }
+  /* Trong lưới, dòng chữ nằm đè lên ảnh nên nhãn phải tự đặt chỗ. Nép sát
+     biểu tượng loại tệp ở góc trên-trái; góc trên-phải đã có huy hiệu n/m. */
+  .drive.grid {
+    position: absolute;
+    top: 14px;
+    left: 40px;
+    opacity: 0.95;
+  }
+
   .kind.grid {
     position: absolute;
     top: 14px;

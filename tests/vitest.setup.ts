@@ -20,3 +20,11 @@ Object.defineProperty(HTMLElement.prototype, "clientHeight", {
 
 // jsdom không có DragEvent; MouseEvent đủ cho ondragstart của app.
 (globalThis as any).DragEvent = MouseEvent;
+
+// jsdom không cài đặt Element.scrollTo — gọi vào là ném TypeError. Trong
+// trình duyệt thật nó tồn tại và không ném. Không vá thì mọi bài đụng tới
+// việc cuộn danh sách về đầu đều hỏng vì một lỗ hổng của môi trường, chứ
+// không phải vì mã sai.
+if (!HTMLElement.prototype.scrollTo) {
+  HTMLElement.prototype.scrollTo = function () {};
+}

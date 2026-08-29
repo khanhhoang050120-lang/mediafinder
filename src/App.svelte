@@ -8,9 +8,11 @@
   import MediaRow from "./lib/MediaRow.svelte";
   import Preview from "./lib/Preview.svelte";
   import ScanStatusBar from "./lib/ScanStatusBar.svelte";
+  import DriveChips from "./lib/DriveChips.svelte";
   import SearchBar from "./lib/SearchBar.svelte";
   import UpdateNotice from "./lib/UpdateNotice.svelte";
   import VirtualList from "./lib/VirtualList.svelte";
+  import { bucketsFor, driveKey, filterByDrive, networkLetters } from "./lib/drives";
   import { loadPrefs, savePrefs } from "./lib/prefs";
   import { prefetchThumb } from "./lib/thumbQueue";
   import { ScanState } from "./lib/scanState.svelte";
@@ -62,7 +64,38 @@
   const prefs = loadPrefs();
 
   let query = $state("");
-  let hits = $state<SearchHit[]>([]);
+  /// Kết quả thô từ backend, trước khi lọc theo ổ.
+  let allHits = $state<SearchHit[]>([]);
+  /// Ổ đang xem; `null` là "Tất cả".
+  ///
+  /// KHÔNG lưu qua các phiên, khác với lưới/sắp xếp/loại tệp: một bộ lọc vô
+  /// hình đang chặn kết quả là màn hình khó hiểu nhất, và mở app ra thấy
+  /// "không tìm thấy gì" chỉ vì phiên trước lỡ lọc ổ Z là cái bẫy không đáng
+  /// đặt.
+  let drive = $state<string | null>(null);
+
+  /// Cái mà toàn bộ giao diện làm việc trên đó — bàn phím, kéo-thả, xem
+  /// trước, tải trước ảnh đều nhìn cùng một danh sách này. Lọc ở một chỗ duy
+  /// nhất thay vì rắc `filterByDrive` khắp nơi: chỉ cần một chỗ quên là con
+  /// trỏ bàn phím trỏ vào một tệp không có trên màn hình.
+  const hits = $derived(filterByDrive(allHits, drive));
+
+
+  // Đổi ổ là đổi danh sách bên dưới con trỏ. Không đưa nó về đầu thì
+  // `selected` trỏ vào một vị trí của danh sách cũ — Enter mở nhầm tệp, hoặc
+  // mở một tệp không có trên màn hình.
+  //
+  // So với giá trị trước đó chứ không chạy mỗi lần effect kích: lần chạy đầu
+  // xảy ra lúc dựng component, khi chưa có danh sách nào để mà cuộn — và khi
+  // `listRef` còn chưa tồn tại.
+  let lastDrive: string | null = null;
+  $effect(() => {
+    const now = drive;
+    if (now === lastDrive) return;
+    lastDrive = now;
+    selected = 0;
+    listRef?.scrollToTop();
+  });
   let epoch = $state(0);
   let selected = $state(0);
   let elapsedMs = $state(0);
@@ -224,7 +257,7 @@
       // trỏ vào một tệp khác. Chạy lại là câu trả lời trung thực duy nhất; giữ
       // danh sách cũ là hiện tên đúng bên cạnh đường dẫn sai.
       if (query.trim()) runSearch();
-      else hits = [];
+      else allHits = [];
       refreshEnrich();
     });
     return () => {
@@ -285,6 +318,16 @@
   // thứ quyết định nút ổ mạng có tồn tại hay không.
   let netDrives = $state<NetworkDrive[]>([]);
   networkDrives().then((d) => (netDrives = d));
+
+  /// Chữ cái của các ổ mạng đang gắn, suy từ `netDrives` — danh sách mà app
+  /// vốn đã hỏi sẵn để dựng nút "+ Ổ mạng". Cần nó để phân biệt ổ mạng ÁNH XẠ
+  /// (`Y:`) với đĩa trong máy; thiếu thì nhánh ổ mạng là mã chết.
+  const netLetters = $derived(networkLetters(netDrives));
+  const driveBuckets = $derived(bucketsFor(allHits, netLetters));
+  /// Chỉ đeo nhãn ổ lên từng dòng khi kết quả trải trên nhiều ổ. Một danh
+  /// sách toàn `D:` thì cái nhãn không nói thêm điều gì, chỉ lấy mất chỗ của
+  /// tên tệp — thứ người dùng thực sự đang đọc.
+  const showDrive = $derived(driveBuckets.length > 1);
 
   // Bản mới, nếu backend đã tìm thấy một bản lúc khởi động. Chỉ đọc kết quả
   // có sẵn — việc hỏi máy chủ xảy ra một lần ở Rust, không phải mỗi lần mở
@@ -347,7 +390,7 @@
   function runSearch() {
     const q = query.trim();
     if (!q) {
-      hits = [];
+      allHits = [];
       relaxed = null;
       elapsedMs = 0;
       return;
@@ -357,7 +400,13 @@
       .then((res) => {
         // `null` nghĩa là một phím gõ mới hơn đã thay thế lần này rồi.
         if (!res) return;
-        hits = res.hits;
+        // Giữ ổ đang chọn qua lần tìm mới — người dùng thường gõ thêm vài ký
+        // tự để thu hẹp, và giật bộ lọc khỏi tay họ giữa chừng là khó chịu.
+        // Nhưng nếu ổ đó không còn kết quả nào thì buông: màn hình "không tìm
+        // thấy gì" trong khi tệp vẫn nằm ngay đó, chỉ ở ổ khác, là cái bẫy tệ
+        // nhất mà một bộ lọc có thể bày ra.
+        if (drive && !res.hits.some((h) => driveKey(h.path) === drive)) drive = null;
+        allHits = res.hits;
         epoch = res.epoch;
         relaxed = res.relaxed;
         elapsedMs = res.elapsedMs;
@@ -588,7 +637,7 @@
         if (error) error = null;
         else if (query) {
           query = "";
-          hits = [];
+          allHits = [];
           relaxed = null;
         }
         inputEl?.focus();
@@ -676,6 +725,8 @@
       </div>
     {/if}
 
+    <DriveChips buckets={driveBuckets} bind:selected={drive} total={allHits.length} />
+
     <div class="results" class:grid bind:clientWidth={resultsWidth}>
       {#if hits.length}
         <VirtualList
@@ -707,6 +758,8 @@
                 {grid}
                 thumbSize={grid ? THUMB_GRID : THUMB_LIST}
                 totalTokens={relaxed?.totalTokens ?? 0}
+                {showDrive}
+                {netLetters}
               />
             </div>
           {/snippet}
