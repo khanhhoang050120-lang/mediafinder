@@ -1136,3 +1136,31 @@ trí của danh sách cũ, và Enter mở nhầm tệp — hoặc mở một t�
 vào là ném `TypeError`, trong khi trình duyệt thật thì không. Đã vá trong
 [vitest.setup.ts](../tests/vitest.setup.ts), cùng chỗ với các lỗ hổng jsdom đã biết khác
 (`ResizeObserver`, `clientHeight`, `DragEvent`).
+
+### P34b — Số hiệu phiên bản ở chân cửa sổ
+
+Thêm `v1.0.7` ở góc phải cùng của thanh trạng thái, mờ hơn mọi thứ khác. Nó không phải thứ ai
+cần đọc khi đang làm việc, nhưng là câu hỏi **đầu tiên** của mọi lần báo lỗi — "anh đang dùng
+bản nào?". Không có nó thì câu trả lời phải đi vòng qua Control Panel.
+
+Nguồn số hiệu là `update.current`, tức `CARGO_PKG_VERSION` lúc biên dịch. Lệnh `update_status`
+**không gọi mạng** (`status()` chỉ đọc thứ đã ghi sẵn), nên số này luôn đúng với bản đang chạy
+kể cả khi máy mất mạng. Chưa về thì không hiện gì — hơn là hiện một số sai.
+
+Bốn ca kiểm thử. Ba ca đầu dựng App và đọc `.status .ver`, trong đó một ca kiểm rằng số hiện ra
+**ngay khi app vừa mở, chưa gõ gì** — câu hỏi "bản nào" thường được hỏi đúng lúc đó, nên bắt
+người dùng tìm một truy vấn mới thấy được số hiệu thì tính năng hỏng đúng lúc nó cần nhất.
+
+Ca thứ tư là ca đáng giá nhất, và nó không đụng tới giao diện: **ba tệp khai báo phiên bản phải
+nói cùng một số**. Ba ca trên dùng `"1.0.4"` cứng trong mock, nên chúng chỉ chứng minh giao diện
+vẽ đúng cái backend đưa cho — *không* chứng minh cái backend đưa là đúng. Mà backend lấy từ
+`Cargo.toml`, còn bộ cài và trình cập nhật lấy từ `tauri.conf.json`. Hai tệp lệch nhau thì app
+nói một đằng, bộ cài một nẻo, và **không có gì bắt được** vì mỗi bên tự nó đều đúng.
+
+| Phá cái gì | Kết quả |
+|---|---|
+| `package.json` lệch với `Cargo.toml` (1.0.6 vs 1.0.7) | **1 ca đỏ** ✅ |
+| Bỏ thẻ `.ver` khỏi chân cửa sổ | **2 ca đỏ** ✅ |
+
+Vòng kiểm: `npm run check` 0 lỗi/121 tệp · `npm test` **92 pass** (88 + 4 mới) · `cargo test`
+231 pass. Rust không đổi dòng nào.

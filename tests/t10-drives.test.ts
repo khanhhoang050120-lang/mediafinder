@@ -8,6 +8,7 @@
 //    chết trên máy thật.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mount, unmount } from "svelte";
+import { readFile } from "node:fs/promises";
 import { IpcRecorder, settle } from "./helpers";
 import App from "../src/App.svelte";
 import {
@@ -291,5 +292,72 @@ describe("t10 — chip ổ đĩa thực sự lọc danh sách", () => {
     ).toBe(0);
     expect(chips(div).length).toBe(0);
     expect(div.textContent).toContain("alpha.mp4");
+  });
+});
+
+describe("t10 — số hiệu phiên bản ở chân cửa sổ", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    dungIpc(HITS);
+  });
+
+  it("hiện số hiệu bản đang chạy ở góc phải", async () => {
+    const div = await goTimKiem();
+    const ver = div.querySelector(".status .ver");
+    expect(ver, "không thấy số hiệu ở chân cửa sổ").toBeTruthy();
+    expect(ver!.textContent!.trim()).toBe("v1.0.4");
+  });
+
+  it("hiện ngay cả khi chưa gõ gì — không phải chờ có kết quả", async () => {
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    const app = mount(App, { target: div });
+    dangMo.push(() => {
+      unmount(app);
+      div.remove();
+    });
+    await settle(90);
+    // Câu hỏi "anh đang dùng bản nào?" thường được hỏi lúc app vừa mở, chưa
+    // tìm gì cả. Bắt người dùng gõ một truy vấn mới thấy được số hiệu thì
+    // tính năng này hỏng đúng lúc nó cần nhất.
+    expect(div.querySelector(".status .ver")?.textContent?.trim()).toBe("v1.0.4");
+  });
+
+  it("không hiện gì khi chưa biết số hiệu, thay vì hiện số sai", async () => {
+    dungIpc(HITS);
+    // `update_status` chưa trả lời (mất mạng, hoặc khoảnh khắc đầu tiên).
+    ipc.on("update_status", () => new Promise(() => {}));
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    const app = mount(App, { target: div });
+    dangMo.push(() => {
+      unmount(app);
+      div.remove();
+    });
+    await settle(90);
+    expect(div.querySelector(".status .ver")).toBeNull();
+  });
+});
+
+describe("t10 — số hiệu hiện ra phải là số hiệu THẬT của bản build", () => {
+  it("ba tệp khai báo phiên bản nói cùng một số", async () => {
+    // Ba bài trên dùng "1.0.4" cứng trong mock, nên chúng chỉ chứng minh phần
+    // giao diện vẽ đúng cái backend đưa cho — KHÔNG chứng minh cái backend đưa
+    // là đúng. Mà đó mới là điều người dùng quan tâm: số hiện ở chân cửa sổ
+    // phải là số của bản họ đang chạy.
+    //
+    // Backend lấy từ `CARGO_PKG_VERSION`, tức `Cargo.toml`. Bộ cài và trình
+    // cập nhật lại lấy từ `tauri.conf.json`. Hai tệp đó lệch nhau thì app nói
+    // một đằng, bộ cài một nẻo — và không có gì bắt được, vì mỗi bên tự nó
+    // đều đúng.
+    const doc = async (p: string) => JSON.parse(await readFile(p, "utf8")).version;
+    const cargo = (await readFile("src-tauri/Cargo.toml", "utf8"))
+      .split(String.fromCharCode(10))
+      .find((l) => l.startsWith("version"))!
+      .split(String.fromCharCode(34))[1]
+      .trim();
+
+    expect(await doc("src-tauri/tauri.conf.json")).toBe(cargo);
+    expect(await doc("package.json")).toBe(cargo);
   });
 });

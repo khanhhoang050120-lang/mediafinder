@@ -822,9 +822,25 @@
         </svg>
       </button>
     {/if}
-    {#if hits.length && !dupeMode}
-      <span class="timing">{formatCount(hits.length)} kết quả · {elapsedMs.toFixed(1)} ms</span>
-    {/if}
+    <span class="right">
+      {#if hits.length && !dupeMode}
+        <span class="timing">{formatCount(hits.length)} kết quả · {elapsedMs.toFixed(1)} ms</span>
+      {/if}
+      <!--
+        Số hiệu bản đang chạy. Nằm ở góc phải cùng, mờ hơn mọi thứ khác: nó
+        không phải thứ ai cần đọc khi đang làm việc, nhưng là câu hỏi ĐẦU TIÊN
+        của mọi lần báo lỗi — "anh đang dùng bản nào?". Không có nó thì câu trả
+        lời phải đi vòng qua Control Panel.
+
+        `update.current` đến từ `CARGO_PKG_VERSION` lúc biên dịch, và lệnh
+        `update_status` không gọi mạng — nên số này luôn đúng với bản đang
+        chạy, kể cả khi máy mất mạng. Chưa về thì không hiện gì, hơn là hiện
+        một số sai.
+      -->
+      {#if update?.current}
+        <span class="ver" title="Phiên bản MediaFinder đang chạy">v{update.current}</span>
+      {/if}
+    </span>
   </div>
 </main>
 
@@ -1011,4 +1027,18 @@
     background: #27436a;
   }
   .timing { flex: 0 0 auto; }
+  /* Gom hai mẩu bên phải lại để chúng đứng cạnh nhau ở mép phải, thay vì bị
+     `space-between` đẩy ra hai đầu. */
+  .right {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex: 0 0 auto;
+  }
+  /* Mờ hơn phần còn lại: có mặt khi cần tìm, không giành sự chú ý khi không. */
+  .ver {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    opacity: 0.5;
+  }
 </style>
