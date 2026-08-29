@@ -1,0 +1,92 @@
+# Workflow chẩn đoán — dùng một lần rồi xoá.
+#
+# Vì sao cần nó: `tauri-action` chỉ in ra đúng một dòng
+# "Resource not accessible by integration", mà GitHub API thường trả về một
+# thông điệp cụ thể hơn nhiều trong phần thân phản hồi. Dòng tóm tắt kia giấu
+# mất nó.
+#
+# Bối cảnh: bộ cài v1.0.6 dựng xong hoàn toàn (có cả chữ ký), nhưng bước đăng
+# Release bị từ chối — TRONG KHI log của chính lượt chạy đó in ra:
+#
+#     GITHUB_TOKEN Permissions
+#       Contents: write
+#
+# Token có quyền ghi mà API vẫn 403. Mâu thuẫn đó nghĩa là có thứ khác đang
+# chặn, không phải quyền token. Workflow này gọi thẳng API để đọc thông điệp
+# thật, thay vì đoán tiếp.
+#
+# Chạy: tab Actions → "Chẩn đoán quyền" → nút "Run workflow".
+name: Chẩn đoán quyền
+
+on:
+  workflow_dispatch:
+
+# Đúng khối quyền mà release.yml đang dùng — để phép thử này phản ánh trung
+# thực điều kiện của nó, không phải một điều kiện dễ dãi hơn.
+permissions:
+  contents: write
+
+jobs:
+  chan-doan:
+    # Linux cho nhanh; câu hỏi ở đây là về quyền API, không liên quan hệ điều hành.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: In ra ngữ cảnh
+        run: |
+          echo "repo      : ${{ github.repository }}"
+          echo "ref       : ${{ github.ref }}"
+          echo "actor     : ${{ github.actor }}"
+          echo "event     : ${{ github.event_name }}"
+
+      - name: ĐỌC danh sách release (cần contents:read)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          code=$(curl -sS -o /tmp/doc.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/releases?per_page=1")
+          echo "HTTP $code"
+          head -c 500 /tmp/doc.json; echo
+
+      - name: GHI — thử tạo một release nháp (đây là bước đang hỏng)
+        id: ghi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          code=$(curl -sS -o /tmp/ghi.json -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d '{"tag_name":"chan-doan-tam-xoa-ngay","name":"chan doan - se tu xoa","draft":true,"body":"Ban nhap do workflow chan doan tao ra. Neu con sot lai, xoa tay."}')
+          echo "HTTP $code"
+          echo "----- NGUYEN VAN PHAN HOI -----"
+          cat /tmp/ghi.json; echo
+          echo "-------------------------------"
+          # Nhớ id để bước sau dọn, nếu tạo được.
+          id=$(python3 -c "import json;print(json.load(open('/tmp/ghi.json')).get('id',''))" 2>/dev/null || echo "")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Dọn bản nháp vừa tạo
+        # Chạy kể cả khi bước trên "hỏng", nhưng chỉ khi thật sự tạo được.
+        if: always() && steps.ghi.outputs.id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${{ steps.ghi.outputs.id }}")
+          echo "xoa ban nhap -> HTTP $code (204 la thanh cong)"
+
+      - name: Kết luận
+        if: always()
+        run: |
+          echo "Ma HTTP cua buoc GHI: ${{ steps.ghi.outputs.code }}"
+          echo "  201 -> tao duoc. Van de KHONG nam o quyen; loi thuoc ve tauri-action."
+          echo "  403 -> bi chan that. Doc phan than phan hoi o buoc GHI de biet ly do."
