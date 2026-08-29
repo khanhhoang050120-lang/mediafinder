@@ -74,6 +74,29 @@ jobs:
           if [ -n "$id" ]; then curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/$id"; fi
           test "$code" = "201"
 
+  # ---- P5: BAN SUA DE XUAT — target_commitish tro vao NHANH MAC DINH. ----
+  # `releaseCommitish` cua tauri-action noi: "unused if the Git tag already
+  # exists". Tag v1.0.6 da ton tai, nen gia tri nay khong duoc dung toi — no chi
+  # can vuot qua khau kiem tra cua GitHub. Job XANH nghia la ban sua chay duoc.
+  p5-commitish-master:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tao release nhap + target_commitish = master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo '{"tag_name":"v1.0.6","name":"P5","draft":true,"prerelease":true,"target_commitish":"master"}' > /tmp/p.json
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases" -d @/tmp/p.json)
+          echo "HTTP $code"; cat /tmp/r.json
+          id=$(python3 -c "import json;print(json.load(open('/tmp/r.json')).get('id',''))" 2>/dev/null || true)
+          if [ -n "$id" ]; then
+            echo "  kiem tra release vua tao tro vao tag nao:"
+            python3 -c "import json;d=json.load(open('/tmp/r.json'));print('   tag_name =',d.get('tag_name'),'| target_commitish =',d.get('target_commitish'))"
+            curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/$id"
+          fi
+          test "$code" = "201"
+
   # ---- P4: repo có "Tag protection rules" kiểu CŨ không? -------------------
   # Tính năng này nằm riêng khỏi Rulesets, nên phép kiểm /rulesets trước đó
   # không nhìn thấy nó. Job ĐỎ nghĩa là CÓ luật bảo vệ tag.
