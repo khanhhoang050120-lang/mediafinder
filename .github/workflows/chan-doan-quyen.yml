@@ -1,105 +1,89 @@
-# Workflow chẩn đoán — dùng một lần rồi xoá.
+# Workflow chẩn đoán — dùng xong thì xoá.
 #
-# Vì sao cần nó: `tauri-action` chỉ in ra đúng một dòng
-# "Resource not accessible by integration", mà GitHub API thường trả về một
-# thông điệp cụ thể hơn nhiều trong phần thân phản hồi. Dòng tóm tắt kia giấu
-# mất nó.
+# Câu hỏi: vì sao `tauri-action` không tạo được Release cho v1.0.6, trong khi
+# log của chính lượt chạy đó in ra `GITHUB_TOKEN Permissions — Contents: write`?
 #
-# Bối cảnh: bộ cài v1.0.6 dựng xong hoàn toàn (có cả chữ ký), nhưng bước đăng
-# Release bị từ chối — TRONG KHI log của chính lượt chạy đó in ra:
+# Những gì đã loại trừ được bằng phép thử, không phải bằng suy đoán:
+#   * quyền token          — curl với cùng token tạo release được (201)
+#   * cài đặt repo         — đã ở "Read and write permissions"
+#   * ref dạng tag         — phép thử chạy trên đúng ref tag
+#   * tag ngoài master     — thử đúng `v1.0.6`, vẫn 201
+#   * tauri-action đổi bản — nhãn v0 không đổi từ 14/03/2026
 #
-#     GITHUB_TOKEN Permissions
-#       Contents: write
-#
-# Token có quyền ghi mà API vẫn 403. Mâu thuẫn đó nghĩa là có thứ khác đang
-# chặn, không phải quyền token. Workflow này gọi thẳng API để đọc thông điệp
-# thật, thay vì đoán tiếp.
-#
-# Chạy: tab Actions → "Chẩn đoán quyền" → nút "Run workflow".
+# Đọc mã nguồn tauri-action tại SHA đang chạy (84b9d35) thì payload của nó khác
+# phép thử của tôi ở bốn trường. Gửi cả bốn cùng lúc thì 403. Lượt này tách
+# từng trường ra để biết trường NÀO gây chuyện — đổi bốn biến rồi kết luận là
+# cách sai, và tôi đã trả giá cho nó bốn lần trong vụ này.
 name: Chẩn đoán quyền
 
 on:
   workflow_dispatch:
-  # Chạy được cả trên ref dạng TAG — quan trọng, vì ca đang hỏng chạy trên
-  # `refs/tags/v1.0.6` chứ không phải trên một nhánh. Nếu chỉ thử từ nhánh mà
-  # thành công thì chưa loại trừ được giả thuyết "tag khác nhánh".
   push:
     tags:
       - 'chan-doan-*'
 
-# Đúng khối quyền mà release.yml đang dùng — để phép thử này phản ánh trung
-# thực điều kiện của nó, không phải một điều kiện dễ dãi hơn.
 permissions:
   contents: write
 
 jobs:
   chan-doan:
-    # Linux cho nhanh; câu hỏi ở đây là về quyền API, không liên quan hệ điều hành.
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      # Commit mà tag v1.0.6 trỏ vào — nằm trên `edit`, NGOÀI nhánh mặc định.
+      SHA_NGOAI_MASTER: 99fc80bb673bad6396763afb58d1ac4f4e5dfe67
 
     steps:
-      - name: In ra ngữ cảnh
+      - name: Ngữ cảnh
         run: |
-          echo "repo      : ${{ github.repository }}"
-          echo "ref       : ${{ github.ref }}"
-          echo "actor     : ${{ github.actor }}"
-          echo "event     : ${{ github.event_name }}"
+          echo "repo : $REPO"
+          echo "ref  : ${{ github.ref }}"
 
-      - name: ĐỌC danh sách release (cần contents:read)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Một hàm dùng chung: gửi payload, in mã HTTP + nguyên văn, rồi dọn ngay
+      # nếu tạo được. Dọn trong cùng bước để mỗi phép thử độc lập với phép sau.
+      - name: P1 — ĐỐI CHỨNG (tag đã tồn tại, draft) — đã biết là 201
         run: |
-          code=$(curl -sS -o /tmp/doc.json -w '%{http_code}' \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/releases?per_page=1")
-          echo "HTTP $code"
-          head -c 500 /tmp/doc.json; echo
+          echo '{"tag_name":"v1.0.6","name":"P1","draft":true}' > /tmp/p1.json
+          code=$(curl -sS -o /tmp/r1.json -w '%{http_code}' -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases" -d @/tmp/p1.json)
+          echo "P1 -> HTTP $code"; cat /tmp/r1.json | head -c 400; echo
+          id=$(python3 -c "import json;print(json.load(open('/tmp/r1.json')).get('id',''))" 2>/dev/null || true)
+          if [ -n "$id" ]; then curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/$id"; echo "  (da don P1)"; fi
 
-      # Lượt chạy trước đã dùng một tag CHƯA tồn tại và trả về 201 — tức quyền
-      # hoàn toàn bình thường trên ref dạng tag. Lượt này đổi ĐÚNG MỘT BIẾN:
-      # dùng `v1.0.6`, tag ĐÃ tồn tại và trỏ vào một commit KHÔNG nằm trên
-      # nhánh mặc định. Đó chính là điều kiện mà tauri-action gặp.
-      #
-      # 201 -> chuyện tag không liên quan, lỗi nằm trong tauri-action.
-      # 403 -> tìm ra rồi, và nó chưa bao giờ là chuyện quyền.
-      - name: GHI — thử tạo một release nháp (đây là bước đang hỏng)
-        id: ghi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: P2 — thêm MỖI prerelease
         run: |
-          code=$(curl -sS -o /tmp/ghi.json -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" \
-            -d '{"tag_name":"v1.0.6","name":"chan doan - se tu xoa","draft":true,"prerelease":true,"generate_release_notes":false,"target_commitish":"99fc80bb673bad6396763afb58d1ac4f4e5dfe67","body":"Ban nhap do workflow chan doan tao ra."}')
-          echo "HTTP $code"
-          echo "----- NGUYEN VAN PHAN HOI -----"
-          cat /tmp/ghi.json; echo
-          echo "-------------------------------"
-          # Nhớ id để bước sau dọn, nếu tạo được.
-          id=$(python3 -c "import json;print(json.load(open('/tmp/ghi.json')).get('id',''))" 2>/dev/null || echo "")
-          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo '{"tag_name":"v1.0.6","name":"P2","draft":true,"prerelease":true}' > /tmp/p2.json
+          code=$(curl -sS -o /tmp/r2.json -w '%{http_code}' -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases" -d @/tmp/p2.json)
+          echo "P2 -> HTTP $code"; cat /tmp/r2.json | head -c 400; echo
+          id=$(python3 -c "import json;print(json.load(open('/tmp/r2.json')).get('id',''))" 2>/dev/null || true)
+          if [ -n "$id" ]; then curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/$id"; echo "  (da don P2)"; fi
+
+      - name: P3 — thêm MỖI target_commitish (nghi can chính)
+        id: p3
+        run: |
+          printf '{"tag_name":"v1.0.6","name":"P3","draft":true,"target_commitish":"%s"}' "$SHA_NGOAI_MASTER" > /tmp/p3.json
+          code=$(curl -sS -o /tmp/r3.json -w '%{http_code}' -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases" -d @/tmp/p3.json)
+          echo "P3 -> HTTP $code"; cat /tmp/r3.json | head -c 600; echo
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          id=$(python3 -c "import json;print(json.load(open('/tmp/r3.json')).get('id',''))" 2>/dev/null || true)
+          if [ -n "$id" ]; then curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/$id"; echo "  (da don P3)"; fi
 
-      - name: Dọn bản nháp vừa tạo
-        # Chạy kể cả khi bước trên "hỏng", nhưng chỉ khi thật sự tạo được.
-        if: always() && steps.ghi.outputs.id != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Nếu P3 đúng là thủ phạm thì còn một câu hỏi: vì sao? Giả thuyết là repo
+      # có "Tag protection rules" — tính năng CŨ, nằm riêng khỏi Rulesets, nên
+      # phép kiểm /rulesets trước đó không thấy nó.
+      - name: Có "Tag protection rules" kiểu cũ không
+        if: always()
         run: |
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/${{ steps.ghi.outputs.id }}")
-          echo "xoa ban nhap -> HTTP $code (204 la thanh cong)"
+          code=$(curl -sS -o /tmp/tp.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/tags/protection")
+          echo "tags/protection -> HTTP $code"; cat /tmp/tp.json | head -c 400; echo
+          code=$(curl -sS -o /tmp/rs.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/rulesets")
+          echo "rulesets -> HTTP $code"; cat /tmp/rs.json | head -c 400; echo
 
       - name: Kết luận
         if: always()
         run: |
-          echo "Ma HTTP cua buoc GHI: ${{ steps.ghi.outputs.code }}"
-          echo "  201 -> tao duoc. Van de KHONG nam o quyen; loi thuoc ve tauri-action."
-          echo "  403 -> bi chan that. Doc phan than phan hoi o buoc GHI de biet ly do."
+          echo "P1 (doi chung)            : xem o tren, mong doi 201"
+          echo "P2 (them prerelease)      : xem o tren"
+          echo "P3 (them target_commitish): ${{ steps.p3.outputs.code }}"
+          echo ""
+          echo "P1=201, P2=201, P3=403 -> target_commitish la thu phan biet."
