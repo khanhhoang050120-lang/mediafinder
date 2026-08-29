@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub mod index;
 pub mod ipc;
 pub mod media;
+pub mod netsched;
 pub mod ntfs;
 pub mod preflight;
 pub mod setup;
@@ -104,6 +105,13 @@ pub fn run_gui() {
             // và vì phần này chỉ báo tin chứ không tự tải, nó không làm phiền
             // ai: không có hộp thoại nào bật lên từ hư không.
             update::check_in_background(app.handle().clone());
+
+            // Lịch tự quét lại ổ mạng. Phải nằm trong tiến trình này chứ không
+            // phải trong tác vụ Windows: tác vụ chạy elevated, mà ổ mạng ánh
+            // xạ thuộc về phiên đăng nhập nên tiến trình elevated không nhìn
+            // thấy chúng (CHECK-007). Thiếu nó thì phần NAS của chỉ mục chỉ
+            // được cập nhật khi có người tự bấm "+ Ổ mạng".
+            netsched::dung_lich(app.handle().clone());
 
             Ok(())
         })
