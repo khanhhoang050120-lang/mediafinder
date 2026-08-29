@@ -20,6 +20,12 @@ name: Chẩn đoán quyền
 
 on:
   workflow_dispatch:
+  # Chạy được cả trên ref dạng TAG — quan trọng, vì ca đang hỏng chạy trên
+  # `refs/tags/v1.0.6` chứ không phải trên một nhánh. Nếu chỉ thử từ nhánh mà
+  # thành công thì chưa loại trừ được giả thuyết "tag khác nhánh".
+  push:
+    tags:
+      - 'chan-doan-*'
 
 # Đúng khối quyền mà release.yml đang dùng — để phép thử này phản ánh trung
 # thực điều kiện của nó, không phải một điều kiện dễ dãi hơn.
