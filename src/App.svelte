@@ -9,10 +9,12 @@
   import Preview from "./lib/Preview.svelte";
   import ScanStatusBar from "./lib/ScanStatusBar.svelte";
   import DriveChips from "./lib/DriveChips.svelte";
+  import EmptyReasonBox from "./lib/EmptyReason.svelte";
   import SearchBar from "./lib/SearchBar.svelte";
   import UpdateNotice from "./lib/UpdateNotice.svelte";
   import VirtualList from "./lib/VirtualList.svelte";
   import { bucketsFor, driveKey, filterByDrive, networkLetters } from "./lib/drives";
+  import type { FilterState } from "./lib/emptyReason";
   import { loadPrefs, savePrefs } from "./lib/prefs";
   import { prefetchThumb } from "./lib/thumbQueue";
   import { ScanState } from "./lib/scanState.svelte";
@@ -24,6 +26,7 @@
     openFile,
     enrichStatus,
     hotkeyStatus,
+    indexFreshness,
     networkDrives,
     revealInExplorer,
     searchFiles,
@@ -32,6 +35,7 @@
     updateStatus,
     type EnrichStatus,
     type Filters,
+    type Freshness,
     type HotkeyStatus,
     type IndexMeta,
     type MediaKind,
@@ -341,6 +345,30 @@
   /// tên tệp — thứ người dùng thực sự đang đọc.
   const showDrive = $derived(driveBuckets.length > 1);
 
+  /// Chỉ mục cũ tới đâu. Chỉ hỏi khi màn hình đã trống — nó không nằm trên
+  /// đường tìm kiếm, nên chi phí đọc cache không chạm vào tốc độ tìm.
+  let fresh = $state<Freshness | null>(null);
+
+  /// Các bộ lọc đang bật, và điều quan trọng hơn: bỏ chúng ra thì còn bao
+  /// nhiêu kết quả. Con số này app ĐẾM ĐƯỢC THẬT từ `allHits` — danh sách
+  /// trước khi lọc — nên câu "bỏ lọc thì có 3 kết quả" là sự thật, không phải
+  /// lời hứa.
+  const filterState = $derived.by((): FilterState => {
+    const active: string[] = [];
+    if (activeKinds.length) active.push(activeKinds.map((k) => KIND_TEN[k]).join(", "));
+    if (drive) active.push(`ổ ${drive}:`);
+    if (filtersActive) active.push("bộ lọc nâng cao");
+    return { active, countWithout: allHits.length };
+  });
+
+  /// Nhãn tiếng Việt của loại tệp, để câu thông báo gọi đúng tên cái chip mà
+  /// người dùng đang nhìn thấy.
+  const KIND_TEN: Record<MediaKind, string> = {
+    video: "Video",
+    image: "Ảnh",
+    audio: "Nhạc",
+  };
+
   // Bản mới, nếu backend đã tìm thấy một bản lúc khởi động. Chỉ đọc kết quả
   // có sẵn — việc hỏi máy chủ xảy ra một lần ở Rust, không phải mỗi lần mở
   // cửa sổ.
@@ -426,6 +454,14 @@
         // nhất mà một bộ lọc có thể bày ra.
         if (drive && !res.hits.some((h) => driveKey(h.path) === drive)) drive = null;
         allHits = res.hits;
+        // Chỉ hỏi độ mới của chỉ mục khi KHÔNG có kết quả nào — đó là lúc duy
+        // nhất màn hình cần giải thích, và giữ nó ngoài đường tìm kiếm bình
+        // thường nghĩa là nó không thể làm chậm việc tìm.
+        if (!res.hits.length) {
+          indexFreshness()
+            .then((f) => (fresh = f))
+            .catch(() => (fresh = null));
+        }
         epoch = res.epoch;
         relaxed = res.relaxed;
         elapsedMs = res.elapsedMs;
@@ -791,35 +827,74 @@
         </VirtualList>
       {:else if needsFirstScan}
         <FirstRun {netDrives} onscan={startScan} />
-      {:else}
+      {:else if !query.trim() || searching}
+        <!--
+          `.results` là flex hàng ngang và khối này mang `flex: 1`. Trước đây
+          nó luôn được dựng, nên khi có truy vấn nó thành một ô RỖNG vẫn chiếm
+          hết chiều ngang — và đẩy phần báo lý do sang lề phải.
+        -->
         <p class="empty">
           {#if !query.trim()}
             Gõ để tìm kiếm · chuột phải vào kết quả để mở thư mục chứa tệp
             {#if hotkey}
               <br />
+              <!--
+                Ba trạng thái, không phải hai. Trước đây chỗ này chỉ biết
+                "có phím" và "không có phím", và khi không có thì nó vẽ các
+                phím của tổ hợp mong muốn rồi bảo người dùng đóng ứng dụng
+                đang chiếm — lời khuyên gần như không dùng được khi thứ chiếm
+                phím là bộ gõ tiếng Việt.
+              -->
               <span class="hint" class:taken={!hotkey.active}>
-                {#each hotkey.combo.split("+") as key, i}
-                  {#if i > 0}+{/if}<kbd>{key}</kbd>
-                {/each}
                 {#if hotkey.active}
+                  {#each hotkey.combo.split("+") as key, i}
+                    {#if i > 0}+{/if}<kbd>{key}</kbd>
+                  {/each}
                   để gọi cửa sổ này từ bất kỳ đâu
+                  {#if hotkey.fallback}
+                    <br />
+                    <span class="quiet">
+                      <b>{hotkey.preferred}</b> đang bị ứng dụng khác chiếm nên
+                      MediaFinder dùng tổ hợp trên thay thế
+                    </span>
+                  {/if}
                   <br />
                   <span class="quiet">
                     Đóng cửa sổ chỉ ẩn đi để phím tắt còn dùng được — chuột phải
                     biểu tượng ở khay hệ thống rồi chọn <em>Thoát</em> để tắt hẳn
                   </span>
                 {:else}
-                  đang bị ứng dụng khác chiếm — đóng ứng dụng đó rồi mở lại
-                  MediaFinder để dùng được phím tắt
+                  Không dùng được phím tắt nào — các tổ hợp đều đang bị ứng dụng
+                  khác chiếm. Mở cửa sổ bằng biểu tượng MediaFinder ở khay hệ
+                  thống, cạnh đồng hồ.
                 {/if}
               </span>
             {/if}
-          {:else if searching}
-            Đang tìm…
           {:else}
-            Không tìm thấy kết quả nào
+            Đang tìm…
           {/if}
         </p>
+        <!--
+          Màn hình trống nói ĐÚNG nguyên nhân thay vì một câu chung cho mọi
+          trường hợp. Ba trong bốn tình huống là app đang tự che mất câu trả
+          lời — bộ lọc bật, chỉ mục cũ, ổ mạng chưa quét — và câu cũ đổ hết
+          cho người gõ. Một người từng kết luận "tìm kiếm kém đi" vì chip Video
+          bật che mất tệp `.avif`.
+        -->
+        {:else}
+          <EmptyReasonBox
+            filters={filterState}
+            {fresh}
+            onclear={() => {
+              activeKinds = [];
+              drive = null;
+              filters = NO_FILTERS;
+              filtersActive = false;
+              rerun();
+            }}
+            onrescan={() => startScan(false)}
+            onscannetwork={() => startScan(true)}
+          />
       {/if}
     </div>
   {/if}

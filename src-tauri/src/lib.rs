@@ -8,8 +8,8 @@
 //!   `state`  — shared application state (ArcSwap index + search generation)
 //!   `update` — checking whether a newer release exists
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
+pub mod freshness;
+pub mod hotkey;
 pub mod index;
 pub mod ipc;
 pub mod media;
@@ -82,7 +82,7 @@ pub fn run_gui() {
             let quiet = std::env::args().any(|a| a == "--minimized");
             if let Some(window) = app.get_webview_window("main") {
                 if quiet {
-                    tracing::info!("khởi động ẩn: bấm {HOTKEY} để gọi cửa sổ");
+                    tracing::info!("khởi động ẩn: bấm {} để gọi cửa sổ", hotkey::in_use());
                 } else {
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -149,6 +149,7 @@ pub fn run_gui() {
             ipc::commands::search,
             ipc::commands::index_status,
             ipc::commands::open_file,
+            ipc::commands::index_freshness,
             ipc::commands::start_file_drag,
             ipc::commands::reveal_in_explorer,
             ipc::commands::request_scan,
@@ -178,7 +179,7 @@ fn build_tray(app: &tauri::AppHandle) {
     use tauri::menu::{MenuBuilder, MenuItemBuilder};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-    let open = MenuItemBuilder::with_id("open", format!("Mở MediaFinder  ({HOTKEY})"))
+    let open = MenuItemBuilder::with_id("open", nhan_mo_cua_so())
         .build(app)
         .ok();
     let quit = MenuItemBuilder::with_id("quit", "Thoát").build(app).ok();
@@ -207,7 +208,7 @@ fn build_tray(app: &tauri::AppHandle) {
             // having no way to quit.
             tauri::image::Image::new_owned(vec![0; 4], 1, 1)
         }))
-        .tooltip(format!("MediaFinder — {HOTKEY} để tìm kiếm"))
+        .tooltip(tooltip_khay())
         .menu(&menu)
         // The menu belongs on right-click only. Left-click is the quick
         // gesture and should do the quick thing.
@@ -238,7 +239,8 @@ fn build_tray(app: &tauri::AppHandle) {
         // back except the hotkey — so say so rather than fail silently.
         Err(e) => tracing::warn!(
             "không dựng được biểu tượng khay hệ thống: {e} — \
-             đóng cửa sổ vẫn ẩn chứ không thoát, dùng {HOTKEY} để gọi lại"
+             đóng cửa sổ vẫn ẩn chứ không thoát, dùng {} để gọi lại",
+            hotkey::in_use()
         ),
     }
 }
@@ -305,45 +307,80 @@ fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
 
 /// The hotkey that brings the window forward from anywhere.
 ///
-/// `Ctrl+Alt+Space` rather than something shorter: a global shortcut is taken
-/// away from every other application on the machine, so it has to be one
-/// nothing else is likely to want. Plain `Alt+Space` is the Windows system
-/// menu, and `Ctrl+Space` belongs to input-method switching in several
-/// languages — including Vietnamese.
-pub const HOTKEY: &str = "Ctrl+Alt+Space";
-
-/// Whether [`HOTKEY`] is actually ours.
+/// Đăng ký phím tắt toàn cục, thử lần lượt các tổ hợp cho tới khi được.
 ///
-/// A global shortcut is a process-wide OS resource, claimed once at startup and
-/// never given back, so a process-wide flag is an honest way to hold the answer.
-/// The UI reads it before offering the key: a hint that names a shortcut which
-/// does nothing is worse than no hint at all.
-pub static HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Danh sách và lý do chọn từng tổ hợp nằm trong [`hotkey`]. Trước đây chỗ này
+/// thử đúng một tổ hợp rồi bỏ cuộc, và người mất phím tắt được khuyên "đóng
+/// ứng dụng đang chiếm rồi mở lại" — lời khuyên không dùng được khi thứ chiếm
+/// phím là bộ gõ tiếng Việt hay một công cụ họ cần chạy suốt ngày.
+/// Nhãn mục "Mở MediaFinder" ở khay hệ thống.
+///
+/// Bỏ hẳn phần ngoặc khi không có phím tắt nào: in ra `Mở MediaFinder  ()` là
+/// mời người dùng bấm một tổ hợp rỗng.
+fn nhan_mo_cua_so() -> String {
+    let k = hotkey::in_use();
+    if k.is_empty() {
+        "Mở MediaFinder".to_string()
+    } else {
+        format!("Mở MediaFinder  ({k})")
+    }
+}
+
+/// Tooltip của biểu tượng khay.
+fn tooltip_khay() -> String {
+    let k = hotkey::in_use();
+    if k.is_empty() {
+        "MediaFinder — bấm để tìm kiếm".to_string()
+    } else {
+        format!("MediaFinder — {k} để tìm kiếm")
+    }
+}
 
 fn register_hotkey(app: &tauri::AppHandle) {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-    let handle = app.clone();
-    let result = app
-        .global_shortcut()
-        .on_shortcut(HOTKEY, move |_app, _sc, event| {
-            // Fire on press only. Without this the window would toggle twice per
-            // keypress — once down, once up — and end up back where it started.
-            if event.state == ShortcutState::Pressed {
-                toggle(&handle);
-            }
-        });
-
-    match result {
-        Ok(()) => {
-            HOTKEY_ACTIVE.store(true, Ordering::Relaxed);
-            tracing::info!("phím tắt toàn cục: {HOTKEY}");
+    let chon = hotkey::pick(|combo| {
+        let handle = app.clone();
+        let ok = app
+            .global_shortcut()
+            .on_shortcut(combo, move |_app, _sc, event| {
+                // Chỉ khi nhấn xuống. Thiếu dòng này thì cửa sổ bật rồi tắt
+                // ngay trong một lần bấm — một lần lúc nhấn, một lần lúc nhả.
+                if event.state == ShortcutState::Pressed {
+                    toggle(&handle);
+                }
+            })
+            .is_ok();
+        if !ok {
+            tracing::debug!("phím tắt {combo} đang bị ứng dụng khác giữ");
         }
-        // Another application already owns this combination. Not fatal — the
-        // window still works, it just cannot be summoned — so say so and carry
-        // on rather than refusing to start. The flag stays false and the UI
-        // stops advertising the key.
-        Err(e) => tracing::warn!("không đăng ký được phím tắt {HOTKEY}: {e}"),
+        ok
+    });
+
+    match chon {
+        Some(combo) => {
+            hotkey::set_in_use(combo);
+            if combo == hotkey::preferred() {
+                tracing::info!("phím tắt toàn cục: {combo}");
+            } else {
+                // Dòng này là thứ trả lời câu hỏi "sao phím quen của tôi không
+                // còn tác dụng?" — nói cả cái mất lẫn cái thay thế.
+                tracing::warn!(
+                    "phím tắt {} đang bị ứng dụng khác chiếm — dùng {combo} thay thế",
+                    hotkey::preferred()
+                );
+            }
+        }
+        // Cả loạt đều bị chiếm. Không nghiêm trọng tới mức không chạy được:
+        // cửa sổ vẫn mở bằng biểu tượng khay hệ thống. Nhưng phải nói thật,
+        // vì app khởi động ẩn và người dùng cần biết đường nào còn lại.
+        None => {
+            hotkey::set_in_use("");
+            tracing::warn!(
+                "không giành được phím tắt nào trong {:?} — mở cửa sổ bằng biểu tượng ở khay hệ thống",
+                hotkey::CANDIDATES
+            );
+        }
     }
 }
 
@@ -1744,7 +1781,7 @@ fn print_samples(set: &ntfs::tree::ResolvedSet) {
 
 #[cfg(test)]
 mod tests {
-    use super::{filetime_day, HOTKEY};
+    use super::filetime_day;
 
     /// A wrong date here would be worse than no date: it is read while working
     /// out when files disappeared, and a plausible-looking wrong day would send
@@ -1772,10 +1809,15 @@ mod tests {
     /// the operating system on a user's.
     #[test]
     fn the_hotkey_avoids_combinations_windows_and_the_ime_already_use() {
-        assert!(
-            HOTKEY.contains("Ctrl") && HOTKEY.contains("Alt"),
-            "phím tắt {HOTKEY} phải giữ cả Ctrl lẫn Alt: thiếu Ctrl thì đụng \
-             menu hệ thống của Windows, thiếu Alt thì đụng phím chuyển bộ gõ"
-        );
+        // Áp cho CẢ BỐN tổ hợp, không riêng cái đầu. Ba tổ hợp dự phòng
+        // cũng là phím tắt toàn cục thật, lấy đi khỏi mọi ứng dụng khác y
+        // hệt — một phương án dự phòng đụng menu hệ thống thì tệ hơn là
+        // không có phương án nào.
+        for k in crate::hotkey::CANDIDATES {
+            assert!(
+                k.contains("Ctrl") && (k.contains("Alt") || k.contains("Shift")),
+                "phím tắt {k} phải giữ Ctrl kèm Alt hoặc Shift"
+            );
+        }
     }
 }

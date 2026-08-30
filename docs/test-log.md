@@ -1304,3 +1304,192 @@ terminal của người dùng.
 
 Cùng loại với lỗi cache ở trên: cả hai đều là phép đo trông giống phép đo đúng nhưng đang nhìn
 vào nhầm thứ.
+
+## P36 — Màn hình trống nói đúng nguyên nhân
+
+Trước bản này, app có **một** câu cho bốn tình huống khác hẳn nhau: *"Không tìm thấy kết quả
+nào"*. Ba trong bốn là app đang **tự che mất câu trả lời** — nhưng câu chữ đổ hết cho người gõ.
+
+Thiệt hại đã xảy ra thật: một người tìm tệp `.avif` trong lúc chip lọc *Video* đang bật, không
+thấy gì, rồi kết luận **công cụ tìm kiếm kém đi**. Công cụ không sai; màn hình nói sai.
+
+### Bốn câu, hỏi theo thứ tự chắc chắn
+
+| # | Tình huống | Câu nói | Mức tin |
+|---|---|---|---|
+| 1 | Bộ lọc đang che | "Bộ lọc đang ẩn **3 kết quả**" + nút Bỏ lọc | chắc chắn |
+| 2 | Ổ mạng chưa quét lần nào | "Ổ mạng Y:, Z: **chưa được quét lần nào**" | chắc chắn |
+| 3 | Ổ mạng đã lâu chưa quét | "Quét lần cuối **6 tiếng trước**" + nút (~2 phút) | có thể |
+| 4 | Đã loại trừ hết | "Không tìm thấy" + **nói rõ đã loại trừ gì** | chắc chắn |
+
+Thứ tự **chính là** thứ tự chắc chắn. Đảo nó là để một phỏng đoán che mất một sự thật — và
+`reasonFor` có ca kiểm thử riêng canh đúng điều đó.
+
+Câu số 1 là câu duy nhất đưa ra con số: app giữ sẵn `allHits` (danh sách **trước khi lọc**) nên
+nó **đếm được thật**. "Bỏ lọc thì có 3 kết quả" là sự thật, không phải lời hứa.
+
+Câu số 3 chỉ nói **"có thể"**, cố ý. Ổ mạng không có nhật ký thay đổi để hỏi — đó chính là gốc
+của BUG-025 — nên app chỉ biết *chỉ mục của mình cũ tới đâu*, không biết trên NAS có gì mới.
+Viết "tệp của bạn vừa được tải lên" là khẳng định một điều app chưa hề xác minh.
+
+### Hai ý tưởng bị chính phép đo bác bỏ
+
+**Quét đĩa tìm tệp mới.** Đo trong ngân sách 300ms: chỉ với tới **2 tầng thư mục** trên cả `D:`
+lẫn `Y:`. Tệp thật của người dùng nằm ở tầng 4 (`Y:\PROJECT CAPCUT\TÀI NGUYÊN DEEP SEA\TEST\`).
+Nó sẽ **không bao giờ tìm thấy**, chỉ tạo cảm giác đã kiểm tra rồi im lặng.
+
+**Hỏi USN journal để nói "ổ D: có 1.352 thay đổi".** [CHECK-004](check.md) đã đo dứt khoát:
+`FSCTL_READ_USN_JOURNAL` đòi `FILE_READ_DATA` trên volume, tức **quyền Administrator**, mà bất
+biến kiến trúc là GUI không bao giờ chạy elevated. Con số 1.352 trong bản thiết kế ban đầu đến
+từ log của *tiến trình quét elevated*, không phải từ app — tôi đã trích nó vào bản minh hoạ mà
+chưa kiểm đường lấy. Phát hiện lúc đọc mã, trước khi viết dòng nào.
+
+Đổi lại: cache lưu sẵn chữ cái và số tệp **cho từng ổ**, không cần quyền gì. Mất phần "bao nhiêu
+thay đổi", giữ phần quyết định — *chỉ mục cũ tới đâu*.
+
+### Một bài kiểm thử xanh vô nghĩa, và cách nó lộ ra
+
+Ca "đồng hồ chạy lùi" ban đầu chỉ kiểm `kind`. Phá mã (bỏ `Math.max(0, …)`) thì **cả 14 ca vẫn
+xanh** — ca đó không kiểm được gì.
+
+Đào tiếp thì lý do sâu hơn dự đoán ban đầu: tuổi âm luôn nhỏ hơn mọi ngưỡng, nên không nhánh nào
+chạy và `agoText` **không bao giờ** nhận số âm. `Math.max` là lớp bảo vệ cho tình huống hôm nay
+**không thể xảy ra** — không mã nào phá được nó, nên không bài kiểm thử nào bắt được.
+
+Đã viết lại ca đó để canh đúng thứ nó canh được (`agoText` với số âm — hàm công khai, gọi được
+từ chỗ khác), và ghi thẳng vào cả mã lẫn kiểm thử rằng phần kia không canh được. Giữ `Math.max`
+vì nó rẻ và vì hạ một ngưỡng xuống 0 sẽ làm nó cần thiết ngay.
+
+Phá mã kiểm chứng, bốn phép:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Đổ cho bộ lọc kể cả khi bỏ lọc ra vẫn rỗng | **1 ca đỏ** ✅ |
+| Bỏ ưu tiên của bộ lọc (để suy đoán chen lên trước) | **3 ca đỏ** ✅ |
+| Gộp "ổ chưa quét" vào nhánh "ổ mạng cũ" | **2 ca đỏ** ✅ |
+| `agoText` không xử lý số âm | **1 ca đỏ** ✅ |
+
+### Tệp
+
+| Tệp | Vai trò |
+|---|---|
+| [freshness.rs](../src-tauri/src/freshness.rs) *(mới)* | Lệnh IPC: chỉ mục cũ tới đâu, tách ổ trong máy khỏi ổ mạng |
+| [emptyReason.ts](../src/lib/emptyReason.ts) *(mới)* | Logic quyết định câu nào — thuần, kiểm thử được tách khỏi giao diện |
+| [EmptyReason.svelte](../src/lib/EmptyReason.svelte) *(mới)* | Hiển thị, kèm nút hành động |
+| [App.svelte](../src/App.svelte) | Thay khối cũ; chỉ hỏi độ mới **khi đã không có kết quả** |
+
+Việc hỏi độ mới nằm **ngoài** đường tìm kiếm, nên nó không thể làm chậm việc tìm.
+
+### Vòng kiểm
+
+`cargo test` **240 pass** (235 + 5) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/123 tệp ·
+`npm test` **108 pass** (94 + 14) · `cargo build` và `npm run build` đều sạch.
+
+### Hai lỗi người dùng bắt được ngay lượt thử đầu
+
+**Lỗi 1 — quét ổ mạng xong vẫn báo "chưa được quét lần nào", vĩnh viễn.**
+
+Bản đầu đọc số tệp từ trường `volumes` của cache. Nhưng ổ mạng **cố ý không có dòng nào** trong
+đó — chú thích ngay tại chỗ hợp nhất đã nói rõ: *"Network drives get no stamp — there is no
+journal to record a position in, and inventing one would make an incremental update think it
+could follow them."* Tôi đọc sót chú thích ấy và hiểu "không có dòng" thành "chưa quét".
+
+Sửa: đếm tệp theo ổ **từ chính chỉ mục**. `volume_of` suy ra chữ cái từ đường dẫn của từng tệp,
+nên nó đúng cho mọi loại ổ.
+
+Điều đáng nói: **cả 5 ca kiểm thử đều xanh trước lẫn sau khi sửa** — không ca nào canh lỗi này.
+Đã thêm 2 ca, và kiểm chứng bằng cách quay lại đúng cách làm sai (`stamps` lọc bỏ ổ mạng): ca mới
+đỏ ngay.
+
+**Lỗi 2 — dòng báo lý do dạt hẳn sang lề phải.**
+
+`.results` là hàng flex, và khối `<p class="empty">` mang `flex: 1`. Nó **luôn** được dựng, nên
+khi có truy vấn nó thành một ô RỖNG vẫn chiếm hết chiều ngang và đẩy phần báo lý do sang bên.
+
+Sửa: hai khối thành hai nhánh loại trừ nhau (`{:else if …}` / `{:else}`), cộng `flex: 1` cho
+component để nó tự căn giữa.
+
+**Bài kiểm thử đầu tiên tôi viết cho lỗi này lại là một bài xanh vô nghĩa nữa.** Nó đếm "ô rỗng
+đứng cạnh", nhưng phá một nhánh không tái hiện được lỗi vì cấu trúc `if/else` vẫn giữ tính loại
+trừ — bài xanh cả khi đã phá. Viết lại để canh đúng bất biến là bản sửa: **hàng đó có đúng một
+khối, và nó không rỗng**. Phá bằng cách dựng cả hai khối cùng lúc thì nó đỏ: *"hàng có 2 khối"*.
+
+Đây là lần thứ hai trong cùng một phiên một bài kiểm thử của tôi xanh mà không canh gì. Cả hai
+lần đều chỉ lộ ra khi phá mã — chạy bộ kiểm thử và thấy nó xanh không nói lên điều gì cả.
+
+### Vòng kiểm sau khi sửa
+
+`cargo test` **242 pass** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/123 tệp ·
+`npm test` **109 pass**.
+
+## P37 — Phím tắt có phương án dự phòng
+
+### Vấn đề
+
+App thử **đúng một** tổ hợp `Ctrl+Alt+Space`, thất bại thì bỏ cuộc. Và câu nó nói với người dùng
+là một lời khuyên gần như không dùng được:
+
+> *"đang bị ứng dụng khác chiếm — **đóng ứng dụng đó rồi mở lại MediaFinder** để dùng được phím
+> tắt"*
+
+Thứ chiếm phím thường là bộ gõ tiếng Việt, phần mềm chụp màn hình, hay công cụ của studio — những
+thứ người ta cần chạy suốt ngày. "Đóng nó đi" không phải một lựa chọn, nên người dùng mất hẳn
+phím tắt: đúng thứ chính để gọi cửa sổ, vì app khởi động ẩn.
+
+### Bản sửa — [hotkey.rs](../src-tauri/src/hotkey.rs), module riêng
+
+Thử lần lượt bốn tổ hợp, lấy cái đầu tiên đăng ký được:
+
+`Ctrl+Alt+Space` → `Ctrl+Alt+F` → `Ctrl+Shift+Space` → `Ctrl+Alt+M`
+
+`Ctrl+Alt+Space` giữ vị trí đầu vì người đã quen thì không nên bị đổi. Ba tổ hợp dự phòng chọn
+theo cùng nguyên tắc với tổ hợp gốc: **không** đụng `Alt+Space` (menu hệ thống Windows) và
+**không** đụng `Ctrl+Space` (chuyển bộ gõ ở nhiều ngôn ngữ, *kể cả tiếng Việt*).
+
+Tự chọn chứ không hỏi người dùng, vì phần mềm chạy trên 20–40 máy: một tuỳ chọn thủ công nghĩa là
+ai đó phải đi đặt trên từng máy. Phần cài đặt để đổi phím riêng — **hoãn có chủ đích**, cho tới
+khi có người thật sự cần; hôm nay app chưa có màn hình cài đặt nào, và dựng cả một màn hình để
+chứa đúng một mục là dựng cái khung đắt hơn thứ nó chứa.
+
+### Ba trạng thái, không phải hai
+
+Giao diện trước đây chỉ biết "có phím" và "không có phím". Nay:
+
+| Trạng thái | Màn hình nói gì |
+|---|---|
+| Giành được tổ hợp ưu tiên | Hiện phím, như cũ |
+| Đang dùng phím dự phòng | Hiện **tổ hợp thật**, kèm "Ctrl+Alt+Space đang bị chiếm nên dùng tổ hợp trên thay thế" |
+| Không giành được cái nào | Không vẽ phím nào, chỉ đường mở bằng biểu tượng khay hệ thống |
+
+Trạng thái thứ hai là thứ trả lời câu "sao phím quen của tôi không còn tác dụng?" — phải nói cả
+cái mất lẫn cái thay thế, nếu không người dùng tưởng app hỏng.
+
+Sáu chỗ hiện tổ hợp (log khởi động, menu khay, tooltip khay, thông báo lỗi khay, chân cửa sổ,
+lệnh IPC) nay đều đọc **cùng một nguồn**. Một chỗ viết cứng `Ctrl+Alt+Space` là chỗ đó nói dối
+ngay khi phải dùng phím dự phòng.
+
+### Kiểm thử — 8 ca backend, 3 ca giao diện
+
+Phá mã, cả ba đều bị bắt:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Chỉ thử một tổ hợp rồi bỏ cuộc (đúng lỗi gốc) | **3 ca đỏ** ✅ |
+| Giao diện in tổ hợp *mong muốn* thay vì tổ hợp *thật* | **1 ca đỏ** ✅ |
+| Không có phím nào mà vẫn vẽ ô phím rỗng | **1 ca đỏ** ✅ |
+
+Ca thứ hai canh một lỗi im lặng đáng giá: màn hình mời người dùng bấm một tổ hợp không có tác
+dụng gì, mà mọi thứ khác trông vẫn bình thường.
+
+Bài kiểm thử cũ `the_hotkey_avoids_combinations_windows_and_the_ime_already_use` được giữ nhưng
+nay áp cho **cả bốn** tổ hợp — một phương án dự phòng đụng menu hệ thống thì tệ hơn là không có.
+
+### Vòng kiểm
+
+`cargo test` **249 pass** (242 + 7) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/123 tệp ·
+`npm test` **112 pass** (109 + 3) · `cargo build` sạch.
+
+**Chưa kiểm được trên máy thật:** phần đăng ký phím tắt cần một tiến trình chạy thật, mà bản dev
+của người dùng đang giữ single-instance. Cách kiểm: mở một ứng dụng khác giữ `Ctrl+Alt+Space`
+trước, rồi khởi động MediaFinder và xem log có dòng *"đang bị ứng dụng khác chiếm — dùng
+Ctrl+Alt+F thay thế"* không.

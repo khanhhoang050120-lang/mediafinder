@@ -300,6 +300,10 @@ pub struct HotkeyStatus {
     pub combo: String,
     /// False when another application got there first.
     pub active: bool,
+    /// Đang phải dùng phím dự phòng vì tổ hợp ưu tiên bị chiếm.
+    pub fallback: bool,
+    /// Tổ hợp app *muốn* dùng — cần cho câu "X bị chiếm, đang dùng Y".
+    pub preferred: String,
 }
 
 /// Report the global shortcut so the UI only advertises a key that works.
@@ -307,8 +311,15 @@ pub struct HotkeyStatus {
 pub fn hotkey_status() -> HotkeyStatus {
     use std::sync::atomic::Ordering;
     HotkeyStatus {
-        combo: crate::HOTKEY.to_string(),
-        active: crate::HOTKEY_ACTIVE.load(Ordering::Relaxed),
+        // Tổ hợp ĐANG DÙNG THẬT, không phải tổ hợp mong muốn. Giao diện in
+        // thẳng chuỗi này ra, nên viết cứng ở đây là để màn hình mời người
+        // dùng bấm một phím không có tác dụng.
+        combo: crate::hotkey::in_use(),
+        active: crate::hotkey::ACTIVE.load(Ordering::Relaxed),
+        // Có phải phím dự phòng không, và tổ hợp nào đã bị chiếm — để giao
+        // diện giải thích được vì sao phím quen không còn tác dụng.
+        fallback: crate::hotkey::is_fallback(),
+        preferred: crate::hotkey::preferred().to_string(),
     }
 }
 
@@ -441,6 +452,16 @@ pub fn cancel_scan(state: State<'_, AppState>) {
 pub struct NetworkDrive {
     pub letter: String,
     pub remote: String,
+}
+
+/// Chỉ mục cũ tới đâu — để màn hình "không có kết quả" nói đúng nguyên nhân
+/// thay vì ngầm đổ lỗi cho người gõ.
+///
+/// Rẻ: chỉ đọc phần đầu tệp cache, không nạp lại chỉ mục. Giao diện chỉ gọi
+/// khi đã không có kết quả nào, nên nó không nằm trên đường tìm kiếm.
+#[tauri::command]
+pub fn index_freshness(state: State<'_, AppState>) -> crate::freshness::Freshness {
+    crate::freshness::read(&state)
 }
 
 #[tauri::command]

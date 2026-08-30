@@ -192,6 +192,32 @@ export interface NetworkDrive {
 }
 
 /// Mapped network drives, so the UI can name them instead of saying "NAS".
+/// Một ổ trong chỉ mục, kèm loại của nó.
+export interface VolumeFreshness {
+  letter: string;
+  network: boolean;
+  fileCount: number;
+}
+
+/// Chỉ mục cũ tới đâu — dữ liệu để màn hình "không có kết quả" nói đúng
+/// nguyên nhân thay vì ngầm đổ lỗi cho người gõ.
+export interface Freshness {
+  /// Mốc quét gần nhất, giây Unix. `0` nghĩa là chưa có chỉ mục.
+  builtAtUnix: number;
+  local: VolumeFreshness[];
+  network: VolumeFreshness[];
+  /// Ổ mạng đang gắn mà chỉ mục chưa hề biết tới.
+  unscannedNetwork: string[];
+}
+
+/// Hỏi backend chỉ mục cũ tới đâu.
+///
+/// Chỉ gọi khi đã không có kết quả nào — nó không nằm trên đường tìm kiếm,
+/// nên chi phí đọc cache không ảnh hưởng tới tốc độ tìm.
+export function indexFreshness(): Promise<Freshness> {
+  return invoke<Freshness>("index_freshness");
+}
+
 export function networkDrives(): Promise<NetworkDrive[]> {
   return invoke<NetworkDrive[]>("network_drives");
 }
@@ -228,6 +254,10 @@ export interface HotkeyStatus {
   combo: string;
   /// False when another application already owned the combination.
   active: boolean;
+  /// Đang phải dùng phím dự phòng vì tổ hợp ưu tiên bị chiếm.
+  fallback: boolean;
+  /// Tổ hợp app *muốn* dùng — để nói được "X bị chiếm, đang dùng Y".
+  preferred: string;
 }
 
 /// The backend owns the combination; asking keeps it from being written twice.
