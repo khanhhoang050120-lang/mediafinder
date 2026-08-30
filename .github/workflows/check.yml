@@ -1,4 +1,4 @@
-# Kiểm tra mã nguồn mỗi khi đẩy lên nhánh `edit` hoặc mở Pull Request.
+# Kiểm tra mã nguồn mỗi khi đẩy lên một nhánh làm việc, hoặc mở Pull Request.
 #
 # Đây là bốn lệnh trong "Vòng kiểm tra" của README, chạy trên máy sạch của
 # GitHub thay vì máy bạn. Nó KHÔNG đóng gói bộ cài — việc đó chỉ xảy ra khi
@@ -7,8 +7,19 @@ name: Kiểm tra
 
 on:
   push:
-    branches:
-      - edit
+    branches-ignore:
+      # Mọi nhánh trừ `master`. Trước đây chỗ này liệt kê đúng một nhánh
+      # (`edit`) — và khi nhánh đó bị xoá thì CI lặng lẽ ngừng chạy trên mọi
+      # thứ, không báo lỗi, không ai nhận ra. `version2` đã nhận ba commit mà
+      # không lần nào đi qua vòng kiểm này.
+      #
+      # Dùng danh sách LOẠI TRỪ thay vì danh sách cho phép, để một nhánh mới
+      # được kiểm ngay từ commit đầu tiên chứ không phải chờ ai đó nhớ ra mà
+      # thêm tên nó vào đây.
+      #
+      # `master` nằm ngoài vì mọi thứ vào được đó đều đã qua vòng này ở dạng
+      # PR — chạy lại là trả tiền hai lần cho cùng một câu trả lời.
+      - master
   # Chạy lại khi mở PR sang master, để biết nhánh có an toàn để gộp không.
   pull_request:
     branches:
@@ -36,7 +47,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 24, không phải 20. `jsdom@30` — thư viện giả lập trình duyệt mà
+          # bộ kiểm thử giao diện chạy trên đó — đòi Node ^22.22.2 || ^24.15.0
+          # || >=26. Với Node 20 thì `npm test` chết trong bảy giây, và thông
+          # điệp lỗi trông y hệt một bài kiểm thử hỏng: đã mất một lượt chẩn
+          # đoán đi sai hướng vì chuyện này.
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
@@ -60,5 +76,18 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
 
-      - name: Test
+      - name: Test backend
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # Bước này trước đây KHÔNG tồn tại, nên toàn bộ bộ kiểm thử giao diện
+      # chưa từng chạy trên CI lần nào — kể cả các bài canh những lỗi đắt nhất
+      # đã gặp: kéo nhầm tệp sau khi đổi ổ đĩa, và màn hình khẳng định "không
+      # tìm thấy kết quả nào" trong khi lần tìm vẫn đang chạy.
+      #
+      # Chúng chỉ xanh vì có người nhớ chạy tay. Một tấm lưới an toàn phụ
+      # thuộc vào trí nhớ thì không phải lưới an toàn.
+      #
+      # Chạy sau phần Rust vì nó lâu hơn hẳn (~100 giây so với vài giây): hỏng
+      # ở phần rẻ thì biết ngay, không phải chờ hết phần đắt.
+      - name: Test frontend
+        run: npm test

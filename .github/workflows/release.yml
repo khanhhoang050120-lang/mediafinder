@@ -39,7 +39,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Khớp với check.yml. Hai workflow chạy trên hai phiên bản Node
+          # khác nhau nghĩa là thứ đã được kiểm và thứ được đóng gói giao cho
+          # người dùng không phải cùng một thứ.
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
