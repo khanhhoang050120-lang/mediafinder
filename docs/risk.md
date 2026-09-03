@@ -1,7 +1,7 @@
 # RỦI RO — MediaFinder
 > **Thuộc file này:** Chưa gây hại, nhưng sẽ gây hại nếu không xử lý. Mỗi mục phải ghi rõ điều kiện kích hoạt và hạn xử lý.
 > **KHÔNG thuộc file này:** lỗi đã xảy ra rồi (thuộc bug.md).
-> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md)
+> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md) · [test-log-v2](./test-log-v2.md)
 
 **Mức độ:** 🔴 Nặng (chặn / sai kết quả) · 🟠 Vừa (ảnh hưởng trải nghiệm) · 🟡 Nhẹ (khó chịu / công cụ) · ⚪ Rủi ro (chưa xảy ra) · ✅ Đã xong / không phải lỗi
 

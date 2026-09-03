@@ -1,7 +1,7 @@
 # HIỆU NĂNG — MediaFinder
 > **Thuộc file này:** Chậm, tốn RAM, cấp phát thừa. Mỗi mục **bắt buộc kèm số đo** trước và sau.
 > **KHÔNG thuộc file này:** lỗi làm sai kết quả — dù có chậm đi nữa.
-> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md)
+> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md) · [test-log-v2](./test-log-v2.md)
 
 **Mức độ:** 🔴 Nặng (chặn / sai kết quả) · 🟠 Vừa (ảnh hưởng trải nghiệm) · 🟡 Nhẹ (khó chịu / công cụ) · ⚪ Rủi ro (chưa xảy ra) · ✅ Đã xong / không phải lỗi
 

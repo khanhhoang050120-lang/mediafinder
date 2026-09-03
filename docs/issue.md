@@ -1,7 +1,7 @@
 # VẤN ĐỀ SẢN PHẨM — MediaFinder
 > **Thuộc file này:** Code chạy đúng nhưng kết quả không phục vụ được người dùng. Thường **cần người dùng quyết định** chứ không tự sửa được.
 > **KHÔNG thuộc file này:** lỗi kỹ thuật.
-> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md)
+> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md) · [test-log-v2](./test-log-v2.md)
 
 **Mức độ:** 🔴 Nặng (chặn / sai kết quả) · 🟠 Vừa (ảnh hưởng trải nghiệm) · 🟡 Nhẹ (khó chịu / công cụ) · ⚪ Rủi ro (chưa xảy ra) · ✅ Đã xong / không phải lỗi
 

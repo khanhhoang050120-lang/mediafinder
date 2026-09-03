@@ -1,7 +1,7 @@
 # XUNG ĐỘT CẤU HÌNH — MediaFinder
 > **Thuộc file này:** Hai thiết lập loại trừ nhau, phiên bản thư viện đụng nhau, tuỳ chọn build sai — code không sai, cấu hình sai.
 > **KHÔNG thuộc file này:** lỗi logic trong code, vấn đề tốc độ.
-> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md)
+> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md) · [test-log-v2](./test-log-v2.md)
 
 **Mức độ:** 🔴 Nặng (chặn / sai kết quả) · 🟠 Vừa (ảnh hưởng trải nghiệm) · 🟡 Nhẹ (khó chịu / công cụ) · ⚪ Rủi ro (chưa xảy ra) · ✅ Đã xong / không phải lỗi
 

@@ -18,7 +18,13 @@ Liên quan: [`../PROGRESS.md`](../PROGRESS.md) (tiến độ 9 giai đoạn) · 
 | **Chậm hoặc tốn RAM**, nhưng kết quả vẫn đúng? | [perf.md](./perf.md) | `PERF-` |
 | Còn lại: code cho ra **kết quả sai**, crash, treo | [bug.md](./bug.md) | `BUG-` |
 
-Kết quả từng **lượt test** theo giai đoạn thì ghi vào [test-log.md](./test-log.md), không ghi vào các file trên.
+Kết quả từng **lượt test** theo giai đoạn thì ghi vào nhật ký test, không ghi vào các file trên.
+Nhật ký chia theo nhánh, vì `version2` dựng lại từ tag `v1.0.4` nên nền mã khác hẳn giai đoạn trước:
+
+| Nhật ký | Phạm vi |
+|---|---|
+| [test-log.md](./test-log.md) | P0–P33, nhánh `master` — đã đóng, chỉ đọc |
+| **[test-log-v2.md](./test-log-v2.md)** | **P34 trở đi, nhánh `version2` — ghi vào đây** |
 
 ## Quy ước chung
 

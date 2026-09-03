@@ -14,6 +14,7 @@ tách thành các file riêng theo phân loại.
 | Kiểm chứng | [docs/check.md](./docs/check.md) | Nghi ngờ đã đem đi đo, kể cả khi hoá ra không phải lỗi |
 | Sản phẩm | [docs/issue.md](./docs/issue.md) | Chạy đúng nhưng kết quả không dùng được |
 | Đặc tả | [docs/spec.md](./docs/spec.md) | Code đúng y yêu cầu, nhưng yêu cầu sai |
-| Nhật ký test | [docs/test-log.md](./docs/test-log.md) | Kết quả từng lượt test theo giai đoạn |
+| Nhật ký test (P0–P33, `master`) | [docs/test-log.md](./docs/test-log.md) | Kết quả từng lượt test theo giai đoạn |
+| Nhật ký test (P34+, `version2`) | [docs/test-log-v2.md](./docs/test-log-v2.md) | Nhánh hiện tại — ghi vào đây |
 
 > File con trỏ này giữ lại để không ai ghi nhầm vào đây. Đừng thêm nội dung mới vào file này.

@@ -14,7 +14,8 @@
    (không chỉ chạy cho có), sửa những gì tìm được, rồi ghi **toàn bộ** phát hiện vào
    thư mục [`docs/`](./docs/) — mỗi loại vấn đề một file, xem bảng "ghi vào file nào"
    ở [`docs/README.md`](./docs/README.md). Kết quả lượt test ghi vào
-   [`docs/test-log.md`](./docs/test-log.md).
+   [`docs/test-log-v2.md`](./docs/test-log-v2.md) (nhánh `version2`; các lượt P0–P33
+   trên `master` nằm ở [`docs/test-log.md`](./docs/test-log.md)).
    Giai đoạn chỉ được coi là xong khi lượt test đã chạy và `docs/` đã cập nhật.
 
 Ký hiệu: `[ ]` chưa làm · `[~]` đã viết chưa kiểm chứng · `[x]` đã kiểm chứng chạy được · `[!]` đang vướng

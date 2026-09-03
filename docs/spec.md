@@ -1,7 +1,7 @@
 # LỖI CỦA ĐẶC TẢ — MediaFinder
 > **Thuộc file này:** Code làm **đúng y** những gì đặc tả yêu cầu, nhưng chính yêu cầu đó sai. Loại này chỉ lộ ra khi chạy trên dữ liệu thật.
 > **KHÔNG thuộc file này:** code làm sai so với đặc tả — đó là bug.
-> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md)
+> Mục lục: [docs/README.md](./README.md) · [bug](./bug.md) · [config](./config.md) · [risk](./risk.md) · [perf](./perf.md) · [check](./check.md) · [issue](./issue.md) · [spec](./spec.md) · [test-log](./test-log.md) · [test-log-v2](./test-log-v2.md)
 
 **Mức độ:** 🔴 Nặng (chặn / sai kết quả) · 🟠 Vừa (ảnh hưởng trải nghiệm) · 🟡 Nhẹ (khó chịu / công cụ) · ⚪ Rủi ro (chưa xảy ra) · ✅ Đã xong / không phải lỗi
 
