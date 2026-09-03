@@ -459,6 +459,16 @@ pub struct NetworkDrive {
 ///
 /// Rẻ: chỉ đọc phần đầu tệp cache, không nạp lại chỉ mục. Giao diện chỉ gọi
 /// khi đã không có kết quả nào, nên nó không nằm trên đường tìm kiếm.
+/// Đánh dấu rằng lần khởi động kế tiếp đến từ một bản cập nhật.
+///
+/// Giao diện gọi ngay trước `downloadAndInstall`. Xem [`crate::relaunch`] để
+/// biết vì sao cần: bộ cập nhật chuyển tiếp nguyên dòng lệnh cũ, nên trên máy
+/// khởi động ẩn thì app mở lại ẩn và cửa sổ không bao giờ hiện.
+#[tauri::command]
+pub fn mark_updating() {
+    crate::relaunch::danh_dau();
+}
+
 #[tauri::command]
 pub fn index_freshness(state: State<'_, AppState>) -> crate::freshness::Freshness {
     crate::freshness::read(&state)

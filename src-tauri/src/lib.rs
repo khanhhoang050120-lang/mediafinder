@@ -16,6 +16,7 @@ pub mod media;
 pub mod netsched;
 pub mod ntfs;
 pub mod preflight;
+pub mod relaunch;
 pub mod setup;
 pub mod state;
 pub mod update;
@@ -79,13 +80,19 @@ pub fn run_gui() {
             // here instead. Declaring it visible and hiding it afterwards
             // would flash a window on the screen at every login, which is
             // exactly what starting minimised is meant to avoid.
-            let quiet = std::env::args().any(|a| a == "--minimized");
+            // `vua_cap_nhat()` ĐỌC LÀ XOÁ, nên gọi đúng một lần ở đây.
+            //
+            // Nó tồn tại vì bộ cập nhật khởi động lại app kèm nguyên dòng lệnh
+            // cũ — trên máy studio dòng đó là `--minimized`, nên app mở lại ẩn
+            // và người vừa bấm "Cập nhật" tưởng bản cập nhật hỏng.
+            let co_minimized = std::env::args().any(|a| a == "--minimized");
+            let hien = relaunch::nen_hien_cua_so(co_minimized, relaunch::vua_cap_nhat());
             if let Some(window) = app.get_webview_window("main") {
-                if quiet {
-                    tracing::info!("khởi động ẩn: bấm {} để gọi cửa sổ", hotkey::in_use());
-                } else {
+                if hien {
                     let _ = window.show();
                     let _ = window.set_focus();
+                } else {
+                    tracing::info!("khởi động ẩn: bấm {} để gọi cửa sổ", hotkey::in_use());
                 }
             }
 
@@ -149,6 +156,7 @@ pub fn run_gui() {
             ipc::commands::search,
             ipc::commands::index_status,
             ipc::commands::open_file,
+            ipc::commands::mark_updating,
             ipc::commands::index_freshness,
             ipc::commands::start_file_drag,
             ipc::commands::reveal_in_explorer,

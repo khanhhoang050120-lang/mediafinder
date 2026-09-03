@@ -533,3 +533,93 @@ Nâng cấp **bằng nút** thì không xung đột. Nhưng **không được c�
 mục hồ sơ phát hành phải sửa trước (câu sai ở `release.yml`, dòng "Bản thử" ở `RELEASE_NOTES.md`,
 nâng số hiệu ở 4 chỗ). Hai lỗi mới (đua ghi cache, mở lại ẩn) nên sửa trước khi bản này tới 20–40
 máy — cả hai đều do tính năng mới gây ra, không phải v1.0.4.
+
+## P39 — Chuẩn bị v1.0.8, bản phát hành thật cho người dùng
+
+Khác với v1.0.7 (bản thử, nháp trên GitHub), v1.0.8 đi thẳng tới 20–40 máy. Cuộc kiểm toán ở P38
+tìm ra bốn thứ chặn đường và hai lỗi mã; tất cả đã sửa.
+
+### Bốn mục phát hành
+
+| # | Vấn đề | Hậu quả nếu bỏ qua |
+|---|---|---|
+| 1 | Số hiệu còn `1.0.7` ở 3 chỗ, `package-lock.json` còn `1.0.4` | Tag `v1.0.7` đã tồn tại; bộ cài tự xưng sai số hiệu |
+| 2 | `release.yml` in câu sai của BUG-024 | **Chỉ thẳng người dùng v1.0.4 vào cái bẫy mất chỉ mục** |
+| 3 | Ghi chú mở đầu bằng "⚠️ Bản thử… máy v1.0.4 sẽ không nhận" | Hộp thoại trên 40 máy nói một câu tự mâu thuẫn |
+| 4 | `prerelease: true` | Bản build vô hình với trình cập nhật |
+
+Mục 2 nặng nhất. Câu *"Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ
+nguyên"* đã bị sửa ở v1.0.6 vì nó **sai**, nhưng `version2` dựng từ v1.0.4 nên nó quay lại. Bộ gỡ
+cài đặt *chạy* khi cài tay là bộ gỡ **cũ** đang nằm trên máy, mang móc xoá `index.bin` và
+`metadata.bin` vô điều kiện. Nay ghi chú nói thẳng: cập nhật bằng nút trong ứng dụng, và nếu buộc
+phải cài tay thì chọn **Do not uninstall**.
+
+Số hiệu nay đồng bộ ở **năm** chỗ: `tauri.conf.json`, `package.json`, `Cargo.toml`, `Cargo.lock`,
+và `package-lock.json` (hai vị trí) — chỗ cuối đang lệch hẳn hai bản.
+
+### Lỗi 1 — cập nhật xong cửa sổ không hiện lại
+
+Hộp thoại hứa *"ứng dụng sẽ tự khởi động lại"*, nhưng trên máy studio lời hứa đó không giữ được:
+
+1. Lối tắt Startup chạy app với `--minimized` — cố ý, để không bật cửa sổ mỗi lần đăng nhập.
+2. `tauri-plugin-updater` khởi động lại kèm **nguyên dòng lệnh hiện tại** (`updater.rs:797`,
+   `current_exe_args()[1..]` → `/ARGS`).
+3. App mở lại **ẩn ở khay**. Màn hình không đổi gì.
+
+Người vừa bấm "Cập nhật" và chờ sẽ kết luận bản cập nhật hỏng — trong khi nó cài xong hoàn toàn
+bình thường.
+
+Không sửa được ở phía thư viện (`current_exe_args` là `pub(crate)`). Bản sửa
+[relaunch.rs](../src-tauri/src/relaunch.rs): ghi một tệp mốc rỗng trước khi cài, đọc-rồi-**xoá** ở
+lần khởi động kế tiếp. Dùng tệp chứ không phải biến môi trường vì tiến trình cũ chết hẳn trước khi
+tiến trình mới sinh ra, và bộ cài đứng giữa — không gì sống sót qua đó ngoài đĩa.
+
+### Lỗi 2 — hai tiến trình cùng ghi một tệp tạm
+
+Từ khi có lịch tự quét ổ mạng (P35, chạy trong tiến trình giao diện) thì có **đúng hai** tiến
+trình cùng ghi cache: tiến trình này và tác vụ nền `--index` chạy elevated mỗi ngày. Cờ
+`is_scanning` chỉ sống trong `AppState` của tiến trình giao diện nên nó **không hề thấy** tác vụ
+kia.
+
+Ghi cache vốn nguyên tử (ghi tệp tạm rồi `rename`), nhưng cả hai dùng **cùng một tên tạm**:
+
+```
+A: File::create(tmp)   B: File::create(tmp)   ← cùng đường dẫn, cắt sạch lẫn nhau
+A: ghi 55 MB           B: ghi 55 MB           ← vào cùng một tệp
+A: rename(tmp → bin)                          ← xuất bản tệp TRỘN LẪN
+```
+
+Nên hậu quả không chỉ là mất một lượt quét mà có thể là **cache hỏng**, phải quét lại từ đầu.
+
+Sửa: tên tệp tạm mang `std::process::id()`. Ba chỗ, không chỉ một —
+[persist.rs](../src-tauri/src/index/persist.rs) (`index.bin`),
+[enrich.rs](../src-tauri/src/media/enrich.rs) (`metadata.bin`),
+[elevate.rs](../src-tauri/src/ipc/elevate.rs) (tệp tiến độ). Kẻ `rename` sau vẫn thắng và vẫn mất
+một lượt, nhưng thua một lượt thì lượt sau bù được, còn cache hỏng thì không.
+
+### Kiểm chứng — và một bài kiểm thử xanh vô nghĩa nữa
+
+Phá mã ba phép:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Tên tạm dùng chung trở lại | **1 ca đỏ** ✅ |
+| Vừa cập nhật vẫn ẩn cửa sổ | **1 ca đỏ** ✅ |
+| Mốc không bị xoá sau khi đọc | **sống sót** ❌ → đã viết bài mới |
+
+Phép thứ ba lộ ra rằng phần "đọc là xoá" — chỗ nguy hiểm nhất của module, vì hỏng thì cửa sổ bật
+lên **mãi mãi** ở mọi lần đăng nhập — không có bài nào canh. Đã tách `doc_va_xoa()` ra để kiểm thử
+với tệp thật, và bài mới bắt được ngay.
+
+Đây là lần thứ ba trong dự án một bài kiểm thử của tôi xanh mà không canh gì, và cả ba lần đều chỉ
+lộ ra khi phá mã.
+
+### Vòng kiểm
+
+`cargo test` **255 pass** (249 + 6) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/123 tệp ·
+`npm test` **112 pass** · `cargo build` và `npm run build` đều sạch.
+
+### Chưa kiểm được trên máy thật
+
+Đường cập nhật đầy đủ (v1.0.4 → bấm nút → cài → khởi động lại → cửa sổ hiện) chỉ kiểm được sau khi
+bản phát hành đã lên GitHub. Đó là phép thử cuối, và nó cần một máy đang chạy v1.0.4 thật.

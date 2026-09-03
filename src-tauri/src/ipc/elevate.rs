@@ -141,7 +141,12 @@ impl ProgressWriter {
     /// tolerates that — a failed parse is treated as "no news" — but a torn
     /// read every few polls would make the progress bar stutter for no reason.
     fn write_atomic(&self) -> Result<(), ElevateError> {
-        let tmp = self.path.with_extension("json.tmp");
+        // Số hiệu tiến trình trong tên: tệp tiến độ này do tiến trình quét
+        // ghi, mà lịch quét ổ mạng có thể khiến hai lượt quét chạy trong hai
+        // tiến trình khác nhau. Chung một tên tạm là chúng ghi đè lên nhau.
+        let tmp = self
+            .path
+            .with_extension(format!("json.{}.tmp", std::process::id()));
         let json =
             serde_json::to_string(&self.state).map_err(|e| ElevateError::Launch(e.to_string()))?;
         fs::write(&tmp, json)?;

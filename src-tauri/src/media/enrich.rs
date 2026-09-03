@@ -407,7 +407,10 @@ fn save_store(store: &Store) -> Option<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).ok()?;
     }
-    let tmp = path.with_extension("bin.tmp");
+    // Số hiệu tiến trình trong tên tệp tạm: xem chú thích ở
+    // `index::persist::save`. Cùng lý do, cùng hai tiến trình — tiến trình
+    // giao diện và tác vụ nền `--index` đều ghi tệp này.
+    let tmp = path.with_extension(format!("bin.{}.tmp", std::process::id()));
     {
         let file = fs::File::create(&tmp).ok()?;
         let mut writer = BufWriter::new(file);

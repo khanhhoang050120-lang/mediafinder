@@ -442,6 +442,15 @@ export async function installUpdate(
   const update = await check();
   if (!update) return;
 
+  // Đánh dấu TRƯỚC khi cài. Bộ cập nhật khởi động lại ứng dụng kèm nguyên dòng
+  // lệnh cũ, mà trên máy studio dòng đó là `--minimized` (lối tắt Startup) —
+  // nên nếu không có mốc này thì app mở lại ẩn ở khay, và người vừa bấm "Cập
+  // nhật" thấy màn hình không đổi gì và tưởng bản cập nhật hỏng.
+  //
+  // Không chặn việc cài nếu ghi mốc thất bại: hậu quả tệ nhất là cửa sổ không
+  // tự hiện, đúng bằng hành vi cũ.
+  await invoke("mark_updating").catch(() => {});
+
   let total = 0;
   let got = 0;
   await update.downloadAndInstall((e) => {

@@ -84,7 +84,12 @@ jobs:
             echo 'Windows sẽ hiện cảnh báo màu xanh "Windows protected your PC" vì phần'
             echo 'mềm chưa mua chứng chỉ ký số. Bấm **More info** rồi **Run anyway**.'
             echo ''
-            echo 'Cài đè lên bản cũ được, không cần gỡ trước. Chỉ mục đã quét vẫn giữ nguyên.'
+            echo '**Đang ở v1.0.4 mà muốn tải tay?** Hãy cập nhật bằng nút trong ứng dụng.'
+            echo 'Tải `.exe` về cài đè sẽ chạy bộ gỡ cài đặt CŨ, và bộ gỡ đó xoá chỉ mục —'
+            echo 'máy phải quét lại từ đầu, kể cả phần ổ mạng (mất vài phút).'
+            echo ''
+            echo 'Nếu buộc phải cài tay: ở màn hình bộ cài hỏi, chọn dòng dưới —'
+            echo '**Do not uninstall** — rồi mới bấm Next.'
             echo 'NOTES_EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -153,6 +158,9 @@ jobs:
           # QUA pre-release — nên 20–40 máy đang chạy v1.0.4 không nhận được
           # thông báo nào. Thử xong thấy ổn thì bỏ dấu pre-release trên GitHub
           # là các máy kia nhận được ngay, không cần build lại.
-          prerelease: true
+          # Bản phát hành thật. Đặt `true` là bản build thành vô hình với trình
+          # cập nhật: endpoint `/releases/latest` mà app đọc BỎ QUA pre-release,
+          # nên không máy nào nhận được thông báo.
+          prerelease: false
 
 # Đăng ký lại workflow với GitHub.
