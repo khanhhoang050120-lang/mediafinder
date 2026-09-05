@@ -53,7 +53,7 @@ fn scan_the_real_library() {
     let service = mediafinder::media::dupes::DupeService::new();
     let started = Instant::now();
     assert!(
-        service.start(std::sync::Arc::new(index)),
+        service.start(std::sync::Arc::new(index), 0),
         "quét phải bắt đầu"
     );
 

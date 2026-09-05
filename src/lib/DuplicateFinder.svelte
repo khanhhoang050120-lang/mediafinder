@@ -39,13 +39,16 @@
   /// một dòng tiêu đề cho mỗi nhóm, rồi tới các tệp của nó.
   type DupeRow =
     | { head: true; group: DupeGroup; n: number }
-    | { head: false; hit: SearchHit; n: number };
+    | { head: false; hit: SearchHit; n: number; epoch: number };
 
   const rows = $derived.by<DupeRow[]>(() => {
     const out: DupeRow[] = [];
     for (const g of dupes) {
       out.push({ head: true, group: g, n: g.files.length });
-      for (const f of g.files) out.push({ head: false, hit: f, n: g.files.length });
+      // `g.epoch` chứ không phải `epoch` của App: vị trí trong `hit.index`
+      // thuộc về chỉ mục lúc quét, nên ảnh thu nhỏ phải hỏi theo epoch đó.
+      for (const f of g.files)
+        out.push({ head: false, hit: f, n: g.files.length, epoch: g.epoch });
     }
     return out;
   });
@@ -213,7 +216,7 @@
             oncontextmenu={(e) => oncontextmenu(e, r.hit)}
             onkeydown={() => {}}
           >
-            <MediaRow hit={r.hit} {epoch} {thumbSize} />
+            <MediaRow hit={r.hit} epoch={r.epoch ?? epoch} {thumbSize} />
           </div>
         {/if}
       {/snippet}

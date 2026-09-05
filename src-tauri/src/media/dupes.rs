@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -94,6 +94,29 @@ pub struct DupeService {
     candidates: Arc<AtomicUsize>,
     hashed: Arc<AtomicUsize>,
     result: Arc<parking_lot::Mutex<Vec<DuplicateGroup>>>,
+    /// Chỉ mục mà lượt quét này đã dùng, giữ nguyên cạnh kết quả.
+    ///
+    /// `DuplicateGroup.entries` là **vị trí** trong chỉ mục, mà vị trí không
+    /// sống sót qua một lần dựng lại: `index::update::rebuild_with` nói thẳng
+    /// *"Entry positions are not preserved — they cannot be"*, vì mục ở giữa
+    /// biến mất thì mọi thứ sau nó trượt lên.
+    ///
+    /// Thiếu trường này thì `dupe_groups` tra vị trí cũ trên snapshot MỚI, và
+    /// mỗi nhóm hiện tên cùng đường dẫn của **tệp khác** — không cảnh báo gì.
+    /// Với một màn hình mà bước tiếp theo là xoá tệp, đó là kiểu hỏng đắt
+    /// nhất có thể có.
+    ///
+    /// Chuyện này không hiếm: chỉ mục dựng lại sau mỗi lượt cập nhật gia tăng
+    /// có xoá, và sau **mỗi** lượt quét ổ mạng theo lịch — hai lần mỗi ngày,
+    /// trên mọi máy.
+    snapshot: Arc<parking_lot::Mutex<Option<Arc<Index>>>>,
+    /// `epoch` của chỉ mục lúc quét.
+    ///
+    /// Giao diện ghép `epoch` với vị trí để dựng URL ảnh thu nhỏ và xem trước
+    /// (`thumbUrl(epoch, index)`), nên nó phải là epoch của **cùng** chỉ mục
+    /// đã sinh ra các vị trí đó. Lấy epoch hiện tại ghép với vị trí cũ thì ảnh
+    /// thu nhỏ cũng của tệp khác.
+    epoch: Arc<AtomicU64>,
 }
 
 impl DupeService {
@@ -117,6 +140,16 @@ impl DupeService {
         self.result.lock().clone()
     }
 
+    /// Chỉ mục mà kết quả hiện tại trỏ vào, kèm epoch của nó.
+    ///
+    /// `None` khi chưa quét lần nào. Người gọi **phải** phân giải vị trí bằng
+    /// snapshot này chứ không phải snapshot hiện tại của `AppState` — đó là
+    /// toàn bộ lý do nó tồn tại.
+    pub fn scanned_index(&self) -> Option<(Arc<Index>, u64)> {
+        let ix = self.snapshot.lock().clone()?;
+        Some((ix, self.epoch.load(Ordering::Relaxed)))
+    }
+
     /// Ask a running scan to stop.
     ///
     /// Returns once the flag is raised, not once the thread has noticed — the
@@ -134,7 +167,11 @@ impl DupeService {
     ///
     /// Returns false when a scan is already in flight, so the UI can say so
     /// rather than silently starting a second one.
-    pub fn start(&self, index: Arc<Index>) -> bool {
+    /// Bắt đầu một lượt quét.
+    ///
+    /// `epoch` là số hiệu của chính `index` truyền vào — hai thứ phải đi cùng
+    /// nhau, vì kết quả trỏ vào vị trí trong chỉ mục đó.
+    pub fn start(&self, index: Arc<Index>, epoch: u64) -> bool {
         if self.running.swap(true, Ordering::AcqRel) {
             return false;
         }
@@ -143,6 +180,10 @@ impl DupeService {
         self.candidates.store(0, Ordering::Relaxed);
         self.hashed.store(0, Ordering::Relaxed);
         self.result.lock().clear();
+        // Giữ chỉ mục này cạnh kết quả. `Arc` nên không tốn thêm bộ nhớ cho
+        // bản thân dữ liệu — chỉ giữ nó sống lâu hơn snapshot toàn cục.
+        *self.snapshot.lock() = Some(Arc::clone(&index));
+        self.epoch.store(epoch, Ordering::Relaxed);
 
         let running = Arc::clone(&self.running);
         let stop = Arc::clone(&self.stop);
@@ -431,6 +472,56 @@ mod tests {
             &AtomicUsize::new(0),
             &AtomicBool::new(false),
         )
+    }
+
+    /// Kết quả phải trỏ vào chỉ mục CỦA LƯỢT QUÉT, không phải chỉ mục hiện tại.
+    ///
+    /// Đây là lỗi đắt nhất mà màn hình Trùng lặp có thể mắc, vì bước tiếp theo
+    /// của người dùng là **xoá tệp**. `entries` là vị trí trong chỉ mục, mà vị
+    /// trí không sống sót qua một lần dựng lại — `index::update::rebuild_with`
+    /// nói thẳng *"Entry positions are not preserved — they cannot be"*.
+    ///
+    /// Kịch bản thật: quét lúc 9:00, rời màn hình; 10:25 lịch quét ổ mạng chạy
+    /// xong và chỉ mục nạp lại; 11:00 quay lại thì mỗi nhóm hiện tên và đường
+    /// dẫn của tệp KHÁC, không một lời cảnh báo. Từ v1.0.8 chuyện này xảy ra
+    /// hai lần mỗi ngày trên mọi máy.
+    #[test]
+    fn ket_qua_giu_chi_muc_cua_luot_quet_chu_khong_theo_chi_muc_moi() {
+        let svc = DupeService::new();
+        assert!(
+            svc.scanned_index().is_none(),
+            "chưa quét thì không được có chỉ mục nào"
+        );
+
+        let (ix_cu, _d1) = index_over("giu-snapshot", &[("a.mp4", vec![1u8; 200_000])]);
+        let arc_cu = Arc::new(ix_cu);
+        assert!(svc.start(Arc::clone(&arc_cu), 7));
+
+        // Chờ lượt quét xong để `running` hạ xuống.
+        for _ in 0..200 {
+            if !svc.progress().running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let (giu, epoch) = svc.scanned_index().expect("phải giữ chỉ mục đã quét");
+        assert_eq!(
+            epoch, 7,
+            "epoch phải là epoch lúc quét, không phải epoch mới"
+        );
+        assert!(
+            Arc::ptr_eq(&giu, &arc_cu),
+            "phải giữ ĐÚNG chỉ mục đã quét, không phải một bản khác"
+        );
+
+        // Chỉ mục mới ra đời (lượt quét NAS xong, cache nạp lại). Kết quả cũ
+        // vẫn phải phân giải theo chỉ mục cũ.
+        let (ix_moi, _d2) = index_over("giu-snapshot-2", &[("z.mp4", vec![9u8; 200_000])]);
+        drop(ix_moi);
+        let (van_giu, van_epoch) = svc.scanned_index().expect("vẫn phải còn");
+        assert!(Arc::ptr_eq(&van_giu, &arc_cu));
+        assert_eq!(van_epoch, 7);
     }
 
     /// The size floor exists so thousands of identical icons do not bury the

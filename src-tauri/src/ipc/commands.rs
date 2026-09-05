@@ -535,6 +535,12 @@ pub struct DupeGroupView {
     pub size: u64,
     pub wasted: u64,
     pub files: Vec<SearchHit>,
+    /// `epoch` của chỉ mục mà lượt quét đã dùng.
+    ///
+    /// Giao diện dựng URL ảnh thu nhỏ bằng `thumbUrl(epoch, index)`, nên nó
+    /// phải dùng epoch NÀY chứ không phải epoch hiện tại — ghép epoch mới với
+    /// vị trí cũ thì ảnh thu nhỏ cũng là của tệp khác.
+    pub epoch: u64,
 }
 
 /// Begin looking for duplicates.
@@ -543,7 +549,7 @@ pub fn find_duplicates(
     state: State<'_, AppState>,
     dupes: State<'_, crate::media::dupes::DupeService>,
 ) -> Result<(), String> {
-    if dupes.start(state.snapshot()) {
+    if dupes.start(state.snapshot(), state.index_epoch()) {
         Ok(())
     } else {
         Err("Đang tìm trùng lặp rồi.".into())
@@ -570,12 +576,22 @@ pub fn cancel_duplicates(dupes: State<'_, crate::media::dupes::DupeService>) {
 /// The finished groups, with every path resolved.
 #[tauri::command]
 pub fn dupe_groups(
-    state: State<'_, AppState>,
+    // KHÔNG nhận `AppState`: bản sửa này cắt hẳn phụ thuộc vào snapshot hiện
+    // tại. Thêm nó lại là mở đường cho chính lỗi vừa sửa quay về.
     enrich: State<'_, crate::media::enrich::EnrichService>,
     dupes: State<'_, crate::media::dupes::DupeService>,
     limit: usize,
 ) -> Vec<DupeGroupView> {
-    let index = state.snapshot();
+    // Phân giải bằng chỉ mục mà LƯỢT QUÉT đã dùng, không phải snapshot hiện
+    // tại. `entries` là vị trí, và vị trí không sống sót qua một lần dựng lại
+    // chỉ mục — dùng snapshot mới thì mỗi nhóm hiện tên và đường dẫn của tệp
+    // khác, im lặng, ngay trước khi người dùng bấm xoá.
+    //
+    // Chưa quét lần nào thì không có gì để hiện; trả rỗng thay vì lấy tạm
+    // snapshot hiện tại, vì "lấy tạm" chính là lỗi cần sửa.
+    let Some((index, epoch)) = dupes.scanned_index() else {
+        return Vec::new();
+    };
     let props = enrich.props();
 
     dupes
@@ -585,6 +601,7 @@ pub fn dupe_groups(
         .map(|g| DupeGroupView {
             size: g.size,
             wasted: g.wasted,
+            epoch,
             files: g
                 .entries
                 .iter()

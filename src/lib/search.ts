@@ -106,6 +106,12 @@ export interface DupeGroup {
   /** Reclaimable by keeping one copy. */
   wasted: number;
   files: SearchHit[];
+  /// `epoch` của chỉ mục mà lượt quét đã dùng.
+  ///
+  /// Phải dùng số này để dựng URL ảnh thu nhỏ, KHÔNG dùng epoch hiện tại:
+  /// `hit.index` là vị trí trong chỉ mục lúc quét, và ghép nó với epoch mới
+  /// cho ra ảnh của tệp khác.
+  epoch: number;
 }
 
 export function findDuplicates(): Promise<void> {

@@ -623,3 +623,53 @@ lộ ra khi phá mã.
 
 Đường cập nhật đầy đủ (v1.0.4 → bấm nút → cài → khởi động lại → cửa sổ hiện) chỉ kiểm được sau khi
 bản phát hành đã lên GitHub. Đó là phép thử cuối, và nó cần một máy đang chạy v1.0.4 thật.
+
+## P40 — Việc A: kết quả trùng lặp không còn trỏ vào tệp sai
+
+Lỗi 4.1 của [DE-XUAT-TRUNG-LAP.md](../DE-XUAT-TRUNG-LAP.md), và là lỗi nặng nhất trong tài liệu đó.
+Đã kiểm chứng lại từng mắt xích bằng mã trước khi sửa:
+
+| Mắt xích | Bằng chứng |
+|---|---|
+| `entries` là **vị trí**, không phải đường dẫn | [dupes.rs:63](../src-tauri/src/media/dupes.rs#L63) |
+| Vị trí không sống sót qua dựng lại chỉ mục | [update.rs:142](../src-tauri/src/index/update.rs#L142) — *"positions are not preserved — they cannot be"* |
+| `dupe_groups` tra vị trí cũ trên snapshot **mới** | `let index = state.snapshot()` |
+| `DupeService` không có chỗ nào đặt lại | tạo một lần ở `lib.rs:144` |
+
+Hệ quả: quét lúc 9:00, chỉ mục nạp lại lúc 10:25, quay lại lúc 11:00 thì mỗi nhóm hiện tên và đường
+dẫn của **tệp khác** — im lặng, không cảnh báo. Với màn hình mà bước tiếp theo là **xoá tệp**, đây
+là kiểu hỏng đắt nhất có thể có.
+
+**Và chính v1.0.8 làm nó nặng hẳn lên.** Trước đó chỉ mục chỉ dựng lại khi có người tự bấm quét; từ
+v1.0.8 lịch quét NAS dựng lại **hai lần mỗi ngày trên mọi máy**.
+
+### Sửa hẳn gốc, không phải vá cảnh báo
+
+Định làm bản vá epoch nửa ngày (phát hiện lệch thì báo "kết quả đã cũ"), nhưng đọc mã thì thấy
+`start()` **đã nhận sẵn `Arc<Index>`** — chỉ là thả nó sau khi quét xong. Giữ lại là sửa hẳn gốc,
+không đắt hơn, và tốt hơn hẳn: kết quả vẫn dùng được thay vì bị vứt.
+
+`DupeService` nay giữ `snapshot: Arc<Mutex<Option<Arc<Index>>>>` và `epoch` của chính lượt quét.
+`dupe_groups` phân giải bằng snapshot đó và **không còn nhận `AppState`** — clippy báo tham số thừa,
+đúng là bằng chứng phụ thuộc đã cắt hẳn.
+
+Mắt xích thứ tư dễ sót: giao diện dựng URL ảnh thu nhỏ bằng `thumbUrl(epoch, index)` với `epoch`
+**hiện tại**, nên ảnh cũng của tệp khác. Nay `DupeGroupView` mang theo `epoch` của lượt quét và mỗi
+hàng dùng epoch của nhóm mình.
+
+### Kiểm chứng
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Không giữ snapshot nữa (đúng lỗi gốc) | **1 ca đỏ** ✅ |
+| Giữ snapshot nhưng epoch lấy sai | **1 ca đỏ** ✅ |
+
+Bài kiểm thử dựng chỉ mục thật qua `index_over()`, chạy trọn một lượt quét, rồi khẳng định
+`Arc::ptr_eq` với chỉ mục ban đầu — không phải "một bản giống nó", mà **đúng nó**.
+
+### Vòng kiểm
+
+`cargo test` **256 pass** (255 + 1) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/123 tệp ·
+`npm test` 112 pass · cả hai build sạch.
+
+Hai tệp kiểm thử tích hợp (`dupes_real.rs`, `dupes_cancel_real.rs`) cập nhật theo chữ ký mới.
