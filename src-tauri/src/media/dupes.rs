@@ -706,6 +706,14 @@ fn find_duplicates(
 ///
 /// One open, one read of each end. See the note in [`find_duplicates`] for why
 /// this is not split into a cheap first pass and an expensive second one.
+/// Vân tay của một tệp, cho bài đo tích hợp dùng lại.
+///
+/// Mở ra vì bài đo trong tests/dupes_real.rs cần đo đúng thao tác mà lượt quét
+/// thật làm — dựng lại một bản sao trong bài kiểm thử là đo một thứ khác.
+pub fn fingerprint_pub(path: &str, size: u64) -> Option<[u8; 32]> {
+    fingerprint(path, size)
+}
+
 fn fingerprint(path: &str, size: u64) -> Option<[u8; 32]> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = blake3::Hasher::new();

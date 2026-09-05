@@ -1185,3 +1185,87 @@ chỉ vài trăm KB.
 
 `cargo test` **297 pass** (296 + 1) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
 `npm test` 136 pass.
+
+## P48 — Bước đo 1: các ổ chênh nhau tới 25 lần
+
+Phép đo nền lạnh theo từng ổ, 1.500 tệp mỗi ổ, tuần tự.
+
+| Ổ | Loại | Tệp/giây | Ngoại suy cho cả ổ |
+|---|---|---|---|
+| `D:` | máy | **30,3** | 20 phút |
+| `F:` | mạng | 11,6 | 65 phút |
+| `H:` | mạng | 9,0 | 42 phút |
+| **`Y:`** | mạng | **1,2** | 1.100 phút |
+| **`Z:`** | mạng | **1,1** | 188 phút |
+
+`Y:` chậm hơn `D:` **25 lần** và chậm hơn `F:` **10 lần**.
+
+### Đây là bằng chứng cho việc C, mạnh hơn dự kiến
+
+Hiện rayon trộn ứng viên của mọi ổ vào **một hàng đợi chung**. Nên một lần mở trên `Y:` — mất
+khoảng 0,8 giây — **giữ chân một luồng lẽ ra đang đọc `D:`** ở tốc độ nhanh gấp 25 lần. Với 12
+luồng và 82% việc nằm trên NAS chậm, phần lớn luồng bị `Y:` và `Z:` chiếm.
+
+Số liệu cũng chỉnh lại thiết kế tài liệu đề xuất. Tài liệu nói "mỗi ổ một pool riêng", nhưng các ổ
+tự chia thành hai nhóm rõ rệt theo **máy chủ**: `F:`/`H:` trên `.214` nhanh gấp mười `Y:`/`Z:` trên
+`.213`. Tách theo máy chủ đúng hơn tách theo chữ ổ.
+
+### Hai điều bài đo này KHÔNG nói được
+
+**Bước 2 (thứ tự HashMap so với FRN) cho `0,01×` — con số vô nghĩa.** Mẫu A chạy trong 0,2 giây,
+tức Windows đã cache sẵn 1.500 tệp đó vì chúng vừa được đọc ở bước 1. Hai mẫu không cùng lạnh như
+thiết kế. Không dùng kết quả này.
+
+**Và cả bài đo tuần tự không trả lời được câu hỏi chính của việc C.** Lượt quét thật chạy song song
+12 luồng; đo tuần tự cho biết *ổ nào chậm*, không cho biết *chia luồng riêng có giúp không*.
+
+Phát hiện ra điều đó khi bài đã chạy 44 phút mà chỉ tốn 5 giây CPU — dấu hiệu rõ ràng là đang chờ
+đĩa chứ không tính toán. Bài viết ra để đo tốc độ song song mà lại dùng vòng `for` tuần tự.
+
+Nên có thêm **bước 2b**: cùng một ổ `Y:`, bốn mức luồng (1/4/8/16), mỗi mức một mẫu **rời nhau**
+chưa ai chạm. Nó phân biệt được hai nguyên nhân:
+
+* Tăng gần tuyến tính → chậm vì **độ trễ mỗi thao tác**, pool riêng theo ổ đáng làm.
+* Gần như không đổi → chậm vì **băng thông máy chủ**, pool riêng không giúp gì.
+
+Đây là lần thứ ba trong dự án cache Windows suýt làm hỏng một phép đo — hai lần trước ở `netsched`
+(64 luồng "nhanh hơn 11 lần") và ở bước 2 trên.
+
+## P49 — Bước đo 2b: việc C đáng làm, gấp mười sáu lần ngưỡng
+
+Cùng ổ `Y:`, bốn mức luồng, mỗi mức một mẫu 250 tệp **rời nhau** chưa ai chạm.
+
+| Luồng | Tệp/giây | So với 1 luồng |
+|---|---|---|
+| 1 | 0,83 | 1,0× |
+| 4 | 7,43 | **9,0×** |
+| 8 | 12,45 | **15,0×** |
+| 16 | 20,47 | **24,7×** |
+
+Ngưỡng tài liệu đặt ra để nhận việc C: **≥1,5×**. Đo được **24,7×**.
+
+Tăng còn **siêu tuyến tính** ở mức đầu — 4 luồng cho 9× chứ không phải 4×. Dấu hiệu dứt khoát rằng
+`Y:` chậm vì **độ trễ mỗi thao tác**, không phải băng thông máy chủ: phần lớn thời gian là chờ NAS
+trả lời, nên nhiều yêu cầu cùng bay thì tổng thông lượng tăng gần theo số luồng.
+
+Ước lượng lại cho cả ổ `Y:` (80.162 ứng viên):
+
+| Luồng | Thời gian |
+|---|---|
+| 1 | 27 giờ |
+| 8 | 1 giờ 47 |
+| **16** | **65 phút** |
+
+### Cái được lớn nhất không nằm ở `Y:`
+
+Hiện rayon trộn mọi ổ vào một hàng đợi chung, nên **một lần mở trên `Y:` giữ chân một luồng lẽ ra
+đang đọc `D:`** — ổ nhanh gấp 25 lần. Tách pool ra thì `D:` chạy hết tốc độ của nó.
+
+### Hai chỗ số liệu chỉnh lại tài liệu
+
+**"Ổ mạng 8 luồng mỗi máy chủ" là quá ít.** 16 luồng vẫn còn tăng gần tuyến tính, chưa chạm trần.
+Cần đo thêm mức 24/32 để tìm điểm bão hoà.
+
+**Tách theo MÁY CHỦ, không theo chữ ổ.** `Y:` và `Z:` cùng `.213` và cùng chậm (1,2 và 1,1 tệp mỗi
+giây); `F:` và `H:` cùng `.214` và nhanh gấp mười. Giới hạn luồng theo máy chủ, nếu không thì hai ổ
+trên cùng một NAS cộng lại thành gấp đôi tải mà máy chủ đó phải chịu.
