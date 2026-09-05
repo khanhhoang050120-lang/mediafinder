@@ -27,6 +27,8 @@ const KHONG_CHAY = {
   candidates: 0,
   stopping: false,
   startedUnix: 0,
+  unreadable: 0,
+  droppedDrives: [] as string[],
   etaSeconds: null,
 };
 
@@ -500,5 +502,55 @@ describe("t12 — xác minh trọn nội dung trước khi xoá", () => {
       "D:\m\a.mp4",
       "D:\m\b.mp4",
     ]);
+  });
+});
+
+describe("t12 — ổ rớt thì không nói dối", () => {
+  it("thiếu tệp mà không có nhóm nào: KHÔNG nói 'không tìm thấy'", async () => {
+    // Đây là ca quan trọng nhất. Với 82% ứng viên nằm trên ổ mạng, một lượt
+    // quét thiếu tệp không hiếm — và khẳng định "không có gì trùng lặp" trong
+    // khi chưa đọc được 80% thư viện là kiểu nói dối tệ nhất: nó nghe như một
+    // câu trả lời dứt khoát.
+    const { div } = await moMan(
+      { localFiles: 10, networkFiles: 0, networkDrives: [] },
+      { ...KHONG_CHAY, completed: true, droppedDrives: ["Y:", "Z:"] },
+    );
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu, "phải nói rõ thiếu ổ nào").toContain("Y:, Z:");
+    expect(chu).toContain("chưa thể nói chắc");
+    expect(chu, "KHÔNG được khẳng định không có tệp trùng lặp").not.toContain(
+      "Không tìm thấy tệp trùng lặp nào",
+    );
+  });
+
+  it("gọi được TÊN ổ đã rớt, không chỉ một con số", async () => {
+    // "Thiếu Y: — ổ không còn kết nối" cho người dùng biết phải nối lại ổ nào;
+    // "thiếu 160.982 tệp" thì không.
+    const { div } = await moMan(
+      { localFiles: 10, networkFiles: 0, networkDrives: [] },
+      { ...KHONG_CHAY, completed: true, unreadable: 1200, droppedDrives: ["Y:"] },
+    );
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu).toContain("Thiếu Y: — ổ không còn kết nối");
+  });
+
+  it("không biết ổ nào thì nói số tệp", async () => {
+    const { div } = await moMan(
+      { localFiles: 10, networkFiles: 0, networkDrives: [] },
+      { ...KHONG_CHAY, completed: true, unreadable: 42 },
+    );
+    expect((div.textContent ?? "").replace(/\s+/g, " ")).toContain("Thiếu 42 tệp");
+  });
+
+  it("quét đủ thì vẫn nói 'không tìm thấy' như cũ", async () => {
+    // Bản sửa không được biến một câu trả lời đúng thành một lời cảnh báo
+    // thừa: thư viện không có gì trùng lặp là một câu trả lời thật.
+    const { div } = await moMan(
+      { localFiles: 10, networkFiles: 0, networkDrives: [] },
+      { ...KHONG_CHAY, completed: true },
+    );
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu).toContain("Không tìm thấy tệp trùng lặp nào");
+    expect(chu).not.toContain("chưa thể nói chắc");
   });
 });

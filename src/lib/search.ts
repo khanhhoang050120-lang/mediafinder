@@ -99,6 +99,14 @@ export interface DupeProgress {
    * would re-run ten minutes of disk reading on every visit.
    */
   completed: boolean;
+  /// Số tệp không mở được trong lượt quét này.
+  ///
+  /// Trước đây chúng bị bỏ lặng: NAS rớt giữa lượt thì mọi ứng viên trên đó
+  /// biến mất, `completed` vẫn `true`, và màn hình nói "không tìm thấy tệp
+  /// trùng lặp nào" — một khẳng định sai.
+  unreadable: number;
+  /// Các ổ bị loại vì không còn gắn, ví dụ `["Y:", "Z:"]`.
+  droppedDrives: string[];
   /// Lượt quét hiện tại bắt đầu lúc nào, giây Unix; `0` nếu chưa quét lần nào.
   ///
   /// Từ khi có quét nền, kết quả có thể nằm sẵn từ 8 giờ sáng trong khi người

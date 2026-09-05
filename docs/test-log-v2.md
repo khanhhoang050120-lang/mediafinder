@@ -1061,3 +1061,65 @@ là người dùng xoá mất một tệp không có bản sao nào.
 
 `cargo test` **294 pass** (291 + 3) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
 `npm test` **132 pass** (127 + 5).
+
+## P46 — Việc F: ổ rớt thì không nói dối
+
+Lỗi 4.3 của [DE-XUAT-TRUNG-LAP.md](../DE-XUAT-TRUNG-LAP.md). Tệp không mở được bị bỏ **lặng lẽ**:
+NAS rớt giữa lượt quét thì mọi ứng viên trên đó biến mất khỏi kết quả, `completed` vẫn thành
+`true`, và màn hình nói *"Không tìm thấy tệp trùng lặp nào"* — một khẳng định sai.
+
+Với **82% ứng viên nằm trên ổ mạng**, chuyện này không hiếm. Và đây là kiểu nói dối tệ nhất: nó
+nghe như một câu trả lời dứt khoát.
+
+### Hai đường, hai mức chắc chắn
+
+**Đếm tệp không mở được.** `Counters::unreadable` thay cho việc `filter_map` bỏ lặng. Một tệp không
+mở được có thể là tệp vừa bị xoá, hoặc cả một ổ vừa rớt — không phân biệt được, nhưng đếm được.
+
+**Loại ổ đã rớt, TRƯỚC khi mở tệp nào.** Kiểm bằng `GetLogicalDrives` qua `list_volumes`, không mở
+thử một tệp: một lần mở trên share đã chết có thể treo tới hết SMB SessTimeout (mặc định 60 giây),
+và cờ dừng được kiểm **trước** khi mở nên không ngắt được nó. Cái giá của phép kiểm gần bằng
+không; cái nó tránh là mấy chục luồng cùng treo một phút.
+
+Đường thứ hai nói được **TÊN** ổ, và đó là câu hữu ích hơn hẳn: *"Thiếu Y: — ổ không còn kết nối"*
+cho người dùng biết phải nối lại ổ nào, còn *"thiếu 160.982 tệp"* thì không.
+
+### Dọn nợ kỹ thuật đi kèm
+
+`find_duplicates` đã có 7 tham số và việc F cần thêm 2 nữa — clippy cảnh báo đúng lúc. Gom thành
+`struct Counters`: một danh sách chín tham số thì ai gọi cũng dễ đặt nhầm thứ tự hai `&AtomicUsize`
+cạnh nhau, và **trình biên dịch không bắt được** vì chúng cùng kiểu.
+
+Lần thử gom đầu tiên hỏng: tôi dùng regex thay hàng loạt và nó nuốt luôn các bộ đếm mà từng bài
+kiểm thử cần theo dõi. Đã `git checkout` lùi hẳn về bản commit rồi làm lại thủ công theo bốn dạng
+lời gọi — mất thêm một lượt, nhưng một bản refactor "gần đúng" ở chỗ này thì mọi phép đo sau đó đều
+sai mà không ai biết.
+
+### Bộ kiểm thử cũ bắt được một lỗi thật của tôi
+
+Bảy bài ở `t5` và `t6` đỏ sau khi thêm hai trường mới: mock cũ không có `unreadable` và
+`droppedDrives`, nên `thieuTep()` đọc `.length` của `undefined` và làm **trắng cả màn hình**.
+
+Đây là lỗi thật, không phải bài kiểm thử lỗi thời: một bản backend cũ hơn — hoặc một lượt cập nhật
+dở dang, khi tệp `.exe` đã đổi mà cửa sổ chưa nạp lại — trả về đúng hình dạng đó. Sửa ở **mã**
+(`?? 0` và `?? []`), không phải ở mock.
+
+### Kiểm chứng
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Quay lại bỏ lặng tệp không mở được | 1 ca đỏ ✅ |
+| Không loại ổ đã rớt (mở thử rồi treo) | 1 ca đỏ ✅ |
+| Loại ổ nhưng không nói tên | 1 ca đỏ ✅ |
+| **Quay lại nói dối "không tìm thấy" dù thiếu tệp** | **3 ca đỏ** ✅ |
+| Bỏ qua ổ đã rớt, chỉ đếm tệp | 1 ca đỏ ✅ |
+| Không gọi tên ổ, chỉ nói số | 2 ca đỏ ✅ |
+
+Có một ca canh chiều ngược lại: **quét đủ thì vẫn nói "không tìm thấy" như cũ**. Bản sửa không được
+biến một câu trả lời đúng thành một lời cảnh báo thừa — thư viện không có gì trùng lặp là một câu
+trả lời thật.
+
+### Vòng kiểm
+
+`cargo test` **296 pass** (294 + 2) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` **136 pass** (132 + 4).

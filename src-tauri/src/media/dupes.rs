@@ -65,7 +65,9 @@ pub struct DuplicateGroup {
     pub wasted: u64,
 }
 
-#[derive(Debug, Default, Clone, Copy, Serialize)]
+// Không còn `Copy`: `dropped_drives` là một `Vec`. Đổi lại nó nói được TÊN ổ
+// đã rớt, và "thiếu tệp trên Y:" hữu ích hơn hẳn một con số trần trụi.
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DupeProgress {
     pub running: bool,
@@ -80,6 +82,10 @@ pub struct DupeProgress {
     /// alone would treat a library with nothing duplicated as never scanned,
     /// and re-run the whole thing on every visit to the view.
     pub completed: bool,
+    /// Số tệp không mở được. Xem [`Counters::unreadable`].
+    pub unreadable: usize,
+    /// Các ổ bị loại vì không còn gắn, ví dụ `["Y:", "Z:"]`.
+    pub dropped_drives: Vec<String>,
     /// Lượt quét hiện tại bắt đầu lúc nào, giây Unix. `0` nếu chưa quét lần
     /// nào.
     ///
@@ -185,6 +191,10 @@ pub struct DupeService {
     epoch: Arc<AtomicU64>,
     /// Mốc bắt đầu lượt quét, giây Unix — để tính tốc độ thật.
     started_unix: Arc<AtomicU64>,
+    /// Số tệp không mở được trong lượt này.
+    unreadable: Arc<AtomicUsize>,
+    /// Ổ bị loại vì không còn gắn.
+    dropped_drives: Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl DupeService {
@@ -201,6 +211,8 @@ impl DupeService {
             groups: groups.len(),
             wasted: groups.iter().map(|g| g.wasted).sum(),
             completed: self.completed.load(Ordering::Relaxed),
+            unreadable: self.unreadable.load(Ordering::Relaxed),
+            dropped_drives: self.dropped_drives.lock().clone(),
             started_unix: self.started_unix.load(Ordering::Relaxed),
             stopping: self.running.load(Ordering::Relaxed) && self.stop.load(Ordering::Relaxed),
             eta_seconds: {
@@ -274,6 +286,8 @@ impl DupeService {
         *self.snapshot.lock() = Some(Arc::clone(&index));
         self.epoch.store(epoch, Ordering::Relaxed);
         self.started_unix.store(gio_unix(), Ordering::Relaxed);
+        self.unreadable.store(0, Ordering::Relaxed);
+        self.dropped_drives.lock().clear();
 
         let running = Arc::clone(&self.running);
         let stop = Arc::clone(&self.stop);
@@ -281,6 +295,8 @@ impl DupeService {
         let candidates = Arc::clone(&self.candidates);
         let hashed = Arc::clone(&self.hashed);
         let result = Arc::clone(&self.result);
+        let unreadable = Arc::clone(&self.unreadable);
+        let dropped_drives = Arc::clone(&self.dropped_drives);
 
         std::thread::Builder::new()
             .name("dupes".into())
@@ -288,12 +304,16 @@ impl DupeService {
                 let started = std::time::Instant::now();
                 let groups = find_duplicates(
                     &index,
-                    &candidates,
-                    &hashed,
                     &stop,
                     scope,
                     &net_letters,
-                    &result,
+                    &Counters {
+                        candidates: &candidates,
+                        hashed: &hashed,
+                        unreadable: &unreadable,
+                        dropped: &dropped_drives,
+                        result: &result,
+                    },
                 );
 
                 if stop.load(Ordering::Relaxed) {
@@ -371,15 +391,43 @@ fn publish(
 ///
 /// Returns nothing if `stop` is raised, rather than a partial answer that
 /// could be mistaken for a complete one.
+/// Những ô mà một lượt quét ghi tiến độ vào.
+///
+/// Gom thành một struct thay vì bảy tham số rời: danh sách dài như vậy thì ai
+/// gọi cũng dễ đặt nhầm thứ tự hai `&AtomicUsize` cạnh nhau, và trình biên
+/// dịch không bắt được vì chúng cùng kiểu.
+pub struct Counters<'a> {
+    /// Tổng số tệp phải mở.
+    pub candidates: &'a AtomicUsize,
+    /// Đã xử lý xong bao nhiêu, kể cả tệp lấy từ kho vân tay.
+    pub hashed: &'a AtomicUsize,
+    /// Không mở được bao nhiêu.
+    ///
+    /// Trước khi có ô này, tệp không mở được bị bỏ **lặng lẽ**: NAS rớt giữa
+    /// lượt quét thì mọi ứng viên trên đó biến mất khỏi kết quả, `completed`
+    /// vẫn thành `true`, và màn hình nói *"không tìm thấy tệp trùng lặp nào"*
+    /// trong khi nó chưa hề nhìn thấy 80% thư viện.
+    pub unreadable: &'a AtomicUsize,
+    /// Ổ bị loại vì không còn gắn — nói được TÊN, không chỉ một con số.
+    pub dropped: &'a parking_lot::Mutex<Vec<String>>,
+    /// Kết quả công bố dần sau mỗi đợt.
+    pub result: &'a parking_lot::Mutex<Vec<DuplicateGroup>>,
+}
+
 fn find_duplicates(
     index: &Index,
-    candidates: &AtomicUsize,
-    hashed: &AtomicUsize,
     stop: &AtomicBool,
     scope: crate::media::dupescope::DupeScope,
     net_letters: &[char],
-    result: &parking_lot::Mutex<Vec<DuplicateGroup>>,
+    dem: &Counters<'_>,
 ) -> Vec<DuplicateGroup> {
+    let Counters {
+        candidates,
+        hashed,
+        unreadable,
+        dropped,
+        result,
+    } = *dem;
     // Tier 1: group by size. Free — the index already holds every size, and
     // two files of different lengths cannot be the same file.
     let mut by_size: HashMap<u64, Vec<u32>> = HashMap::new();
@@ -432,6 +480,39 @@ fn find_duplicates(
         // nhau cho ra cùng thứ tự.
         tb.cmp(&ta).then(b.0.cmp(&a.0))
     });
+
+    // Loại ổ không còn gắn, TRƯỚC khi mở tệp nào.
+    //
+    // Dùng `GetLogicalDrives` qua `list_volumes` chứ không mở thử một tệp: một
+    // lần mở trên share đã chết có thể treo tới hết SMB SessTimeout (mặc định
+    // 60 giây), và cờ dừng được kiểm TRƯỚC khi mở nên không ngắt được nó. Cái
+    // giá của phép kiểm này gần bằng không; cái nó tránh là mấy chục luồng
+    // cùng treo một phút.
+    {
+        let con_gan: std::collections::HashSet<u8> = crate::ntfs::volume::list_volumes()
+            .into_iter()
+            .map(|v| (v.letter as u8).to_ascii_uppercase())
+            .collect();
+
+        let mut da_rot: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        lop.retain_mut(|(_, entries)| {
+            entries.retain(|&i| {
+                let v = index.volume_of(i as usize);
+                if v == 0 || con_gan.contains(&v.to_ascii_uppercase()) {
+                    true
+                } else {
+                    da_rot.insert(format!("{}:", (v as char).to_ascii_uppercase()));
+                    false
+                }
+            });
+            entries.len() > 1
+        });
+
+        if !da_rot.is_empty() {
+            tracing::warn!("tìm trùng lặp: bỏ qua ổ không còn gắn: {:?}", da_rot);
+            *dropped.lock() = da_rot.into_iter().collect();
+        }
+    }
 
     let work: Vec<(u64, u32)> = lop
         .iter()
@@ -498,7 +579,18 @@ fn find_duplicates(
                 }
 
                 hashed.fetch_add(1, Ordering::Relaxed);
-                fingerprint(&path, size).map(|h| (size, i, h, true))
+                match fingerprint(&path, size) {
+                    Some(h) => Some((size, i, h, true)),
+                    None => {
+                        // ĐẾM, không bỏ lặng. Một tệp không mở được có thể là
+                        // tệp vừa bị xoá, hoặc cả một ổ mạng vừa rớt — và
+                        // trong trường hợp thứ hai, im lặng nghĩa là màn hình
+                        // nói "không tìm thấy tệp trùng lặp nào" trong khi
+                        // thực ra nó chưa hề nhìn thấy 80% thư viện.
+                        unreadable.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
+                }
             })
             .collect();
 
@@ -748,14 +840,18 @@ mod tests {
     fn run(index: &Index) -> Vec<DuplicateGroup> {
         find_duplicates(
             index,
-            &AtomicUsize::new(0),
-            &AtomicUsize::new(0),
             &AtomicBool::new(false),
             // Các bài này dựng chỉ mục ở thư mục tạm (ổ trong máy) và không
             // quan tâm phạm vi, nên quét tất.
             crate::media::dupescope::DupeScope::Everything,
             &[],
-            &parking_lot::Mutex::new(Vec::new()),
+            &Counters {
+                candidates: &AtomicUsize::new(0),
+                hashed: &AtomicUsize::new(0),
+                unreadable: &AtomicUsize::new(0),
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
         )
     }
 
@@ -831,12 +927,16 @@ mod tests {
             });
             find_duplicates(
                 &index,
-                &AtomicUsize::new(0),
-                &hashed,
                 &stop,
                 crate::media::dupescope::DupeScope::Everything,
                 &[],
-                &ket_qua,
+                &Counters {
+                    candidates: &AtomicUsize::new(0),
+                    hashed: &hashed,
+                    unreadable: &AtomicUsize::new(0),
+                    dropped: &parking_lot::Mutex::new(Vec::new()),
+                    result: &ket_qua,
+                },
             );
         });
 
@@ -878,18 +978,103 @@ mod tests {
             });
             find_duplicates(
                 &index,
-                &AtomicUsize::new(0),
-                &hashed,
                 &stop,
                 crate::media::dupescope::DupeScope::Everything,
                 &[],
-                &ket_qua,
+                &Counters {
+                    candidates: &AtomicUsize::new(0),
+                    hashed: &hashed,
+                    unreadable: &AtomicUsize::new(0),
+                    dropped: &parking_lot::Mutex::new(Vec::new()),
+                    result: &ket_qua,
+                },
             );
         });
 
         assert!(
             !ket_qua.lock().is_empty(),
             "huỷ giữa chừng phải giữ lại phần đã chốt, không vứt sạch"
+        );
+    }
+
+    /// Tệp không mở được phải được ĐẾM, không bỏ lặng.
+    ///
+    /// Trước bản sửa này, tệp không mở được biến mất khỏi kết quả mà không để
+    /// lại dấu vết. NAS rớt giữa lượt quét thì mọi ứng viên trên đó biến mất,
+    /// `completed` vẫn thành `true`, và màn hình nói "không tìm thấy tệp trùng
+    /// lặp nào" — trong khi nó chưa hề nhìn thấy 80% thư viện.
+    #[test]
+    fn tep_khong_mo_duoc_phai_duoc_dem() {
+        let noi_dung = vec![5u8; 300 * 1024];
+        let (index, dir) = index_over(
+            "dem-loi",
+            &[("m-a.mp4", noi_dung.clone()), ("m-b.mp4", noi_dung)],
+        );
+        // Xoá một tệp sau khi chỉ mục đã dựng — đúng cảnh "tệp biến mất giữa
+        // chừng", và cũng là cảnh một ổ vừa rớt thu nhỏ lại.
+        std::fs::remove_file(dir.join("m-b.mp4")).expect("xoá");
+
+        let khong_doc_duoc = AtomicUsize::new(0);
+        find_duplicates(
+            &index,
+            &AtomicBool::new(false),
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &Counters {
+                candidates: &AtomicUsize::new(0),
+                hashed: &AtomicUsize::new(0),
+                unreadable: &khong_doc_duoc,
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
+        );
+
+        assert_eq!(
+            khong_doc_duoc.load(Ordering::Relaxed),
+            1,
+            "tệp không mở được phải được đếm, không bỏ lặng"
+        );
+    }
+
+    /// Ổ không còn gắn bị loại TRƯỚC khi mở tệp nào, và nói được tên.
+    #[test]
+    fn o_khong_con_gan_bi_loai_va_noi_duoc_ten() {
+        use crate::index::model::{IndexBuilder, MediaKind};
+
+        // `Q:` gần như chắc chắn không tồn tại trên máy chạy kiểm thử.
+        let mut b = IndexBuilder::new();
+        let did = b.add_dir(r"Q:o", 1);
+        b.add_file("x.mp4", MediaKind::Video, did, 1);
+        b.add_file("y.mp4", MediaKind::Video, did, 2);
+        let mut index = b.finish();
+        index.set_file_stats(vec![300 * 1024, 300 * 1024], vec![0, 0]);
+
+        let da_rot = parking_lot::Mutex::new(Vec::new());
+        let da_mo = AtomicUsize::new(0);
+        let groups = find_duplicates(
+            &index,
+            &AtomicBool::new(false),
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &Counters {
+                candidates: &AtomicUsize::new(0),
+                hashed: &da_mo,
+                unreadable: &AtomicUsize::new(0),
+                dropped: &da_rot,
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
+        );
+
+        assert!(groups.is_empty());
+        assert_eq!(
+            *da_rot.lock(),
+            vec!["Q:".to_string()],
+            "phải nói được TÊN ổ đã rớt, không chỉ một con số"
+        );
+        assert_eq!(
+            da_mo.load(Ordering::Relaxed),
+            0,
+            "không được mở tệp nào trên ổ đã rớt — một lần mở có thể treo 60 giây"
         );
     }
 
@@ -1022,12 +1207,16 @@ mod tests {
         let hashed = AtomicUsize::new(0);
         let groups = find_duplicates(
             &index,
-            &candidates,
-            &hashed,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
             &[],
-            &parking_lot::Mutex::new(Vec::new()),
+            &Counters {
+                candidates: &candidates,
+                hashed: &hashed,
+                unreadable: &AtomicUsize::new(0),
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
         );
         assert!(groups.is_empty());
         assert_eq!(
@@ -1186,12 +1375,16 @@ mod tests {
         );
         let groups = find_duplicates(
             &index,
-            &AtomicUsize::new(0),
-            &AtomicUsize::new(0),
             &AtomicBool::new(true),
             crate::media::dupescope::DupeScope::Everything,
             &[],
-            &parking_lot::Mutex::new(Vec::new()),
+            &Counters {
+                candidates: &AtomicUsize::new(0),
+                hashed: &AtomicUsize::new(0),
+                unreadable: &AtomicUsize::new(0),
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
         );
         assert!(groups.is_empty(), "da huy thi khong tra ve ket qua do dang");
     }
@@ -1213,12 +1406,16 @@ mod tests {
         let hashed = AtomicUsize::new(0);
         find_duplicates(
             &index,
-            &candidates,
-            &hashed,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
             &[],
-            &parking_lot::Mutex::new(Vec::new()),
+            &Counters {
+                candidates: &candidates,
+                hashed: &hashed,
+                unreadable: &AtomicUsize::new(0),
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
         );
         // Two files sharing a size: both are candidates, both get read.
         assert_eq!(
@@ -1251,12 +1448,16 @@ mod tests {
         let hashed = AtomicUsize::new(0);
         let groups = find_duplicates(
             &index,
-            &candidates,
-            &hashed,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
             &[],
-            &parking_lot::Mutex::new(Vec::new()),
+            &Counters {
+                candidates: &candidates,
+                hashed: &hashed,
+                unreadable: &AtomicUsize::new(0),
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
         );
 
         assert_eq!(

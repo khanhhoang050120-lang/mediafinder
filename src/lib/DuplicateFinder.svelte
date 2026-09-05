@@ -171,6 +171,27 @@
     xacMinh = new Map(xacMinh);
   }
 
+  /// Lượt quét này có bỏ sót tệp nào không.
+  function thieuTep(s: DupeProgress): boolean {
+    // `?? 0` và `?? []` không phải thừa: một bản backend cũ hơn (hoặc một lượt
+    // cập nhật dở dang, khi tệp .exe đã đổi mà cửa sổ chưa nạp lại) trả về
+    // `DupeProgress` không có hai trường này. Đọc `.length` của `undefined`
+    // làm cả màn hình trắng — và đúng lỗi đó vừa làm bảy bài kiểm thử cũ đỏ.
+    return (s.unreadable ?? 0) > 0 || (s.droppedDrives ?? []).length > 0;
+  }
+
+  /// Nói rõ thiếu ở đâu, ưu tiên thứ biết chắc.
+  ///
+  /// Ổ đã rớt thì gọi được TÊN, và đó là câu hữu ích hơn hẳn một con số: người
+  /// dùng biết ngay phải nối lại ổ nào.
+  function moTaThieu(s: DupeProgress): string {
+    const o = s.droppedDrives ?? [];
+    if (o.length) {
+      return `Thiếu ${o.join(", ")} — ổ không còn kết nối`;
+    }
+    return `Thiếu ${formatCount(s.unreadable ?? 0)} tệp không đọc được`;
+  }
+
   /// Giờ trong ngày của một mốc Unix: "08:15".
   function gioTrongNgay(unix: number): string {
     const d = new Date(unix * 1000);
@@ -351,6 +372,10 @@
       {#if stat?.startedUnix}
         <span class="dupenote">· kết quả từ {gioTrongNgay(stat.startedUnix)}</span>
       {/if}
+      {#if stat && thieuTep(stat)}
+        <!-- Có kết quả không có nghĩa là kết quả đầy đủ. -->
+        <span class="canhbao">· {moTaThieu(stat)}</span>
+      {/if}
     </span>
     <!--
       Nói thẳng ra vì tầng 2 đối chiếu hai đầu tệp, không phải toàn bộ. Cách
@@ -358,7 +383,19 @@
     -->
     <span class="dupenote">Đối chiếu theo dung lượng và hai đầu tệp — hãy xem lại trước khi xoá</span>
   {:else if stat?.completed}
-    <span>Không tìm thấy tệp trùng lặp nào.</span>
+    <!--
+      "Không tìm thấy" chỉ đúng khi đã NHÌN THẤY hết. Với 82% ứng viên nằm
+      trên ổ mạng, một lượt quét thiếu tệp không phải chuyện hiếm — và khẳng
+      định "không có gì trùng lặp" trong khi chưa đọc được 80% thư viện là
+      kiểu nói dối tệ nhất: nó nghe như một câu trả lời dứt khoát.
+    -->
+    {#if thieuTep(stat)}
+      <span class="canhbao">
+        {moTaThieu(stat)} — chưa thể nói chắc có tệp trùng lặp hay không.
+      </span>
+    {:else}
+      <span>Không tìm thấy tệp trùng lặp nào.</span>
+    {/if}
   {:else}
     <!--
       Không giống với việc không tìm thấy gì: một lần quét bị dừng thì không
@@ -523,6 +560,12 @@
   }
   /* Cảnh báo dùng màu riêng: "có tệp khác nội dung" là lý do để DỪNG tay, chứ
      không phải một mẩu thông tin ngang hàng với dung lượng. */
+  /* Cảnh báo thiếu tệp: cùng màu với cảnh báo xác minh, vì cùng một loại
+     thông điệp — "dừng lại, câu trả lời này chưa đầy đủ". */
+  .canhbao {
+    color: #d4a04a;
+  }
+
   .gverify.canh {
     color: #d4a04a;
   }
