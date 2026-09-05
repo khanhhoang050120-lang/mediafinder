@@ -53,7 +53,12 @@ fn scan_the_real_library() {
     let service = mediafinder::media::dupes::DupeService::new();
     let started = Instant::now();
     assert!(
-        service.start(std::sync::Arc::new(index), 0),
+        service.start(
+            std::sync::Arc::new(index),
+            0,
+            mediafinder::media::dupescope::DupeScope::Everything,
+            Vec::new()
+        ),
         "quét phải bắt đầu"
     );
 
@@ -186,4 +191,152 @@ fn how_much_does_the_head_pass_separate() {
     let _ = AtomicBool::new(false);
     let _ = AtomicUsize::new(0);
     let _ = Ordering::Relaxed;
+}
+
+/// Bước 0 của kế hoạch đo: **ứng viên nằm ở đâu**.
+///
+/// Miễn phí — không đọc đĩa một byte nào, chỉ đọc chỉ mục. Đây là phép đo phải
+/// chạy trước mọi quyết định về tốc độ, vì nó trả lời bốn câu mà hôm nay đang
+/// phải đoán:
+///
+/// * Bao nhiêu việc nằm trên ổ mạng, bao nhiêu trên đĩa trong máy — quyết định
+///   nên dồn công sức vào đâu.
+/// * Ứng viên phân bố theo dải dung lượng thế nào — quyết định sàn dung lượng
+///   (việc E) có đáng làm không, và nâng `SMALL_FILE_LIMIT` cắt được bao nhiêu.
+/// * Bao nhiêu cặp cùng `mtime` — quyết định khoá (size, mtime) ở việc G có
+///   dùng được không, và trả lời luôn câu "CapCut có giữ thời gian sửa không"
+///   mà người dùng nói là không biết.
+/// * Có cặp nào cùng (ổ, FRN) không — hardlink, cùng một tệp vật lý xuất hiện
+///   hai lần, "trùng" mà không thu hồi được gì.
+#[test]
+#[ignore = "cần chỉ mục đã quét trên máy thật; chạy với --ignored"]
+fn buoc_0_ung_vien_nam_o_dau() {
+    let cache = match persist::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("chưa có cache ({e}) — mở MediaFinder và quét một lần trước");
+            return;
+        }
+    };
+    let index = cache.index;
+    let sizes = index.sizes();
+    let mtimes = index.mtimes();
+
+    // Ổ mạng: lấy từ chính danh sách ổ đang gắn, vì ổ ánh xạ (`Y:\…`) trông y
+    // hệt đĩa trong máy trong chỉ mục.
+    let net: Vec<char> = mediafinder::ntfs::volume::list_volumes()
+        .into_iter()
+        .filter(|v| v.kind == mediafinder::ntfs::volume::VolumeKind::Network)
+        .map(|v| v.letter.to_ascii_uppercase())
+        .collect();
+    eprintln!("ổ mạng đang gắn: {net:?}");
+
+    // Tầng 1, y hệt mã sản phẩm.
+    let mut by_size: std::collections::HashMap<u64, Vec<u32>> = std::collections::HashMap::new();
+    for (i, &s) in sizes.iter().enumerate() {
+        if s >= 64 * 1024 {
+            by_size.entry(s).or_default().push(i as u32);
+        }
+    }
+    by_size.retain(|_, v| v.len() > 1);
+
+    let mut theo_o: std::collections::BTreeMap<char, (usize, u64)> =
+        std::collections::BTreeMap::new();
+    // Dải dung lượng: (nhãn, cận trên byte).
+    let dai: [(&str, u64); 6] = [
+        ("64K–1M", 1 << 20),
+        ("1M–4M", 4 << 20),
+        ("4M–16M", 16 << 20),
+        ("16M–64M", 64 << 20),
+        ("64M–256M", 256 << 20),
+        ("≥256M", u64::MAX),
+    ];
+    let mut theo_dai = [(0usize, 0u64); 6];
+    let mut cung_mtime = 0usize;
+    let mut tong_cap = 0usize;
+    let mut cung_frn = 0usize;
+
+    for (&size, entries) in by_size.iter() {
+        // Tiềm năng thu hồi của lớp: giữ một bản, bỏ phần còn lại.
+        let tiem_nang = size * (entries.len() as u64 - 1);
+
+        for &i in entries {
+            let v = index.volume_of(i as usize);
+            let e = theo_o.entry(v as char).or_insert((0, 0));
+            e.0 += 1;
+        }
+        theo_o
+            .entry(index.volume_of(entries[0] as usize) as char)
+            .and_modify(|e| e.1 += tiem_nang);
+
+        let d = dai.iter().position(|&(_, tran)| size < tran).unwrap_or(5);
+        theo_dai[d].0 += entries.len();
+        theo_dai[d].1 += tiem_nang;
+
+        // Cặp trong cùng lớp: cùng mtime? cùng FRN?
+        for a in 0..entries.len() {
+            for b in (a + 1)..entries.len() {
+                tong_cap += 1;
+                let (ia, ib) = (entries[a] as usize, entries[b] as usize);
+                if mtimes[ia] == mtimes[ib] && mtimes[ia] != 0 {
+                    cung_mtime += 1;
+                }
+                let (fa, fb) = (index.frn(ia), index.frn(ib));
+                if fa != 0 && fa == fb && index.volume_of(ia) == index.volume_of(ib) {
+                    cung_frn += 1;
+                }
+            }
+        }
+    }
+
+    let tong: usize = theo_o.values().map(|(n, _)| n).sum();
+    let tren_mang: usize = theo_o
+        .iter()
+        .filter(|(o, _)| net.contains(&o.to_ascii_uppercase()))
+        .map(|(_, (n, _))| n)
+        .sum();
+
+    eprintln!(
+        "\n=== ỨNG VIÊN TẦNG 1: {tong} tệp / {} trong chỉ mục ===",
+        index.len()
+    );
+    eprintln!(
+        "  trên ổ mạng : {tren_mang} ({:.0}%)",
+        100.0 * tren_mang as f64 / tong.max(1) as f64
+    );
+    eprintln!(
+        "  trên đĩa máy: {} ({:.0}%)",
+        tong - tren_mang,
+        100.0 * (tong - tren_mang) as f64 / tong.max(1) as f64
+    );
+
+    eprintln!("\n--- theo ổ ---");
+    for (o, (n, tiem)) in &theo_o {
+        let loai = if net.contains(&o.to_ascii_uppercase()) {
+            "mạng"
+        } else {
+            "máy "
+        };
+        eprintln!(
+            "  {o}: {loai} {n:>8} tệp   tiềm năng {:>8.1} GB",
+            *tiem as f64 / (1u64 << 30) as f64
+        );
+    }
+
+    eprintln!("\n--- theo dải dung lượng ---");
+    for (i, (nhan, _)) in dai.iter().enumerate() {
+        let (n, tiem) = theo_dai[i];
+        eprintln!(
+            "  {nhan:>9}: {n:>8} tệp ({:>4.1}%)   tiềm năng {:>8.1} GB",
+            100.0 * n as f64 / tong.max(1) as f64,
+            tiem as f64 / (1u64 << 30) as f64
+        );
+    }
+
+    eprintln!("\n--- cặp trong cùng lớp dung lượng: {tong_cap} ---");
+    eprintln!(
+        "  cùng mtime  : {cung_mtime} ({:.1}%) — quyết định khoá (size, mtime) có dùng được không",
+        100.0 * cung_mtime as f64 / tong_cap.max(1) as f64
+    );
+    eprintln!("  cùng (ổ,FRN): {cung_frn} — hardlink, 'trùng' mà không thu hồi được gì");
 }

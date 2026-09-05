@@ -48,7 +48,7 @@ const SMALL_FILE_LIMIT: u64 = SAMPLE_BYTES * 2;
 /// Tiny files collide on size constantly — thousands of 1 KB thumbnails and
 /// icons — and finding that two 800-byte files match is not worth anybody's
 /// attention. Reclaiming space is the point.
-const MIN_INTERESTING_SIZE: u64 = 64 * 1024;
+pub(crate) const MIN_INTERESTING_SIZE: u64 = 64 * 1024;
 
 // Checked when the crate is built. Thousands of icons and thumbnails share a
 // size; reporting those would bury the groups actually worth acting on.
@@ -80,6 +80,72 @@ pub struct DupeProgress {
     /// alone would treat a library with nothing duplicated as never scanned,
     /// and re-run the whole thing on every visit to the view.
     pub completed: bool,
+    /// Lượt quét hiện tại bắt đầu lúc nào, giây Unix. `0` nếu chưa quét lần
+    /// nào.
+    ///
+    /// Giao diện cần nó để nói "kết quả từ HH:MM". Từ khi có quét nền, kết quả
+    /// có thể đã nằm sẵn từ 8 giờ sáng trong khi người dùng mở màn hình lúc 3
+    /// giờ chiều — không nói ra là lặp lại đúng lỗi 4.1 vừa sửa: màn hình hiện
+    /// một câu trả lời cũ mà không cho biết nó cũ.
+    pub started_unix: u64,
+    /// Đã yêu cầu dừng nhưng luồng quét chưa kết thúc.
+    ///
+    /// `cancel()` chỉ **giương cờ** rồi trả về ngay — luồng vẫn đang ở giữa
+    /// một lần mở tệp, mà trên NAS một lần mở có thể treo tới hàng chục giây.
+    /// Trong khoảng đó `start()` sẽ từ chối vì `running` còn true.
+    ///
+    /// Thiếu cờ này thì giao diện không phân biệt được "chưa quét" với "đang
+    /// dừng dở", nên người bấm huỷ rồi bấm quét lại thấy màn hình dựng lại như
+    /// sắp chạy mà thật ra chẳng có gì xảy ra. Đúng lỗi người dùng báo.
+    pub stopping: bool,
+    /// Còn khoảng bao nhiêu giây nữa, `None` khi chưa đủ dữ liệu để nói.
+    ///
+    /// Tính từ tốc độ **đo được của chính lượt quét này**, không phải một hằng
+    /// số đoán sẵn. Không có phép đo nào cho mã hiện tại trên thư viện hiện
+    /// tại — con số 584 giây trong tài liệu cũ đo ngày 24/8 trên ổ khác, bằng
+    /// mã khác, trên chỉ mục còn chứa 70.461 tệp đã bị xoá.
+    ///
+    /// `None` cho tới khi đã mở đủ [`MIN_MAU_UOC_LUONG`] tệp: tốc độ của vài
+    /// tệp đầu chưa nói lên gì (cache còn lạnh, luồng còn đang khởi động), và
+    /// một con số nhảy từ "2 phút" lên "40 phút" rồi xuống "5 phút" thì tệ hơn
+    /// là không hiện gì.
+    pub eta_seconds: Option<u64>,
+}
+
+/// Phải mở được ít nhất bấy nhiêu tệp mới dám nói còn bao lâu.
+///
+/// Hai trăm tệp: đủ để vượt qua giai đoạn khởi động và trung bình hoá vài lần
+/// mở chậm bất thường, nhưng vẫn tới trong vài giây trên ổ trong máy.
+const MIN_MAU_UOC_LUONG: usize = 200;
+
+/// Ước lượng số giây còn lại từ tiến độ thật.
+///
+/// Tách thành hàm thuần để kiểm thử được mọi ranh giới mà không cần một lượt
+/// quét thật.
+///
+/// * `hashed` — số tệp đã mở xong.
+/// * `total` — tổng số tệp phải mở.
+/// * `elapsed_secs` — đã chạy bao lâu.
+pub fn uoc_luong_con_lai(hashed: usize, total: usize, elapsed_secs: f64) -> Option<u64> {
+    if hashed < MIN_MAU_UOC_LUONG || hashed >= total || elapsed_secs <= 0.0 {
+        return None;
+    }
+    let toc_do = hashed as f64 / elapsed_secs;
+    if toc_do <= 0.0 {
+        return None;
+    }
+    let con_lai = (total - hashed) as f64 / toc_do;
+    // Chặn trên: một con số kiểu "còn 9 tiếng" không giúp ai quyết định gì, và
+    // gần như luôn là dấu hiệu ổ vừa rớt chứ không phải ước lượng thật.
+    Some(con_lai.min(24.0 * 3600.0) as u64)
+}
+
+/// Giây Unix hiện tại.
+fn gio_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Shared handle so the UI can watch a scan that takes a while.
@@ -117,6 +183,8 @@ pub struct DupeService {
     /// đã sinh ra các vị trí đó. Lấy epoch hiện tại ghép với vị trí cũ thì ảnh
     /// thu nhỏ cũng của tệp khác.
     epoch: Arc<AtomicU64>,
+    /// Mốc bắt đầu lượt quét, giây Unix — để tính tốc độ thật.
+    started_unix: Arc<AtomicU64>,
 }
 
 impl DupeService {
@@ -133,6 +201,21 @@ impl DupeService {
             groups: groups.len(),
             wasted: groups.iter().map(|g| g.wasted).sum(),
             completed: self.completed.load(Ordering::Relaxed),
+            started_unix: self.started_unix.load(Ordering::Relaxed),
+            stopping: self.running.load(Ordering::Relaxed) && self.stop.load(Ordering::Relaxed),
+            eta_seconds: {
+                let running = self.running.load(Ordering::Relaxed);
+                let bat_dau = self.started_unix.load(Ordering::Relaxed);
+                if running && bat_dau > 0 {
+                    uoc_luong_con_lai(
+                        self.hashed.load(Ordering::Relaxed),
+                        self.candidates.load(Ordering::Relaxed),
+                        gio_unix().saturating_sub(bat_dau) as f64,
+                    )
+                } else {
+                    None
+                }
+            },
         }
     }
 
@@ -171,7 +254,13 @@ impl DupeService {
     ///
     /// `epoch` là số hiệu của chính `index` truyền vào — hai thứ phải đi cùng
     /// nhau, vì kết quả trỏ vào vị trí trong chỉ mục đó.
-    pub fn start(&self, index: Arc<Index>, epoch: u64) -> bool {
+    pub fn start(
+        &self,
+        index: Arc<Index>,
+        epoch: u64,
+        scope: crate::media::dupescope::DupeScope,
+        net_letters: Vec<char>,
+    ) -> bool {
         if self.running.swap(true, Ordering::AcqRel) {
             return false;
         }
@@ -184,6 +273,7 @@ impl DupeService {
         // bản thân dữ liệu — chỉ giữ nó sống lâu hơn snapshot toàn cục.
         *self.snapshot.lock() = Some(Arc::clone(&index));
         self.epoch.store(epoch, Ordering::Relaxed);
+        self.started_unix.store(gio_unix(), Ordering::Relaxed);
 
         let running = Arc::clone(&self.running);
         let stop = Arc::clone(&self.stop);
@@ -196,13 +286,30 @@ impl DupeService {
             .name("dupes".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let groups = find_duplicates(&index, &candidates, &hashed, &stop);
+                let groups = find_duplicates(
+                    &index,
+                    &candidates,
+                    &hashed,
+                    &stop,
+                    scope,
+                    &net_letters,
+                    &result,
+                );
 
                 if stop.load(Ordering::Relaxed) {
                     tracing::info!(
-                        "tìm trùng lặp: đã dừng theo yêu cầu [{:.1}s]",
+                        "tìm trùng lặp: đã dừng theo yêu cầu, giữ lại {} nhóm đã chốt [{:.1}s]",
+                        result.lock().len(),
                         started.elapsed().as_secs_f64()
                     );
+                    // KHÔNG xoá `result`. Các đợt đã chạy là kết quả thật, và
+                    // vì lớp được xử lý theo tiềm năng giảm dần nên đó chính
+                    // là những nhóm đáng giá nhất. Vứt đi là bắt người dùng
+                    // trả lại từ đầu cái họ vừa chờ xong.
+                    //
+                    // `completed` vẫn để false: câu trả lời chưa đầy đủ, và
+                    // giao diện phải phân biệt được "đã quét hết" với "dừng
+                    // giữa chừng, đây là phần đã tìm thấy".
                 } else {
                     let wasted: u64 = groups.iter().map(|g| g.wasted).sum();
                     tracing::info!(
@@ -223,6 +330,43 @@ impl DupeService {
     }
 }
 
+/// Dựng danh sách nhóm từ bảng vân tay, đã sắp theo giá trị thu hồi.
+fn nhom_tu(by_hash: &HashMap<(u64, [u8; 32]), Vec<u32>>) -> Vec<DuplicateGroup> {
+    let mut groups: Vec<DuplicateGroup> = by_hash
+        .iter()
+        .filter(|(_, v)| v.len() > 1)
+        .map(|(&(size, _), entries)| {
+            // Thứ tự ổn định để hai lượt quét giống nhau liệt kê một nhóm y
+            // hệt, và mục đầu tiên luôn là "giữ cái này".
+            let mut entries = entries.clone();
+            entries.sort_unstable();
+            DuplicateGroup {
+                size,
+                wasted: size * (entries.len() as u64 - 1),
+                entries,
+            }
+        })
+        .collect();
+    groups.sort_unstable_by(|a, b| {
+        b.wasted
+            .cmp(&a.wasted)
+            .then(a.entries[0].cmp(&b.entries[0]))
+    });
+    groups
+}
+
+/// Công bố phần đã chốt để giao diện hiện ngay.
+///
+/// Gọi sau mỗi đợt. Vì các lớp được xử lý theo tiềm năng giảm dần, nhóm đã
+/// công bố không bao giờ bị đẩy xuống bởi nhóm tìm thấy sau — thứ hạng của nó
+/// là chung cuộc.
+fn publish(
+    by_hash: &HashMap<(u64, [u8; 32]), Vec<u32>>,
+    result: &parking_lot::Mutex<Vec<DuplicateGroup>>,
+) {
+    *result.lock() = nhom_tu(by_hash);
+}
+
 /// Tier 1 then tier 2.
 ///
 /// Returns nothing if `stop` is raised, rather than a partial answer that
@@ -232,6 +376,9 @@ fn find_duplicates(
     candidates: &AtomicUsize,
     hashed: &AtomicUsize,
     stop: &AtomicBool,
+    scope: crate::media::dupescope::DupeScope,
+    net_letters: &[char],
+    result: &parking_lot::Mutex<Vec<DuplicateGroup>>,
 ) -> Vec<DuplicateGroup> {
     // Tier 1: group by size. Free — the index already holds every size, and
     // two files of different lengths cannot be the same file.
@@ -247,9 +394,48 @@ fn find_duplicates(
     // size puts every file sharing one common size onto a single thread while
     // the others sit idle; a library where one size is very popular then runs
     // most of the scan single-threaded.
-    let work: Vec<(u64, u32)> = by_size
+    // Lọc theo phạm vi NGAY ĐÂY, trước khi đếm. Người dùng đã chọn "chỉ ổ
+    // trong máy" thì con số tiến độ phải là số việc thật, không kể tệp NAS sẽ
+    // không bao giờ được mở — một thanh tiến độ đếm cả việc không làm là một
+    // thanh tiến độ nói dối.
+    //
+    // Xếp theo TIỀM NĂNG THU HỒI giảm dần, không theo thứ tự băm.
+    //
+    // Tiềm năng của một lớp dung lượng là `size * (số tệp − 1)` — cận trên
+    // chính xác của mọi nhóm sinh ra từ lớp đó, vì nhóm lớn nhất có thể là cả
+    // lớp. Nên xử lý theo thứ tự này thì nhóm đáng giá nhất ra trước.
+    //
+    // Đo trên thư viện thật (410.581 tệp, 197.301 ứng viên): tệp ≥256 MB chỉ
+    // chiếm **1,7% số tệp** nhưng mang **68% tổng tiềm năng** (2.543 GB trên
+    // 3.746 GB). Tệp 64 KB–1 MB thì ngược lại: 35% số tệp, 0,4% giá trị.
+    //
+    // Người dọn ổ vì thế thấy phần lớn giá trị sau khi mở vài nghìn tệp thay
+    // vì hai trăm nghìn — tổng thời gian không đổi, nhưng thời gian phải CHỜ
+    // giảm từ hàng chục phút xuống vài giây.
+    let mut lop: Vec<(u64, Vec<u32>)> = by_size
+        .into_iter()
+        .map(|(size, entries)| {
+            let trong_pham_vi: Vec<u32> = entries
+                .into_iter()
+                .filter(|&i| crate::media::dupescope::in_scope(index, i, scope, net_letters))
+                .collect();
+            (size, trong_pham_vi)
+        })
+        // Lọc phạm vi có thể làm một lớp chỉ còn một tệp — lúc đó không còn
+        // gì để so sánh.
+        .filter(|(_, v)| v.len() > 1)
+        .collect();
+    lop.sort_unstable_by(|a, b| {
+        let ta = a.0 * (a.1.len() as u64 - 1);
+        let tb = b.0 * (b.1.len() as u64 - 1);
+        // Tiềm năng giảm dần; hoà thì theo dung lượng để hai lượt quét giống
+        // nhau cho ra cùng thứ tự.
+        tb.cmp(&ta).then(b.0.cmp(&a.0))
+    });
+
+    let work: Vec<(u64, u32)> = lop
         .iter()
-        .flat_map(|(&size, entries)| entries.iter().map(move |&i| (size, i)))
+        .flat_map(|(size, entries)| entries.iter().map(move |&i| (*size, i)))
         .collect();
     let total = work.len();
     candidates.store(total, Ordering::Relaxed);
@@ -262,41 +448,135 @@ fn find_duplicates(
     // library the head separated 166 of 29,053 candidates — 0.6% — because
     // most candidates here are genuine copies, whose heads *should* match.
     // The split bought nothing and cost a second open per file. See PERF-003.
-    let fingerprints: Vec<(u64, u32, [u8; 32])> = work
-        .into_par_iter()
-        .filter_map(|(size, i)| {
-            if stop.load(Ordering::Relaxed) {
-                return None;
-            }
-            let path = index.full_path(i as usize);
-            hashed.fetch_add(1, Ordering::Relaxed);
-            fingerprint(&path, size).map(|h| (size, i, h))
-        })
-        .collect();
+    // Chia thành đợt và công bố sau mỗi đợt.
+    //
+    // Không chạy rayon từng LỚP: đuôi phân bố là hàng nghìn lớp chỉ có 2–3
+    // tệp, và mỗi lớp một lần gọi song song thì phần điều phối tốn hơn phần
+    // việc. Gom các lớp liền nhau thành đợt vài trăm tệp, `par_iter` trong
+    // đợt.
+    //
+    // Vì các lớp đã xếp theo tiềm năng giảm dần, mọi nhóm công bố ở đợt trước
+    // đều có `wasted` lớn hơn hoặc bằng tiềm năng của đợt sau — nên thứ hạng
+    // của chúng là **chung cuộc**, không đảo lộn khi quét tiếp.
+    const TEP_MOI_DOT: usize = 400;
 
-    if stop.load(Ordering::Relaxed) {
-        return Vec::new();
+    // Kho vân tay đã lưu từ lượt trước. Đọc một lần, dùng cho cả lượt.
+    let kho = parking_lot::Mutex::new(crate::media::dupestore::load());
+    let tu_kho = AtomicUsize::new(0);
+    if !kho.lock().is_empty() {
+        tracing::info!("kho vân tay: {} mục đã lưu", kho.lock().len());
     }
 
     let mut by_hash: HashMap<(u64, [u8; 32]), Vec<u32>> = HashMap::new();
-    for (size, i, h) in fingerprints {
-        by_hash.entry((size, h)).or_default().push(i);
+    let mut dot: Vec<(u64, u32)> = Vec::with_capacity(TEP_MOI_DOT);
+    let mut da_huy = false;
+
+    let chay_dot = |dot: &mut Vec<(u64, u32)>,
+                    by_hash: &mut HashMap<(u64, [u8; 32]), Vec<u32>>,
+                    kho: &parking_lot::Mutex<crate::media::dupestore::Store>,
+                    tu_kho: &AtomicUsize|
+     -> bool {
+        if dot.is_empty() {
+            return true;
+        }
+        let vt: Vec<(u64, u32, [u8; 32], bool)> = std::mem::take(dot)
+            .into_par_iter()
+            .filter_map(|(size, i)| {
+                if stop.load(Ordering::Relaxed) {
+                    return None;
+                }
+                let path = index.full_path(i as usize);
+                let mtime = index.mtimes().get(i as usize).copied().unwrap_or(0);
+
+                // Đã có vân tay và tệp chưa đổi thì KHÔNG mở lại. Đây là toàn
+                // bộ giá trị của kho: trên NAS một lần mở tốn ~66 ms chỉ để
+                // lấy byte đầu, và 82% ứng viên nằm ở đó.
+                if let Some(fp) = kho.lock().get(&path, size, mtime) {
+                    tu_kho.fetch_add(1, Ordering::Relaxed);
+                    hashed.fetch_add(1, Ordering::Relaxed);
+                    return Some((size, i, fp, false));
+                }
+
+                hashed.fetch_add(1, Ordering::Relaxed);
+                fingerprint(&path, size).map(|h| (size, i, h, true))
+            })
+            .collect();
+
+        for (size, i, h, moi_doc) in vt {
+            if moi_doc {
+                let path = index.full_path(i as usize);
+                let mtime = index.mtimes().get(i as usize).copied().unwrap_or(0);
+                kho.lock().put(&path, size, mtime, h);
+            }
+            by_hash.entry((size, h)).or_default().push(i);
+        }
+        !stop.load(Ordering::Relaxed)
+    };
+
+    for (size, entries) in &lop {
+        for &i in entries {
+            dot.push((*size, i));
+        }
+        if dot.len() >= TEP_MOI_DOT {
+            let con_chay = chay_dot(&mut dot, &mut by_hash, &kho, &tu_kho);
+            // Công bố TRƯỚC khi kiểm cờ dừng. Một đợt bị huỷ vẫn đã băm xong
+            // phần lớn tệp của nó, và thoát ra trước khi công bố là vứt đúng
+            // cái vừa làm xong — đây là lỗi bài kiểm thử bắt được ngay lần
+            // chạy đầu.
+            publish(&by_hash, result);
+            if !con_chay {
+                da_huy = true;
+                break;
+            }
+        }
+    }
+    if !da_huy {
+        if !chay_dot(&mut dot, &mut by_hash, &kho, &tu_kho) {
+            da_huy = true;
+        }
+        publish(&by_hash, result);
     }
 
-    let mut groups: Vec<DuplicateGroup> = by_hash
-        .into_iter()
-        .filter(|(_, v)| v.len() > 1)
-        .map(|((size, _), mut entries)| {
-            // Stable order so the same scan lists a group the same way twice,
-            // and the first entry is a consistent "keep this".
-            entries.sort_unstable();
-            DuplicateGroup {
-                size,
-                wasted: size * (entries.len() as u64 - 1),
-                entries,
+    // Huỷ giữa chừng KHÔNG còn vứt sạch: các đợt đã chạy là kết quả thật, và
+    // vì chúng là những lớp giá trị nhất nên phần bỏ dở đáng giá ít hơn hẳn.
+    // Vứt đi là bắt người dùng trả lại từ đầu cái họ đã chờ xong.
+    let _ = da_huy;
+
+    // Lưu kho vân tay — kể cả khi bị huỷ. Một lượt huỷ vẫn đã đọc xong hàng
+    // nghìn tệp, và vứt phần đó đi là bắt lượt sau đọc lại từ đầu.
+    //
+    // Lưu MỘT LẦN ở đây, không phải mỗi vài trăm tệp: `save` tuần tự hoá cả
+    // map, nên lưu liên tục là ghi lại vài chục MB hàng trăm lần.
+    {
+        let mut k = kho.lock();
+        // Tỉa khoá không còn trong tập ứng viên. Không tỉa thì kho phình mãi
+        // theo tệp đã xoá — đúng lỗi mà `metadata.bin` của enrichment đang có.
+        //
+        // Chỉ tỉa khi quét TRỌN VẸN cả phạm vi: một lượt bị huỷ, hoặc một lượt
+        // chỉ quét ổ trong máy, không nhìn thấy hết tệp — tỉa theo nó là vứt
+        // vân tay của những tệp vẫn còn nguyên.
+        if !da_huy && scope == crate::media::dupescope::DupeScope::Everything {
+            let con_dung: std::collections::HashSet<u64> = lop
+                .iter()
+                .flat_map(|(_, e)| e.iter())
+                .map(|&i| crate::media::dupestore::path_key(&index.full_path(i as usize)))
+                .collect();
+            let da_tia = k.retain_keys(&con_dung);
+            if da_tia > 0 {
+                tracing::info!("kho vân tay: tỉa {da_tia} mục không còn trong chỉ mục");
             }
-        })
-        .collect();
+        }
+        if crate::media::dupestore::save(&k) {
+            tracing::info!(
+                "kho vân tay: lưu {} mục · lượt này đọc lại {} tệp, dùng kho {} tệp",
+                k.len(),
+                hashed.load(Ordering::Relaxed) - tu_kho.load(Ordering::Relaxed),
+                tu_kho.load(Ordering::Relaxed)
+            );
+        }
+    }
+
+    let mut groups: Vec<DuplicateGroup> = nhom_tu(&by_hash);
 
     // Biggest waste first — the order somebody clearing space wants to work
     // through. The entry tiebreak keeps two runs of the same scan identical.
@@ -471,7 +751,186 @@ mod tests {
             &AtomicUsize::new(0),
             &AtomicUsize::new(0),
             &AtomicBool::new(false),
+            // Các bài này dựng chỉ mục ở thư mục tạm (ổ trong máy) và không
+            // quan tâm phạm vi, nên quét tất.
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &parking_lot::Mutex::new(Vec::new()),
         )
+    }
+
+    /// Nhóm đáng giá nhất phải ra TRƯỚC, không theo thứ tự băm.
+    ///
+    /// Đo trên thư viện thật (410.581 tệp, 197.301 ứng viên): tệp ≥256 MB chỉ
+    /// chiếm 1,7% số tệp nhưng mang **68% tổng tiềm năng thu hồi**. Xử lý theo
+    /// tiềm năng giảm dần nghĩa là người dọn ổ thấy phần lớn giá trị sau vài
+    /// nghìn tệp thay vì hai trăm nghìn.
+    #[test]
+    fn nhom_dang_gia_nhat_ra_truoc() {
+        let nho = vec![1u8; 200 * 1024];
+        let to = vec![2u8; 900 * 1024];
+        let (index, _d) = index_over(
+            "thu-tu-gia-tri",
+            &[
+                ("nho-a.mp4", nho.clone()),
+                ("nho-b.mp4", nho),
+                ("to-a.mp4", to.clone()),
+                ("to-b.mp4", to),
+            ],
+        );
+        let groups = run(&index);
+        assert_eq!(groups.len(), 2);
+        assert!(
+            groups[0].wasted > groups[1].wasted,
+            "nhóm thu hồi được nhiều hơn phải đứng trước"
+        );
+        assert_eq!(groups[0].size, 900 * 1024);
+    }
+
+    /// Nhóm giá trị nhất phải được XỬ LÝ trước, không chỉ được sắp trước.
+    ///
+    /// Ca trên không đủ: `groups.sort_unstable_by` ở cuối vẫn sắp đúng dù thứ
+    /// tự xử lý ngẫu nhiên, nên đảo chiều sắp lớp mà nó vẫn xanh — phép thử
+    /// bằng cách phá mã đã lộ ra điều đó.
+    ///
+    /// Thứ tự XỬ LÝ mới là thứ quyết định người dùng chờ bao lâu để thấy nhóm
+    /// đầu tiên, và nó chỉ quan sát được qua kết quả **công bố giữa chừng**.
+    #[test]
+    fn nhom_gia_tri_nhat_duoc_cong_bo_truoc_tien() {
+        // Nhiều lớp nhỏ (để vượt một đợt) cộng một lớp rất lớn. Lớp lớn phải
+        // được băm trong đợt ĐẦU, nên nó có mặt ngay ở lần công bố đầu tiên.
+        // Mỗi lớp phải có DUNG LƯỢNG KHÁC NHAU, nếu không chúng gộp thành
+        // một lớp duy nhất — sai giả định mà bài này đã mắc ở lần viết đầu:
+        // 250 tệp cùng 70 KB không phải 250 lớp, mà là một lớp 500 tệp có
+        // tiềm năng 34 MB, lớn hơn hẳn lớp "to" 2 MB.
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        let to = vec![7u8; 2 * 1024 * 1024];
+        files.push(("zz-to-a.mp4".into(), to.clone()));
+        files.push(("zz-to-b.mp4".into(), to));
+        for i in 0..250usize {
+            // 70 KB + i byte: mỗi lớp một dung lượng riêng, tiềm năng ~70 KB.
+            let nd = vec![(i % 251) as u8; 70 * 1024 + i];
+            files.push((format!("n-{i}-a.mp4"), nd.clone()));
+            files.push((format!("n-{i}-b.mp4"), nd));
+        }
+        let muon: Vec<(&str, Vec<u8>)> =
+            files.iter().map(|(n, c)| (n.as_str(), c.clone())).collect();
+        let (index, _d) = index_over("thu-tu-xu-ly", &muon);
+
+        let ket_qua = parking_lot::Mutex::new(Vec::new());
+        let stop = AtomicBool::new(false);
+        let hashed = AtomicUsize::new(0);
+
+        // Dừng ngay sau đợt đầu tiên.
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                while hashed.load(Ordering::Relaxed) < 410 {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                stop.store(true, Ordering::Relaxed);
+            });
+            find_duplicates(
+                &index,
+                &AtomicUsize::new(0),
+                &hashed,
+                &stop,
+                crate::media::dupescope::DupeScope::Everything,
+                &[],
+                &ket_qua,
+            );
+        });
+
+        let g = ket_qua.lock();
+        assert!(!g.is_empty(), "đợt đầu phải công bố được gì đó");
+        assert_eq!(
+            g[0].size,
+            2 * 1024 * 1024,
+            "lớp giá trị nhất phải nằm trong đợt ĐẦU, không phải đợt cuối"
+        );
+    }
+
+    /// Huỷ giữa chừng giữ lại phần đã chốt thay vì vứt sạch.
+    #[test]
+    fn huy_giua_chung_giu_lai_phan_da_chot() {
+        // Dựng nhiều tệp hơn một đợt (400) để chắc chắn có ít nhất một đợt
+        // chạy xong và được công bố trước khi cờ dừng được giương.
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        for i in 0..250 {
+            let noi_dung = vec![(i % 251) as u8; 70 * 1024];
+            files.push((format!("p-{i}-a.mp4"), noi_dung.clone()));
+            files.push((format!("p-{i}-b.mp4"), noi_dung));
+        }
+        let muon: Vec<(&str, Vec<u8>)> =
+            files.iter().map(|(n, c)| (n.as_str(), c.clone())).collect();
+        let (index, _d) = index_over("huy-giu-lai", &muon);
+
+        let ket_qua = parking_lot::Mutex::new(Vec::new());
+        let stop = AtomicBool::new(false);
+        let hashed = AtomicUsize::new(0);
+
+        // Chạy tới khi công bố được ít nhất một đợt, rồi dừng.
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                while hashed.load(Ordering::Relaxed) < 420 {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                stop.store(true, Ordering::Relaxed);
+            });
+            find_duplicates(
+                &index,
+                &AtomicUsize::new(0),
+                &hashed,
+                &stop,
+                crate::media::dupescope::DupeScope::Everything,
+                &[],
+                &ket_qua,
+            );
+        });
+
+        assert!(
+            !ket_qua.lock().is_empty(),
+            "huỷ giữa chừng phải giữ lại phần đã chốt, không vứt sạch"
+        );
+    }
+
+    /// Ước lượng thời gian: im lặng khi chưa biết, và không bao giờ đoán bừa.
+    #[test]
+    fn uoc_luong_im_lang_cho_toi_khi_co_du_mau() {
+        // Vài tệp đầu chưa nói lên gì: cache còn lạnh, luồng còn khởi động.
+        // Hiện một con số lúc này là hứa hẹn dựa trên nhiễu, và nó sẽ nhảy từ
+        // "2 phút" lên "40 phút" rồi xuống "5 phút" ngay trước mắt người dùng.
+        assert_eq!(uoc_luong_con_lai(1, 10_000, 1.0), None);
+        assert_eq!(uoc_luong_con_lai(MIN_MAU_UOC_LUONG - 1, 10_000, 5.0), None);
+        // Đủ mẫu thì mới nói.
+        assert!(uoc_luong_con_lai(MIN_MAU_UOC_LUONG, 10_000, 5.0).is_some());
+    }
+
+    #[test]
+    fn uoc_luong_tinh_dung_tu_toc_do_do_duoc() {
+        // 1.000 tệp trong 10 giây = 100 tệp/giây; còn 9.000 tệp = 90 giây.
+        assert_eq!(uoc_luong_con_lai(1_000, 10_000, 10.0), Some(90));
+    }
+
+    #[test]
+    fn quet_xong_thi_khong_con_gi_de_uoc_luong() {
+        assert_eq!(uoc_luong_con_lai(10_000, 10_000, 100.0), None);
+        // Và `hashed` vượt `total` (đếm cả tệp mở lỗi) cũng không được ra số âm.
+        assert_eq!(uoc_luong_con_lai(10_001, 10_000, 100.0), None);
+    }
+
+    #[test]
+    fn thoi_gian_bang_khong_khong_lam_no_chia_cho_khong() {
+        assert_eq!(uoc_luong_con_lai(1_000, 10_000, 0.0), None);
+        assert_eq!(uoc_luong_con_lai(1_000, 10_000, -5.0), None);
+    }
+
+    #[test]
+    fn o_rot_khong_sinh_ra_con_so_vo_nghia() {
+        // Chậm tới mức phi lý (một tệp mỗi mười giây) thường là ổ vừa rớt chứ
+        // không phải ước lượng thật. Chặn ở 24 giờ để màn hình không nói
+        // "còn 340 ngày".
+        let e = uoc_luong_con_lai(MIN_MAU_UOC_LUONG, 100_000_000, 2_000.0);
+        assert_eq!(e, Some(24 * 3600));
     }
 
     /// Kết quả phải trỏ vào chỉ mục CỦA LƯỢT QUÉT, không phải chỉ mục hiện tại.
@@ -495,7 +954,12 @@ mod tests {
 
         let (ix_cu, _d1) = index_over("giu-snapshot", &[("a.mp4", vec![1u8; 200_000])]);
         let arc_cu = Arc::new(ix_cu);
-        assert!(svc.start(Arc::clone(&arc_cu), 7));
+        assert!(svc.start(
+            Arc::clone(&arc_cu),
+            7,
+            crate::media::dupescope::DupeScope::Everything,
+            Vec::new()
+        ));
 
         // Chờ lượt quét xong để `running` hạ xuống.
         for _ in 0..200 {
@@ -556,7 +1020,15 @@ mod tests {
         );
         let candidates = AtomicUsize::new(0);
         let hashed = AtomicUsize::new(0);
-        let groups = find_duplicates(&index, &candidates, &hashed, &AtomicBool::new(false));
+        let groups = find_duplicates(
+            &index,
+            &candidates,
+            &hashed,
+            &AtomicBool::new(false),
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &parking_lot::Mutex::new(Vec::new()),
+        );
         assert!(groups.is_empty());
         assert_eq!(
             hashed.load(Ordering::Relaxed),
@@ -696,8 +1168,15 @@ mod tests {
         }
     }
 
-    /// Raising the stop flag must abandon the scan and return nothing —
-    /// a partial answer must never be mistaken for a complete one.
+    /// Huỷ **trước khi mở tệp nào** thì không có gì để trả về.
+    ///
+    /// Khác với trước: huỷ giữa chừng nay GIỮ phần đã chốt (xem
+    /// `huy_giua_chung_giu_lai_phan_da_chot`). Vì các lớp được xử lý theo tiềm
+    /// năng giảm dần, phần đã chốt chính là những nhóm đáng giá nhất — vứt đi
+    /// là bắt người dùng trả lại từ đầu cái họ vừa chờ xong.
+    ///
+    /// Cái vẫn phải giữ: `completed` để false, để giao diện phân biệt được
+    /// "đã quét hết" với "dừng giữa chừng, đây là phần tìm thấy".
     #[test]
     fn a_cancelled_scan_returns_nothing() {
         let content = vec![8u8; 300 * 1024];
@@ -710,6 +1189,9 @@ mod tests {
             &AtomicUsize::new(0),
             &AtomicUsize::new(0),
             &AtomicBool::new(true),
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &parking_lot::Mutex::new(Vec::new()),
         );
         assert!(groups.is_empty(), "da huy thi khong tra ve ket qua do dang");
     }
@@ -729,7 +1211,15 @@ mod tests {
         );
         let candidates = AtomicUsize::new(0);
         let hashed = AtomicUsize::new(0);
-        find_duplicates(&index, &candidates, &hashed, &AtomicBool::new(false));
+        find_duplicates(
+            &index,
+            &candidates,
+            &hashed,
+            &AtomicBool::new(false),
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &parking_lot::Mutex::new(Vec::new()),
+        );
         // Two files sharing a size: both are candidates, both get read.
         assert_eq!(
             hashed.load(Ordering::Relaxed),
@@ -759,7 +1249,15 @@ mod tests {
         );
         let candidates = AtomicUsize::new(0);
         let hashed = AtomicUsize::new(0);
-        let groups = find_duplicates(&index, &candidates, &hashed, &AtomicBool::new(false));
+        let groups = find_duplicates(
+            &index,
+            &candidates,
+            &hashed,
+            &AtomicBool::new(false),
+            crate::media::dupescope::DupeScope::Everything,
+            &[],
+            &parking_lot::Mutex::new(Vec::new()),
+        );
 
         assert_eq!(
             candidates.load(Ordering::Relaxed),

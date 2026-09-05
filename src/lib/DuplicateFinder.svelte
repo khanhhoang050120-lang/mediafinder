@@ -1,15 +1,21 @@
 <script lang="ts">
+  import DupeScopeAsk from "./DupeScopeAsk.svelte";
   import MediaRow from "./MediaRow.svelte";
   import VirtualList from "./VirtualList.svelte";
   import {
     cancelDuplicates,
+    dupeEstimate,
     dupeGroups,
+    dupeIdleStatus,
+    setDupeIdle,
     dupeProgress,
     findDuplicates,
     formatBytes,
     formatCount,
     type DupeGroup,
     type DupeProgress,
+    type DupeScope,
+    type ScopeEstimate,
     type SearchHit,
   } from "./search";
 
@@ -17,6 +23,7 @@
     epoch,
     rowHeight,
     thumbSize,
+    onclose,
     onerror,
     onopen,
     onreveal,
@@ -25,6 +32,8 @@
     epoch: number;
     rowHeight: number;
     thumbSize: number;
+    /// Đóng hẳn chế độ trùng lặp, về đúng trạng thái ban đầu.
+    onclose: () => void;
     onerror: (message: string) => void;
     onopen: (hit: SearchHit) => void;
     onreveal: (hit: SearchHit) => void;
@@ -68,10 +77,25 @@
 
   let listRef = $state<ReturnType<typeof VirtualList> | undefined>();
 
-  // Danh sách vừa nạp xong thì con trỏ về tệp đầu — giữ con trỏ cũ là trỏ vào
-  // một vị trí của danh sách không còn tồn tại.
+  // Con trỏ về đầu khi bắt đầu một LƯỢT QUÉT MỚI, không phải mỗi lần danh
+  // sách dài thêm.
+  //
+  // Trước đây effect này bám vào `rows`, và điều đó đúng khi kết quả chỉ xuất
+  // hiện một lần lúc quét xong. Nay backend công bố dần sau mỗi đợt, nên
+  // `rows` dài ra mỗi 400 ms — bám vào nó thì con trỏ nhảy về đầu liên tục
+  // trong suốt lượt quét, và người đang đọc dở danh sách không giữ được chỗ.
+  //
+  // So với số nhóm đã thấy chứ không phải nội dung: danh sách chỉ dài THÊM
+  // trong một lượt (nhóm đã công bố là chung cuộc), nên con trỏ vẫn trỏ đúng
+  // tệp cũ. Chỉ khi danh sách NGẮN ĐI — lượt mới bắt đầu — mới cần đưa về đầu.
+  let soNhomTruoc = 0;
   $effect(() => {
-    void rows;
+    const n = rows.length;
+    if (n >= soNhomTruoc) {
+      soNhomTruoc = n;
+      return;
+    }
+    soNhomTruoc = n;
     cursor = 0;
   });
 
@@ -104,6 +128,32 @@
     };
   });
 
+  /// Ước lượng để hỏi; `null` nghĩa là chưa hỏi hoặc không cần hỏi.
+  let hoiPhamVi = $state<ScopeEstimate | null>(null);
+
+  /// Quét nền ổ trong máy đang bật không. Đọc một lần lúc dựng component —
+  /// giá trị sống trong tiến trình backend, không phải trong localStorage.
+  let quetNenBat = $state(true);
+  dupeIdleStatus()
+    .then(([bat]) => (quetNenBat = bat))
+    .catch(() => {});
+
+  /// Giờ trong ngày của một mốc Unix: "08:15".
+  function gioTrongNgay(unix: number): string {
+    const d = new Date(unix * 1000);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+
+  /// Đọc số giây thành câu người đọc được.
+  function docThoiGian(giay: number): string {
+    if (giay < 60) return "dưới một phút";
+    const phut = Math.round(giay / 60);
+    if (phut < 60) return `khoảng ${phut} phút`;
+    const gio = Math.floor(phut / 60);
+    const du = phut % 60;
+    return du ? `khoảng ${gio} giờ ${du} phút` : `khoảng ${gio} giờ`;
+  }
+
   async function start() {
     // Một lần quét đã xong vẫn còn được backend giữ. Chạy lại chỉ vì người
     // dùng quay lại màn này là ném đi mười phút đọc đĩa để tới đúng cái kết
@@ -114,6 +164,13 @@
     // đó là "chưa quét bao giờ" thì lần nào ghé qua cũng quét lại từ đầu.
     try {
       stat = await dupeProgress();
+      // Đang dừng dở: luồng cũ còn chạy nên `find_duplicates` sẽ bị từ chối.
+      // Theo dõi cho tới khi nó dừng hẳn thay vì gọi một lệnh chắc chắn hỏng
+      // rồi để màn hình trông như đang quét.
+      if (stat.stopping) {
+        poll();
+        return;
+      }
       if (stat.running) {
         // Ai đó rời đi giữa chừng rồi quay lại. Theo dõi lần đang chạy thay
         // vì từ chối để mở lần thứ hai.
@@ -128,9 +185,29 @@
       // rơi xuống dưới và quét
     }
 
+    // Có ổ mạng thì hỏi trước. Cái giá của việc quét NAS đổ lên chính NAS mà
+    // cả studio đang dùng, nên người bấm phải biết mình chọn gì.
+    //
+    // Không có ổ mạng nào thì không hỏi: một hộp thoại chỉ có một câu trả lời
+    // đúng là một hộp thoại thừa.
+    try {
+      const est = await dupeEstimate();
+      if (est.networkFiles > 0) {
+        hoiPhamVi = est;
+        return;
+      }
+    } catch {
+      // Không ước lượng được thì quét ổ trong máy — mặc định an toàn, không
+      // tự ý đọc NAS khi chưa ai đồng ý.
+    }
+    await chayQuet("localOnly");
+  }
+
+  async function chayQuet(scope: DupeScope) {
+    hoiPhamVi = null;
     dupes = [];
     try {
-      await findDuplicates();
+      await findDuplicates(scope);
     } catch (e) {
       onerror(String(e));
       return;
@@ -140,28 +217,85 @@
 
   function poll() {
     clearInterval(timer);
+    // Số nhóm đã lấy về lần gần nhất — chỉ hỏi lại khi backend có thêm.
+    let nhomDaLay = -1;
     timer = setInterval(async () => {
       try {
         stat = await dupeProgress();
       } catch {
         return;
       }
+
+      // Lấy kết quả NGAY TRONG LÚC QUÉT, mỗi khi có nhóm mới.
+      //
+      // Backend xử lý các lớp dung lượng theo tiềm năng thu hồi giảm dần và
+      // công bố sau mỗi đợt, nên nhóm hiện ra trước là nhóm đáng giá nhất —
+      // và thứ hạng của nó đã chung cuộc, không bị đảo khi quét tiếp.
+      //
+      // Đo trên thư viện thật: tệp ≥256 MB chỉ chiếm 1,7% số tệp nhưng mang
+      // 68% tổng tiềm năng. Người dọn ổ vì thế thấy phần lớn giá trị sau vài
+      // giây thay vì chờ hết lượt.
+      if (stat.groups !== nhomDaLay) {
+        nhomDaLay = stat.groups;
+        try {
+          dupes = await dupeGroups();
+        } catch {
+          // Lấy không được thì giữ nguyên cái đang hiện, thử lại nhịp sau.
+        }
+      }
+
       if (!stat.running) {
         clearInterval(timer);
         timer = undefined;
-        // Một lần quét bị dừng để lại `completed` false và kết quả rỗng; hiện
-        // cái đó thành "không tìm thấy tệp trùng lặp" là nói dối.
-        if (stat.completed) dupes = await dupeGroups();
+        // Lấy lần cuối để chốt — kể cả khi bị dừng giữa chừng. Backend nay
+        // GIỮ phần đã chốt thay vì vứt sạch, nên "dừng" không còn đồng nghĩa
+        // với "mất hết".
+        try {
+          dupes = await dupeGroups();
+        } catch {
+          // giữ nguyên
+        }
       }
     }, 400);
   }
 </script>
 
+{#if hoiPhamVi}
+  <DupeScopeAsk
+    est={hoiPhamVi}
+    idleOn={quetNenBat}
+    ontoggleidle={(v) => {
+      quetNenBat = v;
+      setDupeIdle(v).catch(() => {});
+    }} onchoose={chayQuet} oncancel={() => {
+      // Huỷ là thoát hẳn, không phải "đóng hộp thoại rồi ngồi đó": màn hình
+      // về đúng trạng thái trước khi bấm, và nút Trùng lặp tắt sáng.
+      hoiPhamVi = null;
+      onclose();
+    }} />
+{/if}
+
 <div class="dupebar">
-  {#if stat?.running}
+  {#if stat?.stopping}
+    <!--
+      Trạng thái riêng, không gộp vào "đang quét": người vừa bấm huỷ cần biết
+      máy đã nhận lệnh. Trên NAS một lần mở tệp có thể treo hàng chục giây,
+      nên khoảng này không phải tức thì.
+    -->
+    <span>Đang dừng lượt quét…</span>
+    <div class="scan-bar"><div class="scan-fill"></div></div>
+  {:else if stat?.running}
     <span>
       Đang đối chiếu {formatCount(stat.hashed)}/{formatCount(stat.candidates)} tệp
       cùng dung lượng…
+      {#if stat.etaSeconds !== null}
+        <!--
+          Chỉ hiện khi backend đã đo đủ. Nó im lặng cho tới khi mở xong 200
+          tệp, vì tốc độ của vài tệp đầu là nhiễu — cache còn lạnh, luồng còn
+          khởi động — và một con số nhảy loạn tệ hơn không hiện gì.
+        -->
+        <b class="eta">còn {docThoiGian(stat.etaSeconds)}</b>
+      {/if}
     </span>
     <div class="scan-bar"><div class="scan-fill"></div></div>
   {:else if dupes.length}
@@ -175,6 +309,14 @@
       có thể thu hồi <b>{formatBytes(stat?.wasted ?? 0)}</b>
       {#if (stat?.groups ?? 0) > dupes.length}
         <span class="dupenote">— đang hiện {formatCount(dupes.length)} nhóm lãng phí nhiều nhất</span>
+      {/if}
+      <!--
+        Mốc quét. Từ khi có quét nền, kết quả có thể nằm sẵn từ 8 giờ sáng
+        trong khi người dùng mở màn hình lúc 3 giờ chiều — không nói ra là lặp
+        lại lỗi 4.1: hiện một câu trả lời cũ mà không cho biết nó cũ.
+      -->
+      {#if stat?.startedUnix}
+        <span class="dupenote">· kết quả từ {gioTrongNgay(stat.startedUnix)}</span>
       {/if}
     </span>
     <!--
@@ -223,7 +365,9 @@
     </VirtualList>
   {:else}
     <p class="empty">
-      {#if stat?.running}
+      {#if stat?.stopping}
+        Đang dừng lượt quét…
+      {:else if stat?.running}
         Đang đối chiếu…
       {:else if stat?.completed}
         Không có tệp nào trùng lặp — không có gì để thu hồi.
@@ -251,6 +395,12 @@
 
   /* Không xác định một cách có chủ ý: tổng số bản ghi của một ổ chỉ biết được
      khi quét tới cuối ổ đó, nên mọi con số phần trăm đều là bịa. */
+  .eta {
+    margin-left: 6px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
   .scan-bar {
     height: 4px;
     overflow: hidden;

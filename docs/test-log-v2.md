@@ -673,3 +673,330 @@ Bài kiểm thử dựng chỉ mục thật qua `index_over()`, chạy trọn m�
 `npm test` 112 pass · cả hai build sạch.
 
 Hai tệp kiểm thử tích hợp (`dupes_real.rs`, `dupes_cancel_real.rs`) cập nhật theo chữ ký mới.
+
+## P41 — Hỏi phạm vi trước khi quét trùng lặp, và thời gian còn lại
+
+Yêu cầu của người dùng: bấm nút Trùng lặp thì hỏi "có quét cả ổ NAS không?", kèm số liệu để
+quyết, và hiện thời gian còn lại trong lúc quét.
+
+### Vì sao phải hỏi
+
+Cái giá của việc quét NAS **không đổ lên máy người bấm nút** — nó đổ lên chính NAS mà cả studio
+đang dùng để làm việc. 20–40 máy cùng quét là 20–40 luồng đọc ngẫu nhiên trên cùng vài ổ đĩa.
+
+Không đặt mặc định im lặng theo hướng nào: chọn sẵn "có" thì người chỉ muốn dọn ổ C: phải chờ NAS;
+chọn sẵn "không" thì người muốn dọn NAS tưởng app bỏ sót tệp.
+
+### Con số hiện ra là con số ĐẾM ĐƯỢC
+
+Tầng 1 của quét trùng — gom theo dung lượng — **không đọc đĩa một byte nào**: chỉ mục đã giữ sẵn
+mọi dung lượng. Nên đếm chính xác "bao nhiêu tệp phải mở trên ổ trong máy, bao nhiêu trên NAS" là
+việc vài mili giây, làm được **trước** khi hỏi.
+
+Module riêng [dupescope.rs](../src-tauri/src/media/dupescope.rs) lặp lại đúng phép lọc của tầng 1
+và tách theo loại ổ. Nó nhận danh sách chữ ổ mạng đang gắn — ổ ánh xạ trông y hệt đĩa trong máy
+trong chỉ mục (`Y:\…`), nên thiếu danh sách này thì mọi ổ NAS bị đếm nhầm và câu hỏi **không bao
+giờ hiện ra**. Có ca kiểm thử canh đúng chỗ đó.
+
+### Điều CỐ Ý không làm: đoán số phút trong hộp thoại
+
+Hộp thoại nói **số tệp phải mở**, không nói số phút. Không có phép đo nào cho mã hiện tại trên thư
+viện hiện tại — con số 584 giây trong tài liệu cũ đo ngày 24/8 trên ổ khác, bằng mã khác, trên chỉ
+mục còn chứa 70.461 tệp đã bị xoá.
+
+Hứa "khoảng 30 phút" rồi chạy 8 phút hoặc 50 phút thì lần sau không ai tin con số nào nữa.
+
+### Thời gian còn lại: tính từ tốc độ THẬT của chính lượt quét đó
+
+`DupeProgress.eta_seconds` tính từ `hashed / elapsed` của chính máy đang chạy. Ba chốt chặn:
+
+| Chốt | Vì sao |
+|---|---|
+| Im lặng cho tới khi mở đủ **200 tệp** | Tốc độ vài tệp đầu là nhiễu (cache lạnh, luồng đang khởi động); con số nhảy từ "2 phút" lên "40 phút" rồi xuống "5 phút" tệ hơn không hiện gì |
+| Chặn trên **24 giờ** | "Còn 340 ngày" gần như luôn là dấu hiệu ổ vừa rớt, không phải ước lượng |
+| `None` khi `hashed >= total` hoặc thời gian ≤ 0 | Không ra số âm, không chia cho 0 |
+
+### Kiểm chứng
+
+Backend 13 ca mới. Frontend 10 ca, phá mã bốn phép — **cả bốn đều bị bắt**:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Không hỏi, quét thẳng cả NAS | **4 ca đỏ** ✅ |
+| Hỏi cả khi không có ổ mạng (hộp thoại thừa) | **1 ca đỏ** ✅ |
+| Hỏi thất bại thì quét cả NAS | **2 ca đỏ** ✅ |
+| "Để sau" mà vẫn quét | **1 ca đỏ** ✅ |
+
+Phép đầu là phép đáng giá nhất: nó canh đúng điều khiến tính năng này tồn tại — **không đọc một
+byte nào của NAS trước khi người dùng đồng ý**.
+
+### Vòng kiểm
+
+`cargo test` **269 pass** (256 + 13) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` **122 pass** (112 + 10) · cả hai build sạch.
+
+### Chưa làm, có chủ đích
+
+Lựa chọn phạm vi **không được nhớ** qua các lần. Tài liệu đề xuất lưu vào `prefs.ts`, nhưng một
+lựa chọn ẩn quyết định có đọc NAS hay không là đúng loại bẫy đã gặp với chip lọc Video: người dùng
+quên mình đã chọn gì rồi kết luận app hỏng. Hỏi lại mỗi lần rẻ hơn nhiều so với một lựa chọn vô
+hình — và câu hỏi chỉ hiện khi thật sự có ổ mạng.
+
+### P41b — Hai lỗi người dùng bắt được khi thử
+
+**Lỗi 1 — bấm quét lại trong lúc lượt cũ đang dừng thì không có gì xảy ra.**
+
+Kịch bản: bấm Trùng lặp → chọn phạm vi → đổi ý bấm lại để huỷ → bấm lần nữa để quét.
+
+Gốc: `DupeService::cancel()` chỉ **giương cờ** rồi trả về ngay — luồng quét vẫn kẹt giữa một lần
+mở tệp, mà trên NAS một lần mở có thể treo hàng chục giây. Trong khoảng đó `start()` gặp
+`running == true` và từ chối, nhưng giao diện không phân biệt được "chưa quét" với "đang dừng dở",
+nên nó dựng lại như sắp chạy và trông như app hỏng.
+
+Sửa: `DupeProgress` có thêm cờ `stopping` (`running && stop`). Giao diện theo dõi thay vì gọi một
+lệnh chắc chắn bị từ chối, và nói rõ **"Đang dừng lượt quét…"** ở cả hai chỗ hiển thị.
+
+**Lỗi 2 — nút "Để sau" không đúng nghĩa.**
+
+Người bấm nút đó muốn thoát hẳn khỏi việc tìm trùng lặp, nhưng "Để sau" gợi ý một việc còn treo —
+mà không có việc nào treo cả. Đổi thành **"Huỷ"**, và giờ nó đóng hẳn chế độ trùng lặp qua
+`onclose`: nút Trùng lặp trên thanh công cụ cũng tắt sáng, màn hình về đúng trạng thái ban đầu.
+
+**Một bài kiểm thử xanh vô nghĩa nữa — lần thứ tư.**
+
+Ca đầu tiên viết cho lỗi 1 chỉ khẳng định "không mở lượt mới". Phá mã thì nó **vẫn xanh**: khi
+`stopping` thì `running` cũng true, nên nhánh `running` cũ cũng chặn được lượt mới. Bỏ hẳn xử lý
+`stopping` mà bài không đỏ.
+
+Thứ chỉ nhánh mới làm được là **nói ra** rằng đang dừng — và đó mới là phần người dùng thiếu. Viết
+lại để canh đúng điều đó, phá mã lần hai thì đỏ ngay.
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Bỏ hiện "Đang dừng" ở cả hai chỗ | **1 ca đỏ** ✅ |
+| "Huỷ" chỉ đóng hộp thoại, không đóng chế độ | **1 ca đỏ** ✅ |
+| Nút vẫn tên "Để sau" | **1 ca đỏ** ✅ |
+
+Vòng kiểm: `cargo test` **269** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` **124 pass**.
+
+## P42 — Số liệu thật, và hiện kết quả trùng lặp dần theo giá trị
+
+### Bước 0: lần đầu có số liệu thật, và nó đảo ngược ba giả định
+
+Chỉ mục trên máy này là chỉ mục **thật của studio** — 54 MB, 410.581 tệp — không phải 767 KB như
+[DE-XUAT-TRUNG-LAP.md](../DE-XUAT-TRUNG-LAP.md) tưởng. Nên phép đo bước 0 chạy được ngay, miễn phí
+(không đọc đĩa một byte), trong **2,5 giây**.
+
+```
+=== ỨNG VIÊN TẦNG 1: 197.301 tệp / 410.581 trong chỉ mục ===
+  trên ổ mạng : 160.982 (82%)
+  trên đĩa máy:  36.319 (18%)
+```
+
+| Ổ | Loại | Tệp | Tiềm năng thu hồi |
+|---|---|---|---|
+| `D:` | máy | 36.200 | **2.204 GB** |
+| `F:` | mạng | 45.294 | 1.059 GB |
+| `Y:` | mạng | 80.162 | 543 GB |
+| `H:` | mạng | 22.863 | 123 GB |
+| `Z:` | mạng | 12.663 | 14 GB |
+
+| Dải dung lượng | Tệp | % số tệp | Tiềm năng | % giá trị |
+|---|---|---|---|---|
+| 64K–1M | 68.994 | **35,0%** | 13,4 GB | **0,4%** |
+| 1M–4M | 32.778 | 16,6% | 46,7 GB | 1,2% |
+| 4M–16M | 60.962 | 30,9% | 360,4 GB | 9,6% |
+| 16M–64M | 24.355 | 12,3% | 452,2 GB | 12,1% |
+| 64M–256M | 6.872 | 3,5% | 530,5 GB | 14,2% |
+| **≥256M** | 3.340 | **1,7%** | **2.543,5 GB** | **67,9%** |
+
+**Ba giả định bị bác bỏ:**
+
+1. **82% công việc nằm trên NAS** — hộp thoại hỏi phạm vi (P41) hoá ra là việc đáng giá nhất đã
+   làm: chọn "chỉ ổ trong máy" cắt 82% khối lượng ngay. Và ổ `D:` trong máy lại có tiềm năng lớn
+   nhất (2,2 TB) với chỉ 18% công sức.
+2. **Khoá (size, mtime) không dùng được** — chỉ **2,7%** cặp cùng dung lượng có cùng thời gian sửa.
+   Đây cũng là câu trả lời cho câu người dùng nói không biết: **CapCut không giữ nguyên mtime khi
+   sao chép**. Việc G trong tài liệu: bỏ.
+3. **Không có hardlink nào** (0 cặp cùng ổ+FRN). Phần đó cũng bỏ được.
+
+### Hiện kết quả dần theo giá trị
+
+Tệp ≥256 MB chỉ 1,7% số lượng nhưng **68% giá trị**. Nên tầng 2 nay xếp các lớp dung lượng theo
+**tiềm năng thu hồi giảm dần** (`size × (số tệp − 1)` — cận trên chính xác của mọi nhóm trong lớp),
+chia thành đợt 400 tệp, và **công bố sau mỗi đợt**.
+
+Vì lớp được xử lý theo giá trị giảm dần, nhóm đã công bố không bao giờ bị đẩy xuống bởi nhóm tìm
+sau — **thứ hạng của nó là chung cuộc**. Tổng thời gian không đổi, nhưng thời gian phải *chờ* để
+thấy nhóm đáng giá nhất giảm từ hàng chục phút xuống vài giây.
+
+Kèm theo: **huỷ giữa chừng nay GIỮ phần đã chốt** thay vì vứt sạch. Vì phần đã chốt chính là những
+lớp giá trị nhất, vứt đi là bắt người dùng trả lại từ đầu cái họ vừa chờ xong.
+
+### Ba lỗi bộ kiểm thử bắt được, hai trong số đó là lỗi của chính tôi
+
+**Lỗi mã:** đợt bị huỷ `break` **trước khi** `publish` — vân tay của đợt đó bị vứt dù đã băm xong.
+Bài kiểm thử bắt ngay lần chạy đầu. Sửa: công bố trước, kiểm cờ dừng sau.
+
+**Lỗi bài kiểm thử #1 (xanh vô nghĩa — lần thứ năm):** ca "nhóm đáng giá nhất ra trước" chỉ canh
+thứ tự *sắp xếp cuối*, mà `groups.sort_unstable_by` vẫn chạy — đảo chiều sắp lớp mà bài vẫn xanh.
+Thứ tự **xử lý** mới là thứ quyết định người dùng chờ bao lâu, và nó chỉ quan sát được qua kết quả
+công bố giữa chừng. Viết ca mới, phá mã lần hai thì đỏ.
+
+**Lỗi bài kiểm thử #2:** ca mới đó đỏ ngay, nhưng vì **giả định sai của tôi**, không phải mã sai:
+250 tệp cùng 70 KB không phải 250 lớp mà là *một* lớp 500 tệp, tiềm năng 34 MB — lớn hơn lớp "to"
+2 MB, nên mã sắp đúng. Sửa cho mỗi lớp một dung lượng riêng.
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Đảo chiều sắp lớp theo tiềm năng | **1 ca đỏ** ✅ |
+| Không công bố dần (chỉ công bố cuối) | **1 ca đỏ** ✅ |
+| Huỷ vẫn vứt sạch kết quả | **1 ca đỏ** ✅ |
+
+### Giao diện
+
+Lấy kết quả **trong lúc quét**, mỗi khi `stat.groups` đổi. Và sửa một lỗi tài liệu đã cảnh báo:
+`cursor` nhảy về đầu mỗi khi `rows` đổi — vô hại khi kết quả chỉ hiện một lần, nhưng nay `rows`
+dài ra mỗi 400 ms nên con trỏ nhảy liên tục. Nay chỉ đưa về đầu khi danh sách **ngắn đi**, tức
+lượt quét mới bắt đầu.
+
+### Vòng kiểm
+
+`cargo test` **272 pass** (269 + 3) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` 124 pass · cả hai build sạch.
+
+### Còn lại, xếp theo số liệu vừa đo
+
+| Việc | Lợi | Số liệu ủng hộ |
+|---|---|---|
+| Nâng `SMALL_FILE_LIMIT` lên ~1 MB | cắt ~35% khối lượng | 64K–1M: 35% số tệp, 0,4% giá trị |
+| Vân tay bền (việc D) | lượt sau vài giây | không giúp lần đầu |
+| Pool I/O theo ổ (việc C) | chưa đo, có thể vài lần | cần bước đo 1 và 2 |
+
+## P43 — Việc D: vân tay bền giữa các lần chạy
+
+Yêu cầu của người dùng: khi bấm quét NAS thì phải nhanh nhất có thể. Đây là việc D của
+[DE-XUAT-TRUNG-LAP.md](../DE-XUAT-TRUNG-LAP.md), và số liệu bước 0 cho thấy nó là việc đáng nhất
+cho ổ mạng: **160.982 trên 197.301 ứng viên (82%) nằm trên NAS**, mỗi lần mở tệp ở đó tốn ~66 ms
+chỉ để lấy byte đầu.
+
+### Cách làm
+
+[dupestore.rs](../src-tauri/src/media/dupestore.rs) — kho vân tay khoá theo đường dẫn, kèm `size`
+và `mtime` lúc đọc. Lượt sau: tệp còn nguyên cả hai thì **không mở lại**.
+
+Mượn phần bền hoá của `enrich::Store` (magic + `SCHEMA_VERSION`, tệp tạm mang PID rồi `rename`),
+nhưng **không** mượn hai điều — cả hai đều là bài học từ chính mã cũ:
+
+**Không dùng `DefaultHasher`.** `enrich::path_key` dùng nó, mà tài liệu `std` **không cam kết** nó
+cho cùng kết quả giữa các bản Rust. Một lần nâng trình biên dịch có thể làm mọi khoá lệch đi và cả
+kho thành vô dụng — im lặng. Ở đây dùng FNV-1a viết tay ngay trong tệp, và có ca kiểm thử neo giá
+trị để nếu ai đó đổi thì bài đỏ ngay.
+
+**Không lưu mỗi 500 tệp.** `save` tuần tự hoá cả map; với 197 nghìn ứng viên đó là hàng trăm lần
+ghi lại vài chục MB. Lưu một lần khi xong — kể cả khi bị huỷ, vì một lượt huỷ vẫn đã đọc xong hàng
+nghìn tệp.
+
+**Tỉa khoá không còn dùng**, thứ `enrich::Store` không bao giờ làm (và đó là lý do `metadata.bin`
+lớn dần theo tệp đã xoá). Chỉ tỉa khi quét **trọn vẹn cả phạm vi**: một lượt bị huỷ, hay một lượt
+chỉ quét ổ trong máy, không nhìn thấy hết tệp — tỉa theo nó là vứt vân tay của tệp vẫn còn nguyên.
+
+### Rủi ro, và vì sao tầng 3 thành bắt buộc
+
+Sao chép **giữ nguyên** mtime không phải rủi ro: khoá là đường dẫn, mỗi bản sao có mục riêng.
+
+Rủi ro thật là **sửa tại chỗ mà giữ nguyên cả size lẫn mtime** — `mtime` có độ phân giải một giây,
+và vài công cụ (`exiftool -P`) cố ý giữ nguyên. Khi đó vân tay cũ bị tin nhầm và hai tệp khác nội
+dung bị báo là trùng. Đó là lý do **tầng 3 xác minh trước khi xoá không còn là tuỳ chọn**.
+
+### Kiểm chứng
+
+Phá mã bốn phép, **cả bốn bị bắt**:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Bỏ qua `mtime` — tin vân tay cũ của tệp đã đổi | **2 ca đỏ** ✅ |
+| Bỏ qua `size` | **1 ca đỏ** ✅ |
+| Không chuyển chữ thường (Windows coi là một tệp) | **2 ca đỏ** ✅ |
+| Không tỉa khoá cũ | **1 ca đỏ** ✅ |
+
+Phép đầu là phép quan trọng nhất: tin vân tay cũ của một tệp đã đổi nghĩa là **báo trùng sai**, mà
+bước tiếp theo của người dùng là xoá.
+
+Ca đo cố ý đếm **số lần mở tệp**, không đếm `hashed` — `hashed` tăng cho cả tệp lấy từ kho lẫn tệp
+phải đọc, nên nó không phân biệt được. Tài liệu đã cảnh báo đúng chỗ này.
+
+### Vòng kiểm
+
+`cargo test` **282 pass** (272 + 10) · clippy 0 · fmt sạch.
+
+## P44 — Quét trùng lặp ổ trong máy lúc máy rảnh
+
+Ý tưởng của người dùng: người ta tới công ty lúc 8 giờ, mở máy, pha cà phê và đọc email — ứng dụng
+đã chạy nền nhưng chưa ai dùng tới. Đó là khoảng thời gian rẻ nhất trong ngày để đọc đĩa.
+
+### Số đo thật, và nó đắt gấp đôi tài liệu ước tính
+
+Chạy lượt quét thật trên thư viện studio bằng chính mã hiện tại:
+
+| | |
+|---|---|
+| Tốc độ đo được | **45 tệp/giây** |
+| Quét trọn 197.301 ứng viên | **1,2 giờ** |
+| Tài liệu cũ ước tính | ~30 phút |
+| Riêng ổ trong máy (36.319 tệp) | **13 phút** |
+
+Tài liệu nói rõ 30 phút là *ngoại suy*, và giờ đã có số thật: **đắt hơn hai lần**. Đây cũng là con
+số biện minh cho cả tính năng — 13 phút chạy nền lúc 8 giờ sáng đổi lấy việc bấm nút lúc 10 giờ là
+có kết quả ngay.
+
+### Bảy ràng buộc, tất cả do người dùng duyệt
+
+| Ràng buộc | Cách làm |
+|---|---|
+| Chỉ ổ trong máy, **không bao giờ** tự quét NAS | `DupeScope::LocalOnly`, có ca kiểm thử đọc thẳng mã nguồn để canh |
+| Chờ enrichment xong | Hỏi `EnrichService::status().running` |
+| Chờ ~10 phút không có tìm kiếm | Theo dõi `AppState::generation()` |
+| 2 luồng, `BELOW_NORMAL` | Dùng lại `DupeService` — cùng mô hình enrichment đã chứng minh |
+| Dừng ngay khi người dùng gõ tìm kiếm | Vòng theo dõi kiểm `generation` mỗi 2 giây, đổi thì `cancel()` |
+| Màn hình nói "kết quả từ HH:MM" | `DupeProgress.started_unix` |
+| Có cách tắt | Ô tích trong hộp thoại phạm vi |
+
+**82% ứng viên nằm trên NAS**, nên ràng buộc đầu là ràng buộc quan trọng nhất: 20–40 máy cùng đọc
+NAS mỗi sáng là cái giá đổ lên chính NAS mà cả studio đang dùng để làm việc. Ca kiểm thử canh nó
+đọc thẳng mã nguồn của module — vì phạm vi được truyền vào một lời gọi bên trong vòng lặp, không có
+cách nào quan sát mà không dựng cả ứng dụng.
+
+Ô tắt đặt **trong hộp thoại phạm vi**, không phải trong một màn cài đặt riêng: đó là lúc người dùng
+đang nghĩ về việc quét. Và dòng chữ nói rõ *"Không bao giờ tự đọc ổ mạng"* — người đọc nó vừa thấy
+con số "đọc qua mạng nên chậm hơn nhiều" ở ngay trên, nên phải chặn ngay cách hiểu rằng máy đang âm
+thầm đọc NAS.
+
+### Kiểm chứng
+
+Phá mã tám phép, **cả tám bị bắt**:
+
+| Phá cái gì | Kết quả |
+|---|---|
+| **Đổi phạm vi thành cả ổ mạng** | **1 ca đỏ** ✅ |
+| Bỏ qua cờ tắt | 2 ca đỏ ✅ |
+| Không chờ enrichment xong | 1 ca đỏ ✅ |
+| Quét ngay, không chờ máy yên | 1 ca đỏ ✅ |
+| Chen vào lượt quét đang chạy | 1 ca đỏ ✅ |
+| Bỏ dòng "không bao giờ tự đọc ổ mạng" | 1 ca đỏ ✅ |
+| Bỏ tích mà không gửi lệnh xuống backend | 1 ca đỏ ✅ |
+| Không hiện mốc quét | 1 ca đỏ ✅ |
+
+Ca canh ràng buộc NAS suýt tự làm mình đỏ: nó nhắc tên biến thể `Everything` trong chính chú thích
+của mình. Sửa bằng cách chỉ soi phần trước khối `mod tests`.
+
+### Vòng kiểm
+
+`cargo test` **291 pass** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` **127 pass**.
+
+### Kho vân tay chạy thật
+
+Lượt quét bị cắt giữa chừng vẫn ghi được `dupes.bin` đúng định dạng (magic `MFDUPE01`, version 1) —
+đúng thiết kế: một lượt huỷ vẫn đã đọc xong hàng nghìn tệp, vứt phần đó là bắt lượt sau đọc lại.

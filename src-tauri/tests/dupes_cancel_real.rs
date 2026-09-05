@@ -29,7 +29,15 @@ fn cancelling_stops_a_scan_already_reading() {
     };
 
     let service = DupeService::new();
-    assert!(service.start(Arc::clone(&index), 0), "quét phải bắt đầu");
+    assert!(
+        service.start(
+            Arc::clone(&index),
+            0,
+            mediafinder::media::dupescope::DupeScope::Everything,
+            Vec::new()
+        ),
+        "quét phải bắt đầu"
+    );
 
     // Let it get properly underway, so this measures stopping real work rather
     // than a scan that had not started reading yet.
@@ -76,7 +84,12 @@ fn cancelling_stops_a_scan_already_reading() {
     // And a fresh scan must be startable afterwards — a cancel that left the
     // service stuck would be worse than no cancel at all.
     assert!(
-        service.start(index, 0),
+        service.start(
+            index,
+            0,
+            mediafinder::media::dupescope::DupeScope::Everything,
+            Vec::new()
+        ),
         "sau khi huỷ phải bắt đầu lại được lượt quét mới"
     );
     service.cancel();

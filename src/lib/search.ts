@@ -99,6 +99,24 @@ export interface DupeProgress {
    * would re-run ten minutes of disk reading on every visit.
    */
   completed: boolean;
+  /// Lượt quét hiện tại bắt đầu lúc nào, giây Unix; `0` nếu chưa quét lần nào.
+  ///
+  /// Từ khi có quét nền, kết quả có thể nằm sẵn từ 8 giờ sáng trong khi người
+  /// dùng mở màn hình lúc 3 giờ chiều. Không nói ra là lặp lại lỗi 4.1: hiện
+  /// một câu trả lời cũ mà không cho biết nó cũ.
+  startedUnix: number;
+  /// Đã yêu cầu dừng nhưng luồng quét chưa kết thúc.
+  ///
+  /// `cancel` chỉ giương cờ rồi trả về ngay; luồng có thể còn kẹt trong một
+  /// lần mở tệp trên NAS hàng chục giây. Trong khoảng đó `find_duplicates` sẽ
+  /// bị từ chối, nên giao diện phải nói "đang dừng" thay vì dựng lại như sắp
+  /// quét.
+  stopping: boolean;
+  /// Còn khoảng bao nhiêu giây nữa; `null` khi chưa đủ dữ liệu để nói.
+  ///
+  /// Tính từ tốc độ đo được của chính lượt quét này. Backend im lặng cho tới
+  /// khi đã mở đủ 200 tệp — một con số nhảy loạn còn tệ hơn không hiện gì.
+  etaSeconds: number | null;
 }
 
 export interface DupeGroup {
@@ -114,8 +132,37 @@ export interface DupeGroup {
   epoch: number;
 }
 
-export function findDuplicates(): Promise<void> {
-  return invoke("find_duplicates");
+/// Quét những ổ nào.
+export type DupeScope = "localOnly" | "everything";
+
+/// Có bao nhiêu tệp phải mở, tách theo loại ổ.
+///
+/// Đây là con số **đếm được** chứ không phải ước lượng: tầng 1 của quét trùng
+/// chỉ đọc chỉ mục, không đọc đĩa một byte nào.
+export interface ScopeEstimate {
+  localFiles: number;
+  networkFiles: number;
+  /// Các chữ ổ mạng có ứng viên, ví dụ `["Y:", "Z:"]`.
+  networkDrives: string[];
+}
+
+/// Hỏi trước khi quét: bao nhiêu tệp phải mở ở mỗi loại ổ.
+export function dupeEstimate(): Promise<ScopeEstimate> {
+  return invoke<ScopeEstimate>("dupe_estimate");
+}
+
+/// Quét trùng lặp nền đang bật không, và đã chạy xong trong phiên này chưa.
+export function dupeIdleStatus(): Promise<[boolean, boolean]> {
+  return invoke<[boolean, boolean]>("dupe_idle_status");
+}
+
+/// Bật hoặc tắt quét trùng lặp nền.
+export function setDupeIdle(enabled: boolean): Promise<void> {
+  return invoke("set_dupe_idle", { enabled });
+}
+
+export function findDuplicates(scope: DupeScope = "localOnly"): Promise<void> {
+  return invoke("find_duplicates", { scope });
 }
 
 export function dupeProgress(): Promise<DupeProgress> {

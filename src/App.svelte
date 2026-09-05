@@ -770,6 +770,7 @@
       {epoch}
       rowHeight={LIST_ROW}
       thumbSize={THUMB_LIST}
+      onclose={() => (dupeMode = false)}
       onerror={(m) => (error = m)}
       onopen={open}
       onreveal={reveal}

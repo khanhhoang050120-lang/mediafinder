@@ -120,6 +120,12 @@ pub fn run_gui() {
             // được cập nhật khi có người tự bấm "+ Ổ mạng".
             netsched::dung_lich(app.handle().clone());
 
+            // Quét trùng lặp ổ trong máy lúc máy rảnh, để người dùng bấm nút
+            // là có kết quả ngay thay vì chờ 13 phút. CHỈ ổ trong máy — 82%
+            // ứng viên nằm trên NAS, và 40 máy cùng đọc NAS mỗi sáng là cái
+            // giá đổ lên chính NAS mà cả studio đang dùng.
+            media::dupeidle::dung_lich(app.handle().clone());
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -157,6 +163,9 @@ pub fn run_gui() {
             ipc::commands::index_status,
             ipc::commands::open_file,
             ipc::commands::mark_updating,
+            ipc::commands::dupe_idle_status,
+            ipc::commands::set_dupe_idle,
+            ipc::commands::dupe_estimate,
             ipc::commands::index_freshness,
             ipc::commands::start_file_drag,
             ipc::commands::reveal_in_explorer,
