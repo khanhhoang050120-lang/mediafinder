@@ -1123,3 +1123,65 @@ trả lời thật.
 
 `cargo test` **296 pass** (294 + 2) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
 `npm test` **136 pass** (132 + 4).
+
+## P47 — Việc E, và vì sao chỉ làm một nửa
+
+Tài liệu gọi cả hai hằng số là "việc E", nhưng chúng làm hai chuyện khác hẳn nhau — và đó chính là
+chỗ gây nhầm lẫn:
+
+| Hằng số | Quyết định | Đánh đổi |
+|---|---|---|
+| `SMALL_FILE_LIMIT` | **đọc thế nào** — trọn tệp hay hai đầu | **không có** |
+| `MIN_INTERESTING_SIZE` | **đọc cái gì** — tệp nào bị bỏ hẳn | bỏ tệp thật |
+
+### Đã làm: nâng `SMALL_FILE_LIMIT` 128 KB → 1 MB
+
+Đọc hai đầu là mở + đọc + nhảy + đọc. Đọc trọn là mở + đọc. Trên NAS đo được: mở và lấy byte đầu
+tiên tốn **66 ms**, đọc thêm 1 MB chỉ tốn **18 ms**. Nên với tệp tới ~1 MB, bỏ được một lượt đọc
+đáng giá hơn hẳn phần băng thông thêm vào.
+
+Ngưỡng cũ nằm **dưới điểm hoà vốn**: mọi tệp từ 128 KB đến 1 MB đang trả giá cho một thao tác
+chúng không cần — và dải đó có **68.994 ứng viên, 35% tổng số tệp phải mở**.
+
+Thêm một lợi ích không tính trước: tầng 2 nay **chính xác hơn** cho mọi tệp dưới 1 MB, vì đọc trọn
+thấy được khác biệt ở giữa mà đọc hai đầu bỏ sót.
+
+Một bài kiểm thử cũ đỏ vì điều đó — bài `a_difference_in_the_middle_is_invisible_to_tier_two` dùng
+tệp 400 KB. Không phải mã hỏng: bản sửa đã **thu hẹp đúng giới hạn mà bài đang mô tả**. Đổi bài
+sang tệp 3 MB để nó nói về vùng mà giới hạn còn thật, và thêm một ca mới canh hành vi mới.
+
+Thêm một chốt lúc biên dịch: `SMALL_FILE_LIMIT >= SAMPLE_BYTES * 2`. Hạ ngưỡng xuống dưới hai lần
+mẫu thì nhánh "đọc trọn" lại đọc ít byte hơn nhánh "đọc hai đầu", và vân tay của hai tệp cùng kích
+thước được tính theo hai cách khác nhau. Phá mã thử: nó chặn ngay lúc **biên dịch**, không đợi tới
+lúc chạy.
+
+### KHÔNG làm: nâng `MIN_INTERESTING_SIZE`
+
+Tài liệu đề xuất nâng sàn lên ~4 MB để cắt 35% khối lượng. Số liệu bước 0 thoạt nhìn ủng hộ mạnh:
+dải 64 KB–1 MB chiếm **35,0% số tệp** nhưng chỉ **0,4% giá trị**.
+
+Nhưng P42 đã giải quyết xong vấn đề đó theo cách tốt hơn. Xếp các lớp theo tiềm năng giảm dần thì
+tiến độ tích luỹ là:
+
+| Đọc tới dải | % số tệp | % giá trị đã thấy |
+|---|---|---|
+| ≥256M | 1,7% | **64,4%** |
+| 64M–256M | 5,2% | 77,9% |
+| 16M–64M | **17,5%** | **89,3%** |
+| 4M–16M | 48,4% | 98,5% |
+| 64K–1M | 100% | 100% |
+
+Sau khi đọc **17,5% số tệp**, người dùng đã thấy **89,3% giá trị** — rồi tự bấm dừng nếu đủ.
+
+Nên nâng sàn giờ chỉ còn là **bỏ 0,4% giá trị để tiết kiệm thời gian mà người dùng đã có quyền
+không trả**. Và cái mất không chỉ là dung lượng: 68.994 tệp đó là sticker, SFX ngắn, PNG nhân bản
+hàng nghìn lần trong các dự án CapCut — ai đang dọn thư viện muốn thấy chúng, kể cả khi mỗi nhóm
+chỉ vài trăm KB.
+
+Đây là lần thứ hai trong dự án một đề xuất trong tài liệu bị chính số liệu bác bỏ (lần đầu: khoá
+(size, mtime) ở việc G).
+
+### Vòng kiểm
+
+`cargo test` **297 pass** (296 + 1) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` 136 pass.

@@ -39,9 +39,28 @@ use crate::index::model::Index;
 /// at the end. Reading more would cost proportionally more for no gain.
 const SAMPLE_BYTES: u64 = 64 * 1024;
 
-/// Files smaller than this are hashed whole in tier 2 — reading 128 KB of a
-/// 100 KB file twice would be slower than just reading it once.
-const SMALL_FILE_LIMIT: u64 = SAMPLE_BYTES * 2;
+/// Dưới ngưỡng này thì đọc trọn tệp một lần, thay vì đọc hai đầu.
+///
+/// Một mê-ga-byte, không phải `SAMPLE_BYTES * 2` như trước. Lý do là mô hình
+/// chi phí, và nó ngược với trực giác: đọc **nhiều byte hơn** để làm **ít thao
+/// tác hơn** lại nhanh hơn.
+///
+/// Đọc hai đầu là mở + đọc + nhảy + đọc. Đọc trọn là mở + đọc. Trên NAS đo
+/// được (docs/test-log.md P14): mở và lấy byte đầu tiên tốn **66 ms**, còn đọc
+/// thêm 1 MB chỉ tốn **18 ms**. Nên với tệp tới khoảng 1 MB, bỏ được một lượt
+/// đọc đáng giá hơn hẳn phần băng thông thêm vào.
+///
+/// Ngưỡng cũ 128 KB nằm **dưới điểm hoà vốn**: mọi tệp từ 128 KB đến 1 MB đang
+/// trả giá cho một thao tác mà chúng không cần. Đo trên thư viện thật, dải
+/// 64 KB–1 MB có 68.994 ứng viên — 35% tổng số tệp phải mở.
+///
+/// Không bỏ tệp nào: đây chỉ là *đọc thế nào*, không phải *đọc cái gì*.
+const SMALL_FILE_LIMIT: u64 = 1024 * 1024;
+
+// Kiểm lúc biên dịch: ngưỡng phải lớn hơn hai lần mẫu, nếu không thì nhánh
+// "đọc trọn" lại đọc ít byte hơn nhánh "đọc hai đầu" và vân tay của hai tệp
+// cùng kích thước được tính theo hai cách khác nhau.
+const _: () = assert!(SMALL_FILE_LIMIT >= SAMPLE_BYTES * 2);
 
 /// Ignore files below this size.
 ///
@@ -754,15 +773,42 @@ mod tests {
         assert_eq!(ha, hb);
     }
 
+    /// Tệp dưới ngưỡng được đọc TRỌN, nên khác biệt ở giữa vẫn bị bắt.
+    ///
+    /// Ngưỡng nâng từ 128 KB lên 1 MB không chỉ nhanh hơn — nó còn khiến tầng 2
+    /// **chính xác hơn** cho mọi tệp trong khoảng đó, vì đọc trọn thấy được
+    /// những gì đọc hai đầu bỏ sót.
+    #[test]
+    fn tep_duoi_nguong_duoc_doc_tron_nen_thay_ca_khac_biet_o_giua() {
+        let mut a = vec![7u8; 500 * 1024];
+        let mut b = a.clone();
+        a[250_000] = 1;
+        b[250_000] = 2;
+
+        let pa = temp_file("nho_giua_a.bin", &a);
+        let pb = temp_file("nho_giua_b.bin", &b);
+        assert_ne!(
+            fingerprint(&pa.to_string_lossy(), a.len() as u64),
+            fingerprint(&pb.to_string_lossy(), b.len() as u64),
+            "tệp dưới ngưỡng được đọc trọn nên phải phân biệt được"
+        );
+    }
+
     #[test]
     fn a_difference_in_the_middle_is_invisible_to_tier_two() {
-        // Honest about the limit. Two files identical at both ends but
-        // differing in the middle get the same fingerprint — which is why
-        // tier 3 exists, and why nothing here deletes anything.
-        let mut a = vec![7u8; 400_000];
+        // Nói thật về giới hạn: hai tệp giống nhau ở hai đầu nhưng khác ở giữa
+        // cho cùng một vân tay — đó là lý do tầng 3 tồn tại, và lý do không có
+        // gì ở đây tự xoá tệp.
+        //
+        // Tệp phải LỚN HƠN `SMALL_FILE_LIMIT`, nếu không nó được đọc trọn và
+        // giới hạn này không áp dụng. Bài này từng dùng 400 KB và đỏ khi ngưỡng
+        // nâng từ 128 KB lên 1 MB — không phải vì mã hỏng, mà vì bản sửa đã
+        // THU HẸP đúng giới hạn mà bài đang mô tả. Nay dùng 3 MB để bài nói về
+        // vùng mà giới hạn còn thật.
+        let mut a = vec![7u8; 3 * 1024 * 1024];
         let mut b = a.clone();
-        a[200_000] = 1;
-        b[200_000] = 2;
+        a[1_500_000] = 1;
+        b[1_500_000] = 2;
 
         let pa = temp_file("mid_a.bin", &a);
         let pb = temp_file("mid_b.bin", &b);
