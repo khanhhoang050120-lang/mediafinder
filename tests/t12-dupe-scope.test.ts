@@ -382,3 +382,123 @@ describe("t12 — nói rõ kết quả có từ lúc nào", () => {
     expect((div.textContent ?? "").replace(/\s+/g, " ")).toContain("kết quả từ 08:15");
   });
 });
+
+// ---- Tầng 3: xác minh trước khi xoá ----
+//
+// Tầng 2 chỉ đối chiếu dung lượng và HAI ĐẦU tệp, nên hai video khác nhau ở
+// giữa vẫn bị gom chung. Đúng để tìm ứng viên, sai hoàn toàn nếu lấy làm căn
+// cứ xoá — mà xoá chính là việc người dùng làm tiếp theo trên màn hình này.
+
+const NHOM_MAU = {
+  size: 1_000_000,
+  wasted: 1_000_000,
+  epoch: 1,
+  files: [
+    { index: 1, name: "a.mp4", path: "D:\m\a.mp4", dir: "D:\m", kind: "video" },
+    { index: 2, name: "b.mp4", path: "D:\m\b.mp4", dir: "D:\m", kind: "video" },
+  ],
+};
+
+async function moManCoKetQua(verify: unknown) {
+  const ipc = new IpcRecorder();
+  (globalThis as { __ipc?: IpcRecorder }).__ipc = ipc;
+  ipc
+    .on("dupe_estimate", { localFiles: 10, networkFiles: 0, networkDrives: [] })
+    .on("dupe_progress", { ...KHONG_CHAY, completed: true, groups: 1, wasted: 1_000_000 })
+    .on("dupe_groups", [NHOM_MAU])
+    .on("find_duplicates", null)
+    .on("cancel_duplicates", null)
+    .on("dupe_idle_status", [true, true])
+    .on("set_dupe_idle", null)
+    .on("verify_dupe_group", verify)
+    .on("thumb_url", "");
+
+  const div = document.createElement("div");
+  document.body.appendChild(div);
+  const app = mount(DuplicateFinder, {
+    target: div,
+    props: {
+      epoch: 1,
+      rowHeight: 46,
+      thumbSize: 64,
+      onclose: () => {},
+      onerror: () => {},
+      onopen: () => {},
+      onreveal: () => {},
+      oncontextmenu: () => {},
+    },
+  });
+  dangMo.push(() => {
+    unmount(app);
+    div.remove();
+  });
+  await settle(250);
+  return { div, ipc };
+}
+
+function nutXacMinh(div: HTMLElement): HTMLButtonElement | undefined {
+  return [...div.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) => b.textContent?.trim() === "Xác minh",
+  );
+}
+
+describe("t12 — xác minh trọn nội dung trước khi xoá", () => {
+  it("mỗi nhóm có nút Xác minh riêng", async () => {
+    const { div } = await moManCoKetQua({ groups: [], unreadable: [] });
+    expect(nutXacMinh(div), "thiếu nút Xác minh trên tiêu đề nhóm").toBeTruthy();
+  });
+
+  it("một cụm duy nhất = trùng thật", async () => {
+    const { div } = await moManCoKetQua({
+      groups: [["D:\m\a.mp4", "D:\m\b.mp4"]],
+      unreadable: [],
+    });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(150);
+    expect((div.textContent ?? "").replace(/\s+/g, " ")).toContain("trùng thật");
+  });
+
+  it("hai cụm = tầng 2 đã gom nhầm, phải CẢNH BÁO", async () => {
+    // Đây là ca quan trọng nhất của cả tính năng: hai tệp cùng dung lượng,
+    // cùng hai đầu, khác nhau ở giữa. Tầng 2 gom chung; nếu màn hình không
+    // nói ra thì người dùng xoá mất một tệp không phải bản sao.
+    const { div } = await moManCoKetQua({
+      groups: [["D:\m\a.mp4"], ["D:\m\b.mp4"]],
+      unreadable: [],
+    });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(150);
+
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu, "phải cảnh báo có tệp khác nội dung").toContain("khác nội dung");
+    expect(chu, "KHÔNG được nói là trùng thật").not.toContain("trùng thật");
+  });
+
+  it("không đọc được hết thì KHÔNG khẳng định gì", async () => {
+    // Không đọc được không phải là "khác nội dung", cũng không phải "trùng
+    // thật". Nói bừa một trong hai đều là khẳng định điều chưa xác minh.
+    const { div } = await moManCoKetQua({
+      groups: [["D:\m\a.mp4"]],
+      unreadable: ["D:\m\b.mp4"],
+    });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(150);
+
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu).toContain("không đọc được hết");
+    expect(chu).not.toContain("trùng thật");
+  });
+
+  it("gửi đúng danh sách đường dẫn của nhóm đó", async () => {
+    const { div, ipc } = await moManCoKetQua({ groups: [], unreadable: [] });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(150);
+
+    const goi = ipc.calls.filter((c) => c.cmd === "verify_dupe_group").pop();
+    expect(goi, "phải gọi lệnh xác minh").toBeTruthy();
+    expect((goi!.args as { paths: string[] }).paths).toEqual([
+      "D:\m\a.mp4",
+      "D:\m\b.mp4",
+    ]);
+  });
+});

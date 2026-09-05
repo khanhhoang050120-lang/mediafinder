@@ -161,6 +161,24 @@ export function setDupeIdle(enabled: boolean): Promise<void> {
   return invoke("set_dupe_idle", { enabled });
 }
 
+/// Kết quả xác minh tầng 3 của một nhóm.
+export interface VerifyOutcome {
+  /// Các cụm trùng thật sự từng byte. Một cụm duy nhất = nhóm đúng là bản sao
+  /// của nhau; nhiều cụm = tầng 2 đã gom nhầm ít nhất một tệp.
+  groups: string[][];
+  /// Tệp không đọc nổi. Về chúng thì **không nói gì** — không đọc được không
+  /// phải là "khác nội dung".
+  unreadable: string[];
+}
+
+/// Xác minh trọn nội dung một nhóm trước khi xoá.
+///
+/// Tầng 2 chỉ đối chiếu dung lượng và hai đầu tệp, nên hai video khác nhau ở
+/// giữa vẫn bị gom chung. Đây là bước duy nhất chắc chắn.
+export function verifyDupeGroup(paths: string[]): Promise<VerifyOutcome> {
+  return invoke<VerifyOutcome>("verify_dupe_group", { paths });
+}
+
 export function findDuplicates(scope: DupeScope = "localOnly"): Promise<void> {
   return invoke("find_duplicates", { scope });
 }

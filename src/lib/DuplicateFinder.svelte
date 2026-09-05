@@ -8,6 +8,7 @@
     dupeGroups,
     dupeIdleStatus,
     setDupeIdle,
+    verifyDupeGroup,
     dupeProgress,
     findDuplicates,
     formatBytes,
@@ -137,6 +138,38 @@
   dupeIdleStatus()
     .then(([bat]) => (quetNenBat = bat))
     .catch(() => {});
+
+  /// Kết quả xác minh từng nhóm: khoá nhóm → trạng thái.
+  ///
+  /// `Map` chứ không phải trường trên `DupeGroup`: nhóm đến từ backend và bị
+  /// thay mới mỗi 400 ms trong lúc quét, nên gắn trạng thái vào chúng là mất
+  /// ngay ở nhịp sau.
+  let xacMinh = $state(new Map<string, "dang" | "that" | "khac" | "loi">());
+
+  /// Khoá ổn định của một nhóm: dung lượng + vị trí tệp đầu.
+  ///
+  /// Không dùng chỉ số trong danh sách — danh sách dài ra trong lúc quét.
+  function khoaNhom(g: DupeGroup): string {
+    return `${g.size}:${g.files[0]?.index ?? -1}`;
+  }
+
+  async function chayXacMinh(g: DupeGroup) {
+    const k = khoaNhom(g);
+    xacMinh.set(k, "dang");
+    xacMinh = new Map(xacMinh);
+    try {
+      const kq = await verifyDupeGroup(g.files.map((f) => f.path));
+      // Một cụm duy nhất chứa tất cả tệp đọc được = nhóm đúng là bản sao của
+      // nhau. Nhiều cụm = tầng 2 đã gom nhầm ít nhất một tệp.
+      const trangThai =
+        kq.unreadable.length > 0 ? "loi" : kq.groups.length <= 1 ? "that" : "khac";
+      xacMinh.set(k, trangThai);
+    } catch (e) {
+      onerror(String(e));
+      xacMinh.delete(k);
+    }
+    xacMinh = new Map(xacMinh);
+  }
 
   /// Giờ trong ngày của một mốc Unix: "08:15".
   function gioTrongNgay(unix: number): string {
@@ -345,6 +378,28 @@
             <span class="gcount">{r.n} bản sao</span>
             <span class="gsize">{formatBytes(r.group.size)} mỗi tệp</span>
             <span class="gwaste">thừa {formatBytes(r.group.wasted)}</span>
+            <!--
+              Nút xác minh cho TỪNG nhóm.
+
+              Tầng 2 chỉ đối chiếu dung lượng và hai đầu tệp, nên hai video
+              khác nhau ở giữa vẫn bị gom chung — đúng để tìm ứng viên, sai
+              hoàn toàn nếu lấy làm căn cứ xoá. Nút này đọc trọn từng byte,
+              nhưng chỉ cho đúng nhóm người dùng sắp hành động: vài giây cho
+              một nhóm, thay vì hàng giờ cho cả thư viện.
+            -->
+            {#if xacMinh.get(khoaNhom(r.group)) === "dang"}
+              <span class="gverify">đang xác minh…</span>
+            {:else if xacMinh.get(khoaNhom(r.group)) === "that"}
+              <span class="gverify ok">✓ trùng thật</span>
+            {:else if xacMinh.get(khoaNhom(r.group)) === "khac"}
+              <span class="gverify canh">⚠ có tệp khác nội dung</span>
+            {:else if xacMinh.get(khoaNhom(r.group)) === "loi"}
+              <span class="gverify canh">không đọc được hết</span>
+            {:else}
+              <button class="gverify nut" onclick={() => chayXacMinh(r.group)}>
+                Xác minh
+              </button>
+            {/if}
           </div>
         {:else}
           <div
@@ -440,6 +495,38 @@
     border-top: 1px solid var(--border);
   }
   .gcount { color: var(--text); font-weight: 600; }
+  /* Trạng thái xác minh, nép bên phải tiêu đề nhóm. */
+  .gverify {
+    margin-left: auto;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .gverify.nut {
+    padding: 2px 9px;
+    font-family: inherit;
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .gverify.nut:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .gverify.nut:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .gverify.ok {
+    color: #47b483;
+  }
+  /* Cảnh báo dùng màu riêng: "có tệp khác nội dung" là lý do để DỪNG tay, chứ
+     không phải một mẩu thông tin ngang hàng với dung lượng. */
+  .gverify.canh {
+    color: #d4a04a;
+  }
+
   .gwaste { margin-left: auto; color: #ffc978; }
 
   .row {

@@ -165,6 +165,7 @@ pub fn run_gui() {
             ipc::commands::mark_updating,
             ipc::commands::dupe_idle_status,
             ipc::commands::set_dupe_idle,
+            ipc::commands::verify_dupe_group,
             ipc::commands::dupe_estimate,
             ipc::commands::index_freshness,
             ipc::commands::start_file_drag,

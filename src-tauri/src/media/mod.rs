@@ -7,3 +7,4 @@ pub mod dupestore;
 pub mod enrich;
 pub mod metadata;
 pub mod thumbnail;
+pub mod verify;

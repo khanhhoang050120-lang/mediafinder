@@ -1000,3 +1000,64 @@ của mình. Sửa bằng cách chỉ soi phần trước khối `mod tests`.
 
 Lượt quét bị cắt giữa chừng vẫn ghi được `dupes.bin` đúng định dạng (magic `MFDUPE01`, version 1) —
 đúng thiết kế: một lượt huỷ vẫn đã đọc xong hàng nghìn tệp, vứt phần đó là bắt lượt sau đọc lại.
+
+## P45 — Việc H: xác minh trọn nội dung trước khi xoá
+
+Việc H của [DE-XUAT-TRUNG-LAP.md](../DE-XUAT-TRUNG-LAP.md). Tài liệu xếp nó vào nhóm "làm sau",
+nhưng hai việc vừa xong biến nó thành **bắt buộc**:
+
+* Tầng 2 chỉ đối chiếu dung lượng và **hai đầu** tệp, nên hai video khác nhau ở giữa vẫn bị gom
+  chung. Đúng để *tìm ứng viên*, sai hoàn toàn nếu lấy làm căn cứ *xoá*.
+* Kho vân tay bền (P43) thêm một rủi ro nữa: tệp bị sửa tại chỗ mà giữ nguyên cả `size` lẫn `mtime`
+  sẽ được tin theo vân tay cũ. Hiếm, nhưng có thật.
+* Và P42 khiến kết quả hiện ra sau vài giây thay vì hàng chục phút — nên người dùng bắt đầu hành
+  động sớm hơn nhiều.
+
+### Ghép từ nhánh cũ
+
+`verify.rs` ở `backup/edit-v1.0.6` còn nguyên và viết kỹ: hash trọn từng byte, đệm 1 MiB không kéo
+cả tệp vào RAM, chạy **tuần tự có chủ ý** (một nhóm hiếm khi quá vài tệp, và các bản sao thường
+nằm cùng một ổ — hai luồng cùng đọc một đĩa cơ chỉ đổi tuần tự lấy tiếng lạch cạch).
+
+Ghép nguyên, kèm lệnh IPC `verify_dupe_group` chạy trên pool blocking.
+
+Ba ca kiểm thử của nó cũng ghép nguyên, và ca đầu chính là ca chứng minh tầng 3 cần tồn tại: bốn
+tệp 4 KiB **giống hệt hai đầu**, một tệp khác đúng một byte ở giữa bụng — tầng 2 gom cả bốn, tầng 3
+tách đúng kẻ giả ra.
+
+### Giao diện
+
+Nút **Xác minh** trên tiêu đề từng nhóm, không phải một nút chung: chỉ đọc trọn nhóm mà người dùng
+sắp hành động — vài giây cho một nhóm, thay vì hàng giờ cho cả thư viện mà tuyệt đại đa số không ai
+đụng tới.
+
+Bốn trạng thái, và ranh giới giữa chúng là chỗ dễ sai nhất:
+
+| Kết quả | Màn hình nói |
+|---|---|
+| Một cụm, đọc được hết | ✓ trùng thật |
+| Nhiều cụm | ⚠ **có tệp khác nội dung** |
+| Có tệp không đọc được | không đọc được hết |
+
+Trường hợp thứ ba **không khẳng định gì cả** — không đọc được không phải là "khác nội dung", cũng
+không phải "trùng thật". Nói bừa một trong hai đều là khẳng định điều chưa xác minh.
+
+Trạng thái giữ trong một `Map` khoá theo `(dung lượng, vị trí tệp đầu)`, không gắn vào `DupeGroup`:
+nhóm đến từ backend và bị thay mới mỗi 400 ms trong lúc quét, nên gắn vào chúng là mất ngay nhịp
+sau.
+
+### Kiểm chứng
+
+| Phá cái gì | Kết quả |
+|---|---|
+| **Nhiều cụm vẫn báo "trùng thật"** | **2 ca đỏ** ✅ |
+| Bỏ qua danh sách không đọc được | 1 ca đỏ ✅ |
+| Gửi sai danh sách đường dẫn của nhóm | 1 ca đỏ ✅ |
+
+Phép đầu là phép quan trọng nhất trong cả đợt việc: báo "trùng thật" khi thực ra không phải nghĩa
+là người dùng xoá mất một tệp không có bản sao nào.
+
+### Vòng kiểm
+
+`cargo test` **294 pass** (291 + 3) · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp ·
+`npm test` **132 pass** (127 + 5).

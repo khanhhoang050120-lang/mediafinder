@@ -581,6 +581,30 @@ pub fn set_dupe_idle(enabled: bool) {
     crate::media::dupeidle::dat_bat(enabled);
 }
 
+/// Tầng 3 tìm-trùng: xác minh trọn nội dung một nhóm ứng viên.
+///
+/// Chạy trên pool blocking — một nhóm vài tệp lớn trên NAS có thể mất nhiều
+/// giây, và luồng lệnh IPC không được phép đứng chờ đĩa.
+///
+/// # Vì sao đây không còn là tuỳ chọn
+///
+/// Tầng 2 chỉ đối chiếu dung lượng và **hai đầu** tệp, nên hai video khác nhau
+/// ở giữa vẫn bị gom chung. Điều đó chấp nhận được để *tìm ứng viên* và sai
+/// hoàn toàn nếu lấy làm căn cứ *xoá*.
+///
+/// Kho vân tay bền ([`crate::media::dupestore`]) còn thêm một rủi ro nữa: tệp
+/// bị sửa tại chỗ mà giữ nguyên cả `size` lẫn `mtime` sẽ được tin theo vân tay
+/// cũ. Hiếm, nhưng có thật — `mtime` chỉ có độ phân giải một giây và vài công
+/// cụ cố ý giữ nguyên nó.
+#[tauri::command]
+pub async fn verify_dupe_group(
+    paths: Vec<String>,
+) -> Result<crate::media::verify::VerifyOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::media::verify::verify_paths(&paths))
+        .await
+        .map_err(|e| format!("xác minh bị gián đoạn: {e}"))
+}
+
 /// Begin looking for duplicates.
 #[tauri::command]
 pub fn find_duplicates(
