@@ -54,7 +54,10 @@ const MAGIC: &[u8; 8] = b"MFDUPE01";
 /// Đặc biệt: đổi `SAMPLE_BYTES` trong `dupes.rs` làm mọi vân tay cũ nói về một
 /// phép tính khác, nên phải tăng số này cùng lúc — nếu không, vân tay cũ và
 /// mới lẫn vào nhau và kết quả sai một cách im lặng.
-const SCHEMA_VERSION: u32 = 1;
+// 2: vân tay đổi cách lấy mẫu (video lớn chỉ đọc đầu, xem
+// [`crate::media::dupesample`]). Vân tay cũ và mới KHÔNG so được với nhau —
+// giữ kho cũ là báo trùng lặp sai hàng loạt, nên tăng số này để nó bị bỏ.
+const SCHEMA_VERSION: u32 = 2;
 
 /// Vân tay của một tệp, kèm dấu hiệu nhận biết tệp đó có đổi không.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -110,6 +113,18 @@ impl Store {
             .insert(path_key(path), Entry { size, mtime, fp });
     }
 
+    /// Gộp mục của một kho khác vào kho này.
+    ///
+    /// Mục đã có ở đây thắng: kho này là thứ máy này vừa tự đọc được, còn kho
+    /// kia đến từ máy khác. Cả hai đều bị kiểm `(dung lượng, thời gian sửa)`
+    /// lúc tra, nên khác biệt chỉ là chọn ai khi cả hai cùng đúng — và chọn
+    /// bản của chính mình thì không phải giải thích gì thêm.
+    pub fn gop_them(&mut self, khac: &Store) {
+        for (k, v) in khac.by_path.iter() {
+            self.by_path.entry(*k).or_insert(*v);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.by_path.len()
     }
@@ -143,7 +158,17 @@ pub fn load() -> Store {
     let Some(p) = store_path() else {
         return Store::default();
     };
-    let Ok(f) = std::fs::File::open(&p) else {
+    load_from(&p)
+}
+
+/// Đọc kho từ một tệp cụ thể.
+///
+/// Tách khỏi [`load`] để bài thử đọc-ghi dùng được tệp riêng của nó. Bản trước
+/// gọi thẳng [`load`], nghĩa là nó ghi đè **kho thật của người dùng** rồi khôi
+/// phục lại — và khi app đang chạy và cũng đang ghi vào đúng tệp đó, bài thử
+/// vừa đỏ oan vừa xoá mất vân tay mà app vừa quét được.
+pub(crate) fn load_from(p: &std::path::Path) -> Store {
+    let Ok(f) = std::fs::File::open(p) else {
         return Store::default();
     };
     let mut r = BufReader::new(f);
@@ -180,6 +205,11 @@ pub fn save(store: &Store) -> bool {
     let Some(p) = store_path() else {
         return false;
     };
+    save_to(&p, store)
+}
+
+/// Ghi kho xuống một tệp cụ thể. Xem [`load_from`] về lý do tách.
+pub(crate) fn save_to(p: &std::path::Path, store: &Store) -> bool {
     if let Some(d) = p.parent() {
         if std::fs::create_dir_all(d).is_err() {
             return false;
@@ -202,7 +232,7 @@ pub fn save(store: &Store) -> bool {
         let _ = std::fs::remove_file(&tmp);
         return false;
     }
-    std::fs::rename(&tmp, &p).is_ok()
+    std::fs::rename(&tmp, p).is_ok()
 }
 
 #[cfg(test)]
@@ -334,33 +364,58 @@ mod tests {
     /// Ghi rồi đọc lại từ đĩa phải ra đúng thứ đã ghi.
     #[test]
     fn ghi_va_doc_lai_tu_dia() {
-        // Chỉ chạy được khi xác định được thư mục cache; trên máy CI không có
-        // thì bỏ qua thay vì đỏ vì môi trường.
-        let Some(p) = store_path() else {
-            return;
-        };
-        let sao_luu = std::fs::read(&p).ok();
+        // Tệp riêng của bài thử, KHÔNG phải kho thật. Bản trước gọi thẳng
+        // `save`/`load` nên nó ghi đè kho ở `AppData` rồi khôi phục — và khi
+        // app đang chạy quét nền ghi vào đúng tệp đó, bài thử đỏ vì môi trường
+        // chứ không vì mã sai, đồng thời nuốt mất vân tay app vừa quét.
+        let dir = std::env::temp_dir().join(format!("mf-kho-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("dupes.bin");
 
         let mut s = Store::default();
         s.put(r"D:\ghi-doc.mp4", 4242, 99, FP);
-        assert!(save(&s), "phải ghi được");
+        assert!(save_to(&p, &s), "phải ghi được");
 
-        let doc = load();
+        let doc = load_from(&p);
         assert_eq!(
             doc.get(r"D:\ghi-doc.mp4", 4242, 99),
             Some(FP),
             "đọc lại phải ra đúng vân tay đã ghi"
         );
 
-        // Trả lại kho thật cho máy này.
-        match sao_luu {
-            Some(b) => {
-                let _ = std::fs::write(&p, b);
-            }
-            None => {
-                let _ = std::fs::remove_file(&p);
-            }
-        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kho hỏng hay lạ phiên bản thì cho kho rỗng, không được nổ.
+    #[test]
+    fn tep_rac_thi_ra_kho_rong() {
+        let dir = std::env::temp_dir().join(format!("mf-rac-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let rac = dir.join("rac.bin");
+        let _ = std::fs::write(&rac, b"khong phai kho vantay gi ca");
+        assert!(
+            load_from(&rac).by_path.is_empty(),
+            "tệp rác phải ra kho rỗng"
+        );
+
+        // Đúng chữ ký nhưng sai số phiên bản: kho của bản sau, đọc bằng bản
+        // trước. Bỏ đi và quét lại, chứ đừng đoán nghĩa các byte.
+        let sai_ver = dir.join("sai-ver.bin");
+        let mut b = MAGIC.to_vec();
+        b.extend_from_slice(&(SCHEMA_VERSION + 1).to_le_bytes());
+        let _ = std::fs::write(&sai_ver, b);
+        assert!(
+            load_from(&sai_ver).by_path.is_empty(),
+            "sai phiên bản phải ra kho rỗng"
+        );
+
+        assert!(
+            load_from(&dir.join("khong-ton-tai.bin")).by_path.is_empty(),
+            "tệp không có phải ra kho rỗng"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

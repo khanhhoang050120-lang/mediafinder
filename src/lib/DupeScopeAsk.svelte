@@ -80,6 +80,22 @@
       </button>
     </div>
 
+    <!--
+      Nói ra cái bị bỏ qua, ngay tại chỗ người dùng đang quyết định.
+
+      Sàn dung lượng nâng từ 64 KB lên 1 MB vì đo được: tệp dưới 1 MB chiếm
+      một phần ba số tệp phải mở nhưng chỉ 0,28% phần thu hồi được. Bỏ chúng
+      là bỏ một phần ba thời gian quét.
+
+      Nhưng người dọn ổ mà không biết điều này sẽ tưởng app sót tệp — họ thấy
+      bằng mắt hai ảnh giống nhau mà danh sách không có. Một dòng ở đây rẻ hơn
+      nhiều so với việc mất niềm tin vào kết quả.
+    -->
+    <p class="luu-y">
+      Bỏ qua tệp nhỏ hơn 1 MB: chúng chiếm một phần ba số tệp phải mở nhưng
+      chưa tới 1% dung lượng thu hồi được.
+    </p>
+
     <p class="luu-y">
       Ổ mạng chậm hơn nhiều lần, và nhiều máy cùng quét sẽ làm NAS chậm đi với
       mọi người. Thời gian còn lại sẽ hiện ngay khi quét bắt đầu.

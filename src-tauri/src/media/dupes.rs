@@ -30,48 +30,52 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use serde::Serialize;
 
-use crate::index::model::Index;
+use crate::index::model::{Index, MediaKind};
 
 /// Bytes sampled from each end of a file in tier 2.
 ///
 /// 64 KB comfortably covers the header of every container format in the
 /// extension table, and the tail catches the index or moov atom that media formats put
 /// at the end. Reading more would cost proportionally more for no gain.
-const SAMPLE_BYTES: u64 = 64 * 1024;
+// Hai hằng số này thuộc về [`crate::media::dupesample`], nơi có bảng đo giải
+// thích vì sao chúng bằng chừng đó. Dùng lại chứ không khai lại: hai bản sao
+// lệch nhau thì vân tay lưu trong kho không còn nghĩa như vân tay vừa tính.
+use crate::media::dupesample::SAMPLE_BYTES;
 
-/// Dưới ngưỡng này thì đọc trọn tệp một lần, thay vì đọc hai đầu.
+/// Dưới ngưỡng này thì không kiểm.
 ///
-/// Một mê-ga-byte, không phải `SAMPLE_BYTES * 2` như trước. Lý do là mô hình
-/// chi phí, và nó ngược với trực giác: đọc **nhiều byte hơn** để làm **ít thao
-/// tác hơn** lại nhanh hơn.
+/// Tệp bé va nhau về dung lượng liên tục — hàng nghìn ảnh thu nhỏ và biểu
+/// tượng 1 KB — và biết hai tệp 800 byte giống nhau không giúp ai. Mục đích là
+/// thu hồi dung lượng.
 ///
-/// Đọc hai đầu là mở + đọc + nhảy + đọc. Đọc trọn là mở + đọc. Trên NAS đo
-/// được (docs/test-log.md P14): mở và lấy byte đầu tiên tốn **66 ms**, còn đọc
-/// thêm 1 MB chỉ tốn **18 ms**. Nên với tệp tới khoảng 1 MB, bỏ được một lượt
-/// đọc đáng giá hơn hẳn phần băng thông thêm vào.
+/// # Vì sao 1 MB chứ không phải 64 KB
 ///
-/// Ngưỡng cũ 128 KB nằm **dưới điểm hoà vốn**: mọi tệp từ 128 KB đến 1 MB đang
-/// trả giá cho một thao tác mà chúng không cần. Đo trên thư viện thật, dải
-/// 64 KB–1 MB có 68.994 ứng viên — 35% tổng số tệp phải mở.
+/// Đếm trên thư viện thật (377.586 tệp, 169.711 ứng viên, tổng tiềm năng thu
+/// hồi 3.711,7 GB):
 ///
-/// Không bỏ tệp nào: đây chỉ là *đọc thế nào*, không phải *đọc cái gì*.
-const SMALL_FILE_LIMIT: u64 = 1024 * 1024;
+/// | Dải dung lượng | Số tệp | % số lượng | % giá trị |
+/// |---|---|---|---|
+/// | **64 KB–1 MB** | 57.279 | **33,8%** | **0,28%** |
+/// | 1–4 MB | 26.139 | 15,4% | 1,0% |
+/// | 4–16 MB | 54.948 | 32,4% | 8,9% |
+/// | 16–64 MB | 21.776 | 12,8% | 10,8% |
+/// | 64–256 MB | 6.440 | 3,8% | 13,5% |
+/// | ≥256 MB | 3.129 | 1,8% | **65,5%** |
+///
+/// Một phần ba số tệp phải mở mang **0,28%** phần thu hồi được — 10,3 GB trên
+/// 3.711,7 GB. Trên NAS, mỗi tệp đó vẫn tốn một lần mở đầy đủ (~66 ms), vì chi
+/// phí nằm ở thao tác chứ không ở byte.
+///
+/// Không đẩy lên 4 MB dù bảng trên cho thấy nó bỏ được **49%** số tệp với 1,3%
+/// giá trị: ở đó bắt đầu mất **số nhóm** chứ không chỉ mất GB, và người dọn ổ
+/// nhìn thấy danh sách ngắn đi mà không biết vì sao. Đó là lựa chọn nên hỏi
+/// người dùng, không nên tự quyết trong một hằng số.
+pub const MIN_INTERESTING_SIZE: u64 = 1024 * 1024;
 
-// Kiểm lúc biên dịch: ngưỡng phải lớn hơn hai lần mẫu, nếu không thì nhánh
-// "đọc trọn" lại đọc ít byte hơn nhánh "đọc hai đầu" và vân tay của hai tệp
-// cùng kích thước được tính theo hai cách khác nhau.
-const _: () = assert!(SMALL_FILE_LIMIT >= SAMPLE_BYTES * 2);
-
-/// Ignore files below this size.
-///
-/// Tiny files collide on size constantly — thousands of 1 KB thumbnails and
-/// icons — and finding that two 800-byte files match is not worth anybody's
-/// attention. Reclaiming space is the point.
-pub(crate) const MIN_INTERESTING_SIZE: u64 = 64 * 1024;
-
-// Checked when the crate is built. Thousands of icons and thumbnails share a
-// size; reporting those would bury the groups actually worth acting on.
-const _: () = assert!(MIN_INTERESTING_SIZE >= 64 * 1024);
+// Kiểm lúc biên dịch. Hạ xuống dưới 1 MB là nhận lại một phần ba khối lượng
+// đọc đĩa để đổi lấy 0,28% giá trị — nếu ai đó muốn thế thì phải sửa cả bảng
+// đo ở trên, không phải sửa lặng lẽ một con số.
+const _: () = assert!(MIN_INTERESTING_SIZE >= 1024 * 1024);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,7 +294,6 @@ impl DupeService {
         index: Arc<Index>,
         epoch: u64,
         scope: crate::media::dupescope::DupeScope,
-        net_letters: Vec<char>,
     ) -> bool {
         if self.running.swap(true, Ordering::AcqRel) {
             return false;
@@ -307,6 +310,19 @@ impl DupeService {
         self.started_unix.store(gio_unix(), Ordering::Relaxed);
         self.unreadable.store(0, Ordering::Relaxed);
         self.dropped_drives.lock().clear();
+
+        // Hỏi Windows NGAY ĐÂY, không nhận từ chỗ gọi.
+        //
+        // Bản trước nhận `net_letters` và `remote` làm tham số, và hai chỗ gọi
+        // truyền rỗng: bài đo trên thư viện thật, và quét nền lúc máy rảnh.
+        // Chỗ thứ hai là lỗi thật — `in_scope(LocalOnly)` viết là
+        // `!(là_ổ_mạng && danh_sách.chứa(ổ))`, nên danh sách rỗng làm nó trả
+        // `true` cho MỌI tệp và lượt quét nền đọc trọn NAS.
+        //
+        // Không kiểm "rỗng hay không" được: rỗng là hợp lệ trên máy không gắn
+        // ổ mạng nào. Bỏ hẳn tham số mới là cách chặn, và trình biên dịch canh
+        // giúp. Xem [`crate::media::omang`].
+        let omang = crate::media::omang::OMang::tu_he_thong();
 
         let running = Arc::clone(&self.running);
         let stop = Arc::clone(&self.stop);
@@ -325,7 +341,7 @@ impl DupeService {
                     &index,
                     &stop,
                     scope,
-                    &net_letters,
+                    &omang,
                     &Counters {
                         candidates: &candidates,
                         hashed: &hashed,
@@ -437,7 +453,7 @@ fn find_duplicates(
     index: &Index,
     stop: &AtomicBool,
     scope: crate::media::dupescope::DupeScope,
-    net_letters: &[char],
+    omang: &crate::media::omang::OMang,
     dem: &Counters<'_>,
 ) -> Vec<DuplicateGroup> {
     let Counters {
@@ -484,7 +500,7 @@ fn find_duplicates(
         .map(|(size, entries)| {
             let trong_pham_vi: Vec<u32> = entries
                 .into_iter()
-                .filter(|&i| crate::media::dupescope::in_scope(index, i, scope, net_letters))
+                .filter(|&i| crate::media::dupescope::in_scope(index, i, scope, &omang.chu))
                 .collect();
             (size, trong_pham_vi)
         })
@@ -560,12 +576,46 @@ fn find_duplicates(
     // của chúng là **chung cuộc**, không đảo lộn khi quét tiếp.
     const TEP_MOI_DOT: usize = 400;
 
+    // Dựng pool MỘT LẦN cho cả lượt quét, không phải mỗi đợt.
+    //
+    // Bản đầu dựng pool bên trong vòng lặp đợt: với 493 đợt, đó là hàng nghìn
+    // luồng được tạo rồi huỷ trong một lượt. Phí tổn dựng pool chỉ vài giây;
+    // cái đắt là KẾT NỐI SMB — luồng chết thì kết nối chết theo, nên mỗi đợt
+    // phải bắt tay TCP + SMB lại từ đầu với NAS, đúng thứ đắt nhất trong toàn
+    // bộ phép đo (66 ms mỗi lần mở).
+    //
+    // MỘT pool cho mọi ổ, không chia theo thiết bị. Xem [`crate::media::dupepool`]
+    // cho phép đo: chia theo ổ đo được **0,85×** — chậm hơn 15% — vì hàng đợi
+    // chung cho phép ăn cắp việc, còn chia theo ổ thì luồng của ổ xong sớm
+    // ngồi không trong khi ổ khác còn việc.
+    let pool = crate::media::dupepool::dung();
+
     // Kho vân tay đã lưu từ lượt trước. Đọc một lần, dùng cho cả lượt.
     let kho = parking_lot::Mutex::new(crate::media::dupestore::load());
     let tu_kho = AtomicUsize::new(0);
     if !kho.lock().is_empty() {
         tracing::info!("kho vân tay: {} mục đã lưu", kho.lock().len());
     }
+
+    // Vân tay mà MÁY KHÁC đã đọc hộ, để ngay trên share.
+    //
+    // 79% ứng viên nằm trên ổ mạng, và nội dung ổ mạng giống hệt nhau trên cả
+    // studio — hôm nay bốn mươi máy đọc lại cùng một nội dung bốn mươi lần.
+    // Xem [`crate::media::dupeshare`].
+    //
+    // Chỉ đọc, ở đây. Kho này bất biến suốt lượt quét nên không cần khoá.
+    let shares: Vec<String> = omang.unc.values().cloned().collect();
+    let (kho_chung, so_tep_chung) = crate::media::dupeshare::gop_tu_share(&shares);
+    if !kho_chung.is_empty() {
+        tracing::info!(
+            "vân tay dùng chung: {} mục từ {so_tep_chung} máy khác",
+            kho_chung.len()
+        );
+    }
+    // Phần máy này vừa đọc được cho ổ mạng, khoá theo UNC để máy khác tra
+    // được. Ghi lên share khi xong.
+    let chung_moi = parking_lot::Mutex::new(crate::media::dupestore::Store::default());
+    let tu_chung = AtomicUsize::new(0);
 
     let mut by_hash: HashMap<(u64, [u8; 32]), Vec<u32>> = HashMap::new();
     let mut dot: Vec<(u64, u32)> = Vec::with_capacity(TEP_MOI_DOT);
@@ -579,45 +629,80 @@ fn find_duplicates(
         if dot.is_empty() {
             return true;
         }
-        let vt: Vec<(u64, u32, [u8; 32], bool)> = std::mem::take(dot)
-            .into_par_iter()
-            .filter_map(|(size, i)| {
-                if stop.load(Ordering::Relaxed) {
-                    return None;
-                }
-                let path = index.full_path(i as usize);
-                let mtime = index.mtimes().get(i as usize).copied().unwrap_or(0);
+        let xu_ly_mot = |size: u64, i: u32| -> Option<(u64, u32, [u8; 32], bool)> {
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            let path = index.full_path(i as usize);
+            let mtime = index.mtimes().get(i as usize).copied().unwrap_or(0);
 
-                // Đã có vân tay và tệp chưa đổi thì KHÔNG mở lại. Đây là toàn
-                // bộ giá trị của kho: trên NAS một lần mở tốn ~66 ms chỉ để
-                // lấy byte đầu, và 82% ứng viên nằm ở đó.
-                if let Some(fp) = kho.lock().get(&path, size, mtime) {
-                    tu_kho.fetch_add(1, Ordering::Relaxed);
+            // Đã có vân tay và tệp chưa đổi thì KHÔNG mở lại. Đây là toàn
+            // bộ giá trị của kho: trên NAS một lần mở tốn ~66 ms chỉ để
+            // lấy byte đầu, và 82% ứng viên nằm ở đó.
+            if let Some(fp) = kho.lock().get(&path, size, mtime) {
+                tu_kho.fetch_add(1, Ordering::Relaxed);
+                hashed.fetch_add(1, Ordering::Relaxed);
+                return Some((size, i, fp, false));
+            }
+
+            // Máy khác đã đọc tệp này rồi thì đừng đọc lại.
+            //
+            // Không tin mù: `get` chỉ trả về khi CẢ dung lượng lẫn thời gian
+            // sửa còn khớp với chỉ mục của chính máy này, nên tệp đã đổi thì
+            // mục cũ tự bị loại. Cùng cơ chế với kho cục bộ.
+            if let Some(unc) = crate::media::dupeshare::duong_unc(&path, &omang.unc) {
+                if let Some(fp) = kho_chung.get(&unc, size, mtime) {
+                    tu_chung.fetch_add(1, Ordering::Relaxed);
                     hashed.fetch_add(1, Ordering::Relaxed);
                     return Some((size, i, fp, false));
                 }
+            }
 
-                hashed.fetch_add(1, Ordering::Relaxed);
-                match fingerprint(&path, size) {
-                    Some(h) => Some((size, i, h, true)),
-                    None => {
-                        // ĐẾM, không bỏ lặng. Một tệp không mở được có thể là
-                        // tệp vừa bị xoá, hoặc cả một ổ mạng vừa rớt — và
-                        // trong trường hợp thứ hai, im lặng nghĩa là màn hình
-                        // nói "không tìm thấy tệp trùng lặp nào" trong khi
-                        // thực ra nó chưa hề nhìn thấy 80% thư viện.
-                        unreadable.fetch_add(1, Ordering::Relaxed);
-                        None
-                    }
+            hashed.fetch_add(1, Ordering::Relaxed);
+            match fingerprint(&path, size, index.kind(i as usize)) {
+                Some(h) => Some((size, i, h, true)),
+                None => {
+                    // ĐẾM, không bỏ lặng. Một tệp không mở được có thể là
+                    // tệp vừa bị xoá, hoặc cả một ổ mạng vừa rớt — và
+                    // trong trường hợp thứ hai, im lặng nghĩa là màn hình
+                    // nói "không tìm thấy tệp trùng lặp nào" trong khi
+                    // thực ra nó chưa hề nhìn thấy 80% thư viện.
+                    unreadable.fetch_add(1, Ordering::Relaxed);
+                    None
                 }
-            })
-            .collect();
+            }
+        };
+
+        // Một hàng đợi chung cho mọi ổ, chạy trong pool riêng ưu tiên thấp.
+        //
+        // Đã thử chia theo thiết bị (đĩa trong máy một pool, mỗi máy chủ NAS
+        // một pool) và đo có kiểm soát: **chậm hơn 15%**. Hàng đợi chung thắng
+        // vì ăn cắp việc — không luồng nào rảnh khi còn tệp chưa đọc. Bảng đo
+        // đầy đủ ở [`crate::media::dupepool`].
+        let viec = std::mem::take(dot);
+        let chay = |v: Vec<(u64, u32)>| -> Vec<(u64, u32, [u8; 32], bool)> {
+            v.into_par_iter()
+                .filter_map(|(size, i)| xu_ly_mot(size, i))
+                .collect()
+        };
+        // Không dựng được pool thì chạy trên pool toàn cục: chậm hơn và có thể
+        // làm ô tìm kiếm khựng, nhưng không mất tệp nào.
+        let vt: Vec<(u64, u32, [u8; 32], bool)> = match &pool {
+            Some(p) => p.install(|| chay(viec)),
+            None => chay(viec),
+        };
 
         for (size, i, h, moi_doc) in vt {
             if moi_doc {
                 let path = index.full_path(i as usize);
                 let mtime = index.mtimes().get(i as usize).copied().unwrap_or(0);
                 kho.lock().put(&path, size, mtime, h);
+                // Tệp trên ổ mạng thì ghi thêm bản khoá theo UNC, để máy khác
+                // dùng được. Tệp đĩa trong máy KHÔNG chia sẻ: `D:\du-an.mp4`
+                // của máy này là một tệp khác trên máy khác.
+                if let Some(unc) = crate::media::dupeshare::duong_unc(&path, &omang.unc) {
+                    chung_moi.lock().put(&unc, size, mtime, h);
+                }
             }
             by_hash.entry((size, h)).or_default().push(i);
         }
@@ -678,12 +763,34 @@ fn find_duplicates(
             }
         }
         if crate::media::dupestore::save(&k) {
+            let doc_lai = hashed.load(Ordering::Relaxed)
+                - tu_kho.load(Ordering::Relaxed)
+                - tu_chung.load(Ordering::Relaxed);
             tracing::info!(
-                "kho vân tay: lưu {} mục · lượt này đọc lại {} tệp, dùng kho {} tệp",
+                "kho vân tay: lưu {} mục · lượt này đọc lại {doc_lai} tệp, dùng kho {} tệp, dùng vân tay máy khác {} tệp",
                 k.len(),
-                hashed.load(Ordering::Relaxed) - tu_kho.load(Ordering::Relaxed),
-                tu_kho.load(Ordering::Relaxed)
+                tu_kho.load(Ordering::Relaxed),
+                tu_chung.load(Ordering::Relaxed)
             );
+        }
+    }
+
+    // Để lại vân tay ổ mạng cho các máy khác trong studio.
+    //
+    // Nằm NGOÀI khối trên có chủ ý: khối đó giữ khoá kho cục bộ, còn đây là
+    // ghi qua mạng — không giữ một khoá suốt một thao tác SMB.
+    //
+    // CHỈ ghi lên máy chủ nằm trong danh sách cho phép. Máy `.214` (ổ `F:` và
+    // `H:`) là máy trạm của người khác chứ không phải NAS, và
+    // `dupeshare::duoc_ghi` chặn nó. Ghi được hay không đều không ảnh hưởng
+    // kết quả lượt quét này.
+    {
+        let cm = chung_moi.lock();
+        if !cm.is_empty() {
+            let n = crate::media::dupeshare::ghi_len_share(&shares, &cm);
+            if n > 0 {
+                tracing::info!("đã để lại {} mục vân tay trên {n} share", cm.len());
+            }
         }
     }
 
@@ -710,28 +817,42 @@ fn find_duplicates(
 ///
 /// Mở ra vì bài đo trong tests/dupes_real.rs cần đo đúng thao tác mà lượt quét
 /// thật làm — dựng lại một bản sao trong bài kiểm thử là đo một thứ khác.
-pub fn fingerprint_pub(path: &str, size: u64) -> Option<[u8; 32]> {
-    fingerprint(path, size)
+pub fn fingerprint_pub(path: &str, size: u64, kind: MediaKind) -> Option<[u8; 32]> {
+    fingerprint(path, size, kind)
 }
 
-fn fingerprint(path: &str, size: u64) -> Option<[u8; 32]> {
+fn fingerprint(path: &str, size: u64, kind: MediaKind) -> Option<[u8; 32]> {
+    use crate::media::dupesample::{self, Cach};
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = blake3::Hasher::new();
     hasher.update(&size.to_le_bytes());
 
-    if size <= SMALL_FILE_LIMIT {
-        // Reading both ends of a small file would read most of it twice.
-        let mut buf = Vec::with_capacity(size as usize);
-        file.read_to_end(&mut buf).ok()?;
-        hasher.update(&buf);
-    } else {
-        let mut buf = vec![0u8; SAMPLE_BYTES as usize];
-        file.read_exact(&mut buf).ok()?;
-        hasher.update(&buf);
+    match dupesample::chon(size, kind) {
+        Cach::TronTep => {
+            // Đọc hai đầu của một tệp nhỏ là đọc gần hết nó hai lần, mà vẫn
+            // tốn thêm một thao tác.
+            let mut buf = Vec::with_capacity(size as usize);
+            file.read_to_end(&mut buf).ok()?;
+            hasher.update(&buf);
+        }
+        Cach::ChiDau => {
+            // MỘT lần đọc, không nhảy. Đây là chỗ 2,08× đến từ: lần nhảy tới
+            // cuối một tệp video vài GB là một lần seek thật trên đĩa NAS, và
+            // nhân với 169.711 tệp thì nó là một nửa thời gian cả lượt quét.
+            let mut buf = vec![0u8; SAMPLE_BYTES as usize];
+            file.read_exact(&mut buf).ok()?;
+            hasher.update(&buf);
+        }
+        Cach::HaiDau => {
+            let mut buf = vec![0u8; SAMPLE_BYTES as usize];
+            file.read_exact(&mut buf).ok()?;
+            hasher.update(&buf);
 
-        file.seek(SeekFrom::End(-(SAMPLE_BYTES as i64))).ok()?;
-        file.read_exact(&mut buf).ok()?;
-        hasher.update(&buf);
+            file.seek(SeekFrom::End(-(SAMPLE_BYTES as i64))).ok()?;
+            file.read_exact(&mut buf).ok()?;
+            hasher.update(&buf);
+        }
     }
 
     Some(*hasher.finalize().as_bytes())
@@ -775,8 +896,8 @@ mod tests {
         let a = temp_file("dupe_a.bin", &content);
         let b = temp_file("dupe_b.bin", &content);
 
-        let ha = fingerprint(&a.to_string_lossy(), content.len() as u64);
-        let hb = fingerprint(&b.to_string_lossy(), content.len() as u64);
+        let ha = fingerprint(&a.to_string_lossy(), content.len() as u64, MediaKind::Video);
+        let hb = fingerprint(&b.to_string_lossy(), content.len() as u64, MediaKind::Video);
         assert!(ha.is_some());
         assert_eq!(ha, hb);
     }
@@ -796,17 +917,17 @@ mod tests {
         let pa = temp_file("nho_giua_a.bin", &a);
         let pb = temp_file("nho_giua_b.bin", &b);
         assert_ne!(
-            fingerprint(&pa.to_string_lossy(), a.len() as u64),
-            fingerprint(&pb.to_string_lossy(), b.len() as u64),
+            fingerprint(&pa.to_string_lossy(), a.len() as u64, MediaKind::Video),
+            fingerprint(&pb.to_string_lossy(), b.len() as u64, MediaKind::Video),
             "tệp dưới ngưỡng được đọc trọn nên phải phân biệt được"
         );
     }
 
     #[test]
     fn a_difference_in_the_middle_is_invisible_to_tier_two() {
-        // Nói thật về giới hạn: hai tệp giống nhau ở hai đầu nhưng khác ở giữa
-        // cho cùng một vân tay — đó là lý do tầng 3 tồn tại, và lý do không có
-        // gì ở đây tự xoá tệp.
+        // Nói thật về giới hạn: hai tệp giống nhau ở chỗ được lấy mẫu nhưng
+        // khác ở giữa cho cùng một vân tay — đó là lý do tầng 3 tồn tại, và lý
+        // do không có gì ở đây tự xoá tệp.
         //
         // Tệp phải LỚN HƠN `SMALL_FILE_LIMIT`, nếu không nó được đọc trọn và
         // giới hạn này không áp dụng. Bài này từng dùng 400 KB và đỏ khi ngưỡng
@@ -821,8 +942,8 @@ mod tests {
         let pa = temp_file("mid_a.bin", &a);
         let pb = temp_file("mid_b.bin", &b);
         assert_eq!(
-            fingerprint(&pa.to_string_lossy(), a.len() as u64),
-            fingerprint(&pb.to_string_lossy(), b.len() as u64),
+            fingerprint(&pa.to_string_lossy(), a.len() as u64, MediaKind::Video),
+            fingerprint(&pb.to_string_lossy(), b.len() as u64, MediaKind::Video),
             "tầng 2 chỉ đọc hai đầu — đây là giới hạn đã biết"
         );
 
@@ -836,13 +957,13 @@ mod tests {
 
     #[test]
     fn different_content_at_the_head_differs() {
-        let a = vec![1u8; 200_000];
+        let a = vec![1u8; 2 * MB];
         let b = vec![2u8; 200_000];
         let pa = temp_file("head_a.bin", &a);
         let pb = temp_file("head_b.bin", &b);
         assert_ne!(
-            fingerprint(&pa.to_string_lossy(), 200_000),
-            fingerprint(&pb.to_string_lossy(), 200_000)
+            fingerprint(&pa.to_string_lossy(), 200_000, MediaKind::Video),
+            fingerprint(&pb.to_string_lossy(), 200_000, MediaKind::Video)
         );
     }
 
@@ -853,8 +974,8 @@ mod tests {
         let a = temp_file("small_a.bin", b"hello world");
         let b = temp_file("small_b.bin", b"HELLO WORLD");
         assert_ne!(
-            fingerprint(&a.to_string_lossy(), 11),
-            fingerprint(&b.to_string_lossy(), 11)
+            fingerprint(&a.to_string_lossy(), 11, MediaKind::Video),
+            fingerprint(&b.to_string_lossy(), 11, MediaKind::Video)
         );
     }
 
@@ -864,13 +985,37 @@ mod tests {
         // grouped — the size is mixed in so that cannot happen.
         let path = temp_file("size_x.bin", &vec![3u8; 200_000]);
         let p = path.to_string_lossy();
-        assert_ne!(fingerprint(&p, 200_000), fingerprint(&p, 199_999));
+        assert_ne!(
+            fingerprint(&p, 200_000, MediaKind::Video),
+            fingerprint(&p, 199_999, MediaKind::Video)
+        );
     }
 
     /// Build a real `Index` over files on disk, so `find_duplicates` is
     /// exercised end to end rather than through a stand-in.
+    /// Đơn vị dung lượng cho tệp mẫu.
+    ///
+    /// Sàn `MIN_INTERESTING_SIZE` là **1 MB**, nên tệp mẫu phải lớn hơn thế mới
+    /// là ứng viên. Các bài này từng dùng vài trăm KB; khi sàn nâng từ 64 KB
+    /// lên 1 MB thì chín bài đỏ cùng lúc — không phải vì mã hỏng mà vì tệp mẫu
+    /// rơi ra ngoài phạm vi mà bài đang kiểm. Dùng hằng số này để lần sau đổi
+    /// sàn thì thấy ngay chỗ phải sửa.
+    const MB: usize = 1024 * 1024;
+
     fn index_over(tag: &str, files: &[(&str, Vec<u8>)]) -> (Index, std::path::PathBuf) {
-        use crate::index::model::{IndexBuilder, MediaKind};
+        index_over_kind(tag, files, crate::index::model::MediaKind::Video)
+    }
+
+    /// Như [`index_over`] nhưng chọn được loại tệp.
+    ///
+    /// Cần vì cách lấy vân tay nay khác nhau theo loại: video lớn chỉ đọc đầu,
+    /// audio lớn vẫn đọc hai đầu. Xem [`crate::media::dupesample`].
+    fn index_over_kind(
+        tag: &str,
+        files: &[(&str, Vec<u8>)],
+        kind: crate::index::model::MediaKind,
+    ) -> (Index, std::path::PathBuf) {
+        use crate::index::model::IndexBuilder;
 
         let dir = std::env::temp_dir().join(format!("mediafinder-dupe-idx-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -882,8 +1027,44 @@ mod tests {
         for (i, (name, content)) in files.iter().enumerate() {
             let mut f = std::fs::File::create(dir.join(name)).expect("create");
             f.write_all(content).expect("write");
-            b.add_file(name, MediaKind::Video, did, 100 + i as u64);
+            b.add_file(name, kind, did, 100 + i as u64);
             sizes.push(content.len() as u64);
+        }
+        let mut index = b.finish();
+        let mtimes = vec![0i64; sizes.len()];
+        index.set_file_stats(sizes, mtimes);
+        (index, dir)
+    }
+
+    /// Chỉ mục trên nhiều tệp LỚN, ghi thưa: `(tên, byte lấp đầu, dung lượng)`.
+    ///
+    /// Các bài về chia đợt cần hơn 400 tệp, và sàn 1 MB làm chúng thành hơn
+    /// 400 MB nếu ghi thật — vừa chậm vừa ngốn bộ nhớ. Ở đây chỉ ghi thật
+    /// 64 KB đầu rồi `set_len` cho đủ dung lượng: đúng cái mà tầng 2 đọc với
+    /// video lớn, và tệp trên đĩa thật sự có dung lượng đó.
+    fn index_over_lon(tag: &str, files: &[(String, u8, u64)]) -> (Index, std::path::PathBuf) {
+        use crate::index::model::{IndexBuilder, MediaKind};
+
+        let dir = std::env::temp_dir().join(format!("mediafinder-dupe-idx-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut b = IndexBuilder::new();
+        let did = b.add_dir(dir.to_str().expect("utf8"), 1);
+        let mut sizes = Vec::new();
+        let dau = vec![0u8; 64 * 1024];
+        for (i, (name, fill, size)) in files.iter().enumerate() {
+            let mut d = dau.clone();
+            d.fill(*fill);
+            let f = std::fs::File::create(dir.join(name)).expect("create");
+            {
+                let mut w = std::io::BufWriter::new(&f);
+                w.write_all(&d).expect("write");
+                w.flush().expect("flush");
+            }
+            f.set_len(*size).expect("set_len");
+            b.add_file(name, MediaKind::Video, did, 100 + i as u64);
+            sizes.push(*size);
         }
         let mut index = b.finish();
         let mtimes = vec![0i64; sizes.len()];
@@ -898,7 +1079,7 @@ mod tests {
             // Các bài này dựng chỉ mục ở thư mục tạm (ổ trong máy) và không
             // quan tâm phạm vi, nên quét tất.
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &AtomicUsize::new(0),
                 hashed: &AtomicUsize::new(0),
@@ -917,8 +1098,8 @@ mod tests {
     /// nghìn tệp thay vì hai trăm nghìn.
     #[test]
     fn nhom_dang_gia_nhat_ra_truoc() {
-        let nho = vec![1u8; 200 * 1024];
-        let to = vec![2u8; 900 * 1024];
+        let nho = vec![1u8; 2 * MB];
+        let to = vec![2u8; 9 * MB];
         let (index, _d) = index_over(
             "thu-tu-gia-tri",
             &[
@@ -934,7 +1115,7 @@ mod tests {
             groups[0].wasted > groups[1].wasted,
             "nhóm thu hồi được nhiều hơn phải đứng trước"
         );
-        assert_eq!(groups[0].size, 900 * 1024);
+        assert_eq!(groups[0].size, 9 * MB as u64);
     }
 
     /// Nhóm giá trị nhất phải được XỬ LÝ trước, không chỉ được sắp trước.
@@ -953,19 +1134,16 @@ mod tests {
         // một lớp duy nhất — sai giả định mà bài này đã mắc ở lần viết đầu:
         // 250 tệp cùng 70 KB không phải 250 lớp, mà là một lớp 500 tệp có
         // tiềm năng 34 MB, lớn hơn hẳn lớp "to" 2 MB.
-        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-        let to = vec![7u8; 2 * 1024 * 1024];
-        files.push(("zz-to-a.mp4".into(), to.clone()));
-        files.push(("zz-to-b.mp4".into(), to));
+        let mut files: Vec<(String, u8, u64)> = Vec::new();
+        files.push(("zz-to-a.mp4".into(), 7u8, (8 * MB) as u64));
+        files.push(("zz-to-b.mp4".into(), 7u8, (8 * MB) as u64));
         for i in 0..250usize {
-            // 70 KB + i byte: mỗi lớp một dung lượng riêng, tiềm năng ~70 KB.
-            let nd = vec![(i % 251) as u8; 70 * 1024 + i];
-            files.push((format!("n-{i}-a.mp4"), nd.clone()));
-            files.push((format!("n-{i}-b.mp4"), nd));
+            // Mỗi lớp một dung lượng riêng, ngay trên sàn 1 MB.
+            let sz = (MB + 1 + i) as u64;
+            files.push((format!("n-{i}-a.mp4"), (i % 251) as u8, sz));
+            files.push((format!("n-{i}-b.mp4"), (i % 251) as u8, sz));
         }
-        let muon: Vec<(&str, Vec<u8>)> =
-            files.iter().map(|(n, c)| (n.as_str(), c.clone())).collect();
-        let (index, _d) = index_over("thu-tu-xu-ly", &muon);
+        let (index, _d) = index_over_lon("thu-tu-xu-ly", &files);
 
         let ket_qua = parking_lot::Mutex::new(Vec::new());
         let stop = AtomicBool::new(false);
@@ -983,7 +1161,7 @@ mod tests {
                 &index,
                 &stop,
                 crate::media::dupescope::DupeScope::Everything,
-                &[],
+                &crate::media::omang::OMang::default(),
                 &Counters {
                     candidates: &AtomicUsize::new(0),
                     hashed: &hashed,
@@ -998,7 +1176,7 @@ mod tests {
         assert!(!g.is_empty(), "đợt đầu phải công bố được gì đó");
         assert_eq!(
             g[0].size,
-            2 * 1024 * 1024,
+            (8 * MB) as u64,
             "lớp giá trị nhất phải nằm trong đợt ĐẦU, không phải đợt cuối"
         );
     }
@@ -1008,15 +1186,13 @@ mod tests {
     fn huy_giua_chung_giu_lai_phan_da_chot() {
         // Dựng nhiều tệp hơn một đợt (400) để chắc chắn có ít nhất một đợt
         // chạy xong và được công bố trước khi cờ dừng được giương.
-        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut files: Vec<(String, u8, u64)> = Vec::new();
         for i in 0..250 {
-            let noi_dung = vec![(i % 251) as u8; 70 * 1024];
-            files.push((format!("p-{i}-a.mp4"), noi_dung.clone()));
-            files.push((format!("p-{i}-b.mp4"), noi_dung));
+            let sz = (MB + 1 + i) as u64;
+            files.push((format!("p-{i}-a.mp4"), (i % 251) as u8, sz));
+            files.push((format!("p-{i}-b.mp4"), (i % 251) as u8, sz));
         }
-        let muon: Vec<(&str, Vec<u8>)> =
-            files.iter().map(|(n, c)| (n.as_str(), c.clone())).collect();
-        let (index, _d) = index_over("huy-giu-lai", &muon);
+        let (index, _d) = index_over_lon("huy-giu-lai", &files);
 
         let ket_qua = parking_lot::Mutex::new(Vec::new());
         let stop = AtomicBool::new(false);
@@ -1034,7 +1210,7 @@ mod tests {
                 &index,
                 &stop,
                 crate::media::dupescope::DupeScope::Everything,
-                &[],
+                &crate::media::omang::OMang::default(),
                 &Counters {
                     candidates: &AtomicUsize::new(0),
                     hashed: &hashed,
@@ -1051,6 +1227,144 @@ mod tests {
         );
     }
 
+    /// Bài đo không được chép lại hằng số của mã sản phẩm.
+    ///
+    /// Ba lần trong một ngày, cùng một lớp lỗi: một phép đo tự dựng lại thứ nó
+    /// đang đo, bằng giá trị viết cứng, rồi báo cáo con số của một phiên bản đã
+    /// chết.
+    ///
+    /// * `dupes_real.rs` truyền danh sách ổ mạng rỗng → đo một cấu hình app
+    ///   không bao giờ chạy, ra "chậm hơn 71%".
+    /// * `dupeidle.rs` truyền danh sách ổ mạng rỗng → quét nền đọc trọn NAS.
+    /// * `dupes_real.rs` viết cứng sàn `64 * 1024` → in ra 169.711 ứng viên
+    ///   trong khi lượt quét thật chỉ kiểm 112 nghìn.
+    ///
+    /// Bài này canh cái thứ ba: bài đo phải **nhập** hằng số, không chép nó.
+    #[test]
+    fn bai_do_khong_duoc_chep_cung_san_dung_luong() {
+        let nguon = include_str!("../../tests/dupes_real.rs");
+        assert!(
+            nguon.contains("use mediafinder::media::dupes::MIN_INTERESTING_SIZE"),
+            "bài đo phải nhập `MIN_INTERESTING_SIZE` chứ không chép giá trị của nó"
+        );
+        // Chỗ duy nhất còn được phép nhắc `64 * 1024` là các bước đo so sánh
+        // cách lấy mẫu, nơi 64 KB là kích thước MẪU chứ không phải sàn.
+        for (n, dong) in nguon.lines().enumerate() {
+            if dong.contains("s >= 64 * 1024") || dong.contains("size >= 64 * 1024") {
+                panic!("dòng {} viết cứng sàn dung lượng: {}", n + 1, dong.trim());
+            }
+        }
+    }
+
+    /// Pool phải được dựng MỘT LẦN cho cả lượt, không phải mỗi đợt.
+    ///
+    /// Bản đầu dựng pool bên trong vòng lặp đợt: với 493 đợt đó là hàng nghìn
+    /// luồng được tạo rồi huỷ — và luồng chết thì **kết nối SMB chết theo**,
+    /// nên mỗi đợt phải bắt tay lại với NAS (66 ms chỉ để mở tệp đầu).
+    ///
+    /// Không quan sát được từ bên ngoài, nên bài này đọc thẳng mã nguồn — cùng
+    /// cách với ca canh ràng buộc "quét nền không đụng NAS".
+    #[test]
+    fn pool_duoc_dung_mot_lan_khong_phai_moi_dot() {
+        let nguon = include_str!("dupes.rs");
+        let than = nguon.split("mod tests").next().unwrap_or(nguon);
+
+        let so_lan = than.matches("dupepool::dung()").count();
+        assert_eq!(
+            so_lan, 1,
+            "dựng pool {so_lan} lần — phải đúng một lần cho cả lượt quét"
+        );
+
+        let vi_tri_dung = than.find("dupepool::dung()").expect("phải có");
+        let vi_tri_vong = than
+            .find("for (size, entries) in &lop")
+            .expect("phải có vòng lặp đợt");
+        assert!(
+            vi_tri_dung < vi_tri_vong,
+            "pool phải được dựng TRƯỚC vòng lặp đợt, không phải bên trong"
+        );
+    }
+
+    /// Huỷ phải dừng MỌI pool, không chỉ pool đang chạy dở.    /// Huỷ phải dừng MỌI pool, không chỉ pool đang chạy dở.
+    ///
+    /// Từ khi chia pool theo thiết bị, một lượt quét có tới ba nhóm luồng chạy
+    /// song song. Cờ dừng nằm ngoài các pool và được kiểm bên trong mỗi tệp,
+    /// nên nó phải cắt được cả ba — nếu không, bấm Huỷ mà hai nhóm vẫn đọc NAS
+    /// thêm vài phút, và người dùng không hiểu vì sao đĩa còn quay.
+    #[test]
+    fn huy_dung_moi_pool_khong_chi_mot() {
+        // Ba nhóm: một đĩa trong máy (thư mục tạm), hai "máy chủ" giả lập bằng
+        // bản đồ remote. Cờ dừng bật sẵn từ đầu.
+        let noi_dung = vec![9u8; 3 * MB];
+        let (index, _d) = index_over(
+            "huy-moi-pool",
+            &[
+                ("p-a.mp4", noi_dung.clone()),
+                ("p-b.mp4", noi_dung.clone()),
+                ("p-c.mp4", noi_dung),
+            ],
+        );
+
+        let da_mo = AtomicUsize::new(0);
+        let groups = find_duplicates(
+            &index,
+            &AtomicBool::new(true),
+            crate::media::dupescope::DupeScope::Everything,
+            &crate::media::omang::OMang::default(),
+            &Counters {
+                candidates: &AtomicUsize::new(0),
+                hashed: &da_mo,
+                unreadable: &AtomicUsize::new(0),
+                dropped: &parking_lot::Mutex::new(Vec::new()),
+                result: &parking_lot::Mutex::new(Vec::new()),
+            },
+        );
+
+        assert!(groups.is_empty(), "huỷ từ đầu thì không có nhóm nào");
+        assert_eq!(
+            da_mo.load(Ordering::Relaxed),
+            0,
+            "cờ dừng phải cắt được TRƯỚC khi mở tệp nào, ở mọi pool"
+        );
+    }
+
+    /// Chia pool không được làm mất hay nhân đôi kết quả.
+    ///
+    /// Đây là bất biến dễ hỏng nhất khi đổi từ một hàng đợi sang nhiều: gom
+    /// kết quả từ ba pool về một chỗ mà sai thì hoặc mất nhóm, hoặc một tệp
+    /// xuất hiện hai lần trong cùng một nhóm.
+    #[test]
+    fn chia_pool_cho_dung_ket_qua_nhu_mot_hang_doi() {
+        let a = vec![1u8; 3 * MB];
+        let b = vec![2u8; 4 * MB];
+        let (index, _d) = index_over(
+            "chia-pool-ket-qua",
+            &[
+                ("q-a1.mp4", a.clone()),
+                ("q-a2.mp4", a.clone()),
+                ("q-a3.mp4", a),
+                ("q-b1.mp4", b.clone()),
+                ("q-b2.mp4", b),
+            ],
+        );
+
+        let groups = run(&index);
+        assert_eq!(groups.len(), 2, "hai nhóm: ba bản sao và hai bản sao");
+
+        let tong: usize = groups.iter().map(|g| g.entries.len()).sum();
+        assert_eq!(tong, 5, "không được mất hay nhân đôi tệp nào");
+
+        // Không tệp nào xuất hiện hai lần.
+        let mut tat_ca: Vec<u32> = groups
+            .iter()
+            .flat_map(|g| g.entries.iter().copied())
+            .collect();
+        let truoc = tat_ca.len();
+        tat_ca.sort_unstable();
+        tat_ca.dedup();
+        assert_eq!(tat_ca.len(), truoc, "một tệp xuất hiện ở hai nhóm");
+    }
+
     /// Tệp không mở được phải được ĐẾM, không bỏ lặng.
     ///
     /// Trước bản sửa này, tệp không mở được biến mất khỏi kết quả mà không để
@@ -1059,7 +1373,7 @@ mod tests {
     /// lặp nào" — trong khi nó chưa hề nhìn thấy 80% thư viện.
     #[test]
     fn tep_khong_mo_duoc_phai_duoc_dem() {
-        let noi_dung = vec![5u8; 300 * 1024];
+        let noi_dung = vec![5u8; 3 * MB];
         let (index, dir) = index_over(
             "dem-loi",
             &[("m-a.mp4", noi_dung.clone()), ("m-b.mp4", noi_dung)],
@@ -1073,7 +1387,7 @@ mod tests {
             &index,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &AtomicUsize::new(0),
                 hashed: &AtomicUsize::new(0),
@@ -1101,7 +1415,7 @@ mod tests {
         b.add_file("x.mp4", MediaKind::Video, did, 1);
         b.add_file("y.mp4", MediaKind::Video, did, 2);
         let mut index = b.finish();
-        index.set_file_stats(vec![300 * 1024, 300 * 1024], vec![0, 0]);
+        index.set_file_stats(vec![(3 * MB) as u64, (3 * MB) as u64], vec![0, 0]);
 
         let da_rot = parking_lot::Mutex::new(Vec::new());
         let da_mo = AtomicUsize::new(0);
@@ -1109,7 +1423,7 @@ mod tests {
             &index,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &AtomicUsize::new(0),
                 hashed: &da_mo,
@@ -1191,13 +1505,12 @@ mod tests {
             "chưa quét thì không được có chỉ mục nào"
         );
 
-        let (ix_cu, _d1) = index_over("giu-snapshot", &[("a.mp4", vec![1u8; 200_000])]);
+        let (ix_cu, _d1) = index_over("giu-snapshot", &[("a.mp4", vec![1u8; 2 * MB])]);
         let arc_cu = Arc::new(ix_cu);
         assert!(svc.start(
             Arc::clone(&arc_cu),
             7,
             crate::media::dupescope::DupeScope::Everything,
-            Vec::new()
         ));
 
         // Chờ lượt quét xong để `running` hạ xuống.
@@ -1220,7 +1533,7 @@ mod tests {
 
         // Chỉ mục mới ra đời (lượt quét NAS xong, cache nạp lại). Kết quả cũ
         // vẫn phải phân giải theo chỉ mục cũ.
-        let (ix_moi, _d2) = index_over("giu-snapshot-2", &[("z.mp4", vec![9u8; 200_000])]);
+        let (ix_moi, _d2) = index_over("giu-snapshot-2", &[("z.mp4", vec![9u8; 2 * MB])]);
         drop(ix_moi);
         let (van_giu, van_epoch) = svc.scanned_index().expect("vẫn phải còn");
         assert!(Arc::ptr_eq(&van_giu, &arc_cu));
@@ -1251,10 +1564,10 @@ mod tests {
         let (index, _d) = index_over(
             "tier1",
             &[
-                ("u-1.mp4", vec![1u8; 200 * 1024]),
-                ("u-2.mp4", vec![1u8; 201 * 1024]),
-                ("u-3.mp4", vec![1u8; 202 * 1024]),
-                ("u-4.mp4", vec![1u8; 203 * 1024]),
+                ("u-1.mp4", vec![1u8; 2 * MB]),
+                ("u-2.mp4", vec![1u8; 2 * MB + 1024]),
+                ("u-3.mp4", vec![1u8; 2 * MB + 2048]),
+                ("u-4.mp4", vec![1u8; 2 * MB + 3072]),
             ],
         );
         let candidates = AtomicUsize::new(0);
@@ -1263,7 +1576,7 @@ mod tests {
             &index,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &candidates,
                 hashed: &hashed,
@@ -1292,8 +1605,8 @@ mod tests {
         let (index, _d) = index_over(
             "sizes",
             &[
-                ("a.mp4", vec![1u8; 200 * 1024]),
-                ("b.mp4", vec![1u8; 201 * 1024]),
+                ("a.mp4", vec![1u8; 2 * MB]),
+                ("b.mp4", vec![1u8; 2 * MB + 1024]),
             ],
         );
         assert!(run(&index).is_empty());
@@ -1303,7 +1616,7 @@ mod tests {
     /// counted as everything past the first copy.
     #[test]
     fn identical_files_are_grouped_and_waste_counted() {
-        let content = vec![9u8; 300 * 1024];
+        let content = vec![9u8; 3 * MB];
         let (index, _d) = index_over(
             "same",
             &[
@@ -1317,30 +1630,69 @@ mod tests {
         assert_eq!(groups[0].entries.len(), 3);
         assert_eq!(
             groups[0].wasted,
-            300 * 1024 * 2,
+            (3 * MB * 2) as u64,
             "giu lai mot ban, hai ban kia la phan thua"
         );
     }
 
-    /// The two-pass split must not change the answer: files that differ only
-    /// at the tail have to be separated, exactly as the single-pass
-    /// fingerprint separated them.
+    /// Audio khác nhau ở đuôi thì VẪN phải tách ra.
+    ///
+    /// Audio là loại duy nhất còn đọc hai đầu, và đây là lý do: mọi nhóm gộp
+    /// nhầm quan sát được trên thư viện thật đều là `.MP3` và `.wav`, vì hai
+    /// bản audio cùng độ dài cùng bộ mã hoá giống nhau rất dài ở phần đầu.
     #[test]
-    fn a_difference_only_at_the_tail_still_splits_the_group() {
-        let mut a = vec![4u8; 300 * 1024];
+    fn audio_khac_o_duoi_thi_tach_ra() {
+        use crate::index::model::MediaKind;
+        let mut a = vec![4u8; 3 * MB];
         let mut b = a.clone();
         let n = a.len();
         a[n - 1] = 1;
         b[n - 1] = 2;
-        let (index, _d) = index_over("tail", &[("tail-a.mp4", a), ("tail-b.mp4", b)]);
-        assert!(run(&index).is_empty(), "khac phan cuoi thi phai tach ra");
+        let (index, _d) = index_over_kind(
+            "tail-audio",
+            &[("tail-a.mp3", a), ("tail-b.mp3", b)],
+            MediaKind::Audio,
+        );
+        assert!(
+            run(&index).is_empty(),
+            "audio khác phần cuối thì phải tách ra"
+        );
+    }
+
+    /// Video khác nhau ở đuôi thì KHÔNG còn tách ra — cái giá, ở mức cả lượt quét.
+    ///
+    /// Bài `video_lon_khong_con_thay_khac_biet_o_cuoi` kiểm điều này ở mức một
+    /// hàm; bài này kiểm ở mức `find_duplicates`, nơi hậu quả thật xảy ra: hai
+    /// tệp khác nội dung nằm chung một nhóm và hiện ra như bản sao của nhau.
+    ///
+    /// Đổi lại là **2,08×** trên NAS. Đo trên thư viện thật: khoảng 1 nhóm sai
+    /// trên 1.677, tức chừng 26 nhóm trên 42.958. Thứ chặn hậu quả là nút Xác
+    /// minh ([`crate::media::verify`]), đọc trọn nội dung trước khi xoá.
+    ///
+    /// Bài này ĐỎ nếu ai đó lặng lẽ đưa video về đọc hai đầu — lúc đó lượt
+    /// quét chậm lại gấp đôi mà không ai nhận ra, vì kết quả vẫn đúng.
+    #[test]
+    fn video_khac_o_duoi_khong_con_tach_ra() {
+        let mut a = vec![4u8; 3 * MB];
+        let mut b = a.clone();
+        let n = a.len();
+        a[n - 1] = 1;
+        b[n - 1] = 2;
+        let (index, _d) = index_over("tail-video", &[("tv-a.mp4", a), ("tv-b.mp4", b)]);
+        let groups = run(&index);
+        assert_eq!(
+            groups.len(),
+            1,
+            "video chỉ đọc đầu — khác biệt ở cuối là giới hạn đã biết và đã đo"
+        );
+        assert_eq!(groups[0].entries.len(), 2);
     }
 
     /// The head pass alone must separate files that differ at the front —
     /// they should never reach the tail pass at all.
     #[test]
     fn a_difference_at_the_head_splits_without_the_tail() {
-        let mut a = vec![4u8; 300 * 1024];
+        let mut a = vec![4u8; 3 * MB];
         let mut b = a.clone();
         a[0] = 1;
         b[0] = 2;
@@ -1352,9 +1704,12 @@ mod tests {
     /// must still group rather than fall through some special case.
     #[test]
     fn small_files_read_whole_still_group() {
-        let content = vec![3u8; 100 * 1024];
-        assert!(content.len() as u64 > MIN_INTERESTING_SIZE);
-        assert!(content.len() as u64 <= SMALL_FILE_LIMIT);
+        // Đúng bằng `SMALL_FILE_LIMIT`: vừa là ứng viên (≥ sàn) vừa rơi vào
+        // đường đọc trọn. Sàn và ngưỡng đọc-trọn nay bằng nhau, nên đây là
+        // dung lượng DUY NHẤT chạm được đường này.
+        let content = vec![3u8; MB];
+        assert!(content.len() as u64 >= MIN_INTERESTING_SIZE);
+        assert!(content.len() as u64 <= crate::media::dupesample::SMALL_FILE_LIMIT);
         let (index, _d) = index_over(
             "small",
             &[("s-a.mp4", content.clone()), ("s-b.mp4", content)],
@@ -1371,10 +1726,10 @@ mod tests {
         let (index, _d) = index_over(
             "sorted",
             &[
-                ("small-1.mp4", vec![1u8; 200 * 1024]),
-                ("small-2.mp4", vec![1u8; 200 * 1024]),
-                ("big-1.mp4", vec![2u8; 900 * 1024]),
-                ("big-2.mp4", vec![2u8; 900 * 1024]),
+                ("small-1.mp4", vec![1u8; 2 * MB]),
+                ("small-2.mp4", vec![1u8; 2 * MB]),
+                ("big-1.mp4", vec![2u8; 9 * MB]),
+                ("big-2.mp4", vec![2u8; 9 * MB]),
             ],
         );
         let groups = run(&index);
@@ -1391,8 +1746,8 @@ mod tests {
     /// or the list would reshuffle under a person working through it.
     #[test]
     fn two_runs_give_the_same_answer() {
-        let c1 = vec![5u8; 300 * 1024];
-        let c2 = vec![6u8; 400 * 1024];
+        let c1 = vec![5u8; 3 * MB];
+        let c2 = vec![6u8; 4 * MB];
         let (index, _d) = index_over(
             "stable",
             &[
@@ -1422,7 +1777,7 @@ mod tests {
     /// "đã quét hết" với "dừng giữa chừng, đây là phần tìm thấy".
     #[test]
     fn a_cancelled_scan_returns_nothing() {
-        let content = vec![8u8; 300 * 1024];
+        let content = vec![8u8; 3 * MB];
         let (index, _d) = index_over(
             "cancel",
             &[("c-a.mp4", content.clone()), ("c-b.mp4", content)],
@@ -1431,7 +1786,7 @@ mod tests {
             &index,
             &AtomicBool::new(true),
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &AtomicUsize::new(0),
                 hashed: &AtomicUsize::new(0),
@@ -1451,7 +1806,7 @@ mod tests {
     /// still pass with one of them silently not counting.
     #[test]
     fn progress_counters_are_reported() {
-        let content = vec![2u8; 300 * 1024];
+        let content = vec![2u8; 3 * MB];
         let (index, _d) = index_over(
             "progress",
             &[("p-a.mp4", content.clone()), ("p-b.mp4", content)],
@@ -1462,7 +1817,7 @@ mod tests {
             &index,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &candidates,
                 hashed: &hashed,
@@ -1492,10 +1847,10 @@ mod tests {
         let (index, _d) = index_over(
             "count-all",
             &[
-                ("ca-1.mp4", vec![1u8; 300 * 1024]),
-                ("ca-2.mp4", vec![1u8; 300 * 1024]),
-                ("ca-3.mp4", vec![2u8; 400 * 1024]),
-                ("ca-4.mp4", vec![3u8; 400 * 1024]),
+                ("ca-1.mp4", vec![1u8; 3 * MB]),
+                ("ca-2.mp4", vec![1u8; 3 * MB]),
+                ("ca-3.mp4", vec![2u8; 4 * MB]),
+                ("ca-4.mp4", vec![3u8; 4 * MB]),
             ],
         );
         let candidates = AtomicUsize::new(0);
@@ -1504,7 +1859,7 @@ mod tests {
             &index,
             &AtomicBool::new(false),
             crate::media::dupescope::DupeScope::Everything,
-            &[],
+            &crate::media::omang::OMang::default(),
             &Counters {
                 candidates: &candidates,
                 hashed: &hashed,
@@ -1529,9 +1884,73 @@ mod tests {
         assert_eq!(groups[0].entries.len(), 2);
     }
 
+    /// Video lớn KHÔNG còn thấy khác biệt ở cuối tệp — đây là cái giá, nói rõ.
+    ///
+    /// Bản trước đọc 64 KB đầu và 64 KB cuối. Nay video chỉ đọc đầu, vì lần
+    /// nhảy tới cuối tệp là một nửa thời gian của cả lượt quét trên NAS
+    /// (đo được **2,08×** khi bỏ nó — xem [`crate::media::dupesample`]).
+    ///
+    /// Cái mất, đo trên 4.200 tệp thật: khoảng **1 nhóm sai trên 1.677**. Thứ
+    /// bảo đảm đúng trước khi xoá là [`crate::media::verify`], đọc trọn nội
+    /// dung — nó đã có, và đó là điều kiện để đánh đổi này chấp nhận được.
+    ///
+    /// Bài này ĐỎ nếu ai đó lặng lẽ đưa video về đọc hai đầu, và cũng đỏ nếu
+    /// ai đó tưởng bản đổi này vô hại mà xoá mất nút Xác minh.
+    #[test]
+    fn video_lon_khong_con_thay_khac_biet_o_cuoi() {
+        let mut a = vec![7u8; 3 * 1024 * 1024];
+        let mut b = a.clone();
+        *a.last_mut().unwrap() = 1;
+        *b.last_mut().unwrap() = 2;
+
+        let pa = temp_file("duoi_video_a.bin", &a);
+        let pb = temp_file("duoi_video_b.bin", &b);
+        assert_eq!(
+            fingerprint(&pa.to_string_lossy(), a.len() as u64, MediaKind::Video),
+            fingerprint(&pb.to_string_lossy(), b.len() as u64, MediaKind::Video),
+            "video chỉ đọc đầu — khác biệt ở cuối là giới hạn đã biết và đã đo"
+        );
+
+        // Tầng 3 vẫn thấy. Đây là lý do đánh đổi trên chấp nhận được.
+        assert_ne!(
+            full_hash(&pa.to_string_lossy()),
+            full_hash(&pb.to_string_lossy()),
+            "tầng 3 đọc trọn nội dung nên phải phân biệt được"
+        );
+    }
+
+    /// Audio thì VẪN thấy — và đó là toàn bộ lý do chia theo loại tệp.
+    ///
+    /// Mọi nhóm gộp nhầm quan sát được trên thư viện thật đều là `.MP3` và
+    /// `.wav`: hai bản audio cùng độ dài, cùng bộ mã hoá thì phần đầu giống
+    /// nhau rất dài. Audio chỉ chiếm 10,4% ứng viên nên giữ hai đầu cho chúng
+    /// tốn 0,15× tốc độ mà bỏ được hai phần ba số nhóm sai.
+    #[test]
+    fn audio_lon_van_thay_khac_biet_o_cuoi() {
+        let mut a = vec![7u8; 3 * 1024 * 1024];
+        let mut b = a.clone();
+        *a.last_mut().unwrap() = 1;
+        *b.last_mut().unwrap() = 2;
+
+        let pa = temp_file("duoi_audio_a.bin", &a);
+        let pb = temp_file("duoi_audio_b.bin", &b);
+        assert_ne!(
+            fingerprint(&pa.to_string_lossy(), a.len() as u64, MediaKind::Audio),
+            fingerprint(&pb.to_string_lossy(), b.len() as u64, MediaKind::Audio),
+            "audio vẫn đọc hai đầu nên phải phân biệt được"
+        );
+    }
+
     #[test]
     fn a_missing_file_yields_no_fingerprint() {
-        assert!(fingerprint(r"D:\definitely\not\here\nope.bin", 1000).is_none());
+        assert!(fingerprint(
+            r"D:\definitely
+ot\here
+ope.bin",
+            1000,
+            MediaKind::Video
+        )
+        .is_none());
         assert!(full_hash(r"D:\definitely\not\here\nope.bin").is_none());
     }
 

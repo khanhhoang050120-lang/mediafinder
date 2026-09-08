@@ -167,6 +167,29 @@ mod tests {
 
     const LON: u64 = 5_000_000;
 
+    /// Danh sách ổ mạng RỖNG làm `LocalOnly` hành xử y hệt `Everything`.
+    ///
+    /// Đây không phải lỗi của hàm này — trên máy không gắn ổ mạng nào thì rỗng
+    /// là câu trả lời đúng, và "quét mọi thứ" đúng là "quét ổ trong máy".
+    ///
+    /// Nhưng nó là một cái bẫy đã sập một lần: quét nền lúc máy rảnh truyền
+    /// `Vec::new()` vào đây, nên nó đọc trọn NAS trong khi tự nhận là chỉ đọc
+    /// ổ trong máy — trên 20–40 máy studio mỗi sáng. Bài này ghi lại ngữ nghĩa
+    /// đó để nó không còn là chuyện bất ngờ, và [`crate::media::omang`] giải
+    /// thích vì sao cách chặn là bỏ tham số chứ không phải kiểm rỗng.
+    #[test]
+    fn danh_sach_o_mang_rong_thi_local_only_khong_loc_gi() {
+        let index = idx(&[(r"Y:\p", "a.mp4", LON), (r"Y:\p", "b.mp4", LON)]);
+        assert!(
+            in_scope(&index, 0, DupeScope::LocalOnly, &[]),
+            "với danh sách rỗng, tệp trên Y: vẫn lọt qua LocalOnly"
+        );
+        assert!(
+            !in_scope(&index, 0, DupeScope::LocalOnly, &['Y']),
+            "có danh sách đúng thì tệp trên Y: phải bị loại"
+        );
+    }
+
     #[test]
     fn dem_dung_va_tach_dung_o_mang_khoi_o_trong_may() {
         let index = idx(&[

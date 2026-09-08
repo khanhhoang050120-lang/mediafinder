@@ -193,11 +193,15 @@ fn vong_lap(app: tauri::AppHandle) {
         tracing::info!("quét trùng lặp nền: máy rảnh {giay_yen}s, bắt đầu quét ổ trong máy");
         let bat_dau = std::time::Instant::now();
 
+        // `start` tự hỏi Windows danh sách ổ mạng. Bản trước truyền
+        // `Vec::new()` ngay tại đây, và vì `in_scope(LocalOnly)` viết là
+        // `!(là_ổ_mạng && danh_sách.chứa(ổ))`, danh sách rỗng làm nó trả `true`
+        // cho MỌI tệp: lượt quét nền đọc trọn NAS, đúng thứ chú thích đầu tệp
+        // tuyên bố không bao giờ làm, trên 20–40 máy mỗi sáng.
         if !dupes.start(
             st.snapshot(),
             st.index_epoch(),
             crate::media::dupescope::DupeScope::LocalOnly,
-            Vec::new(),
         ) {
             continue; // ai đó vừa bắt đầu một lượt trước ta
         }

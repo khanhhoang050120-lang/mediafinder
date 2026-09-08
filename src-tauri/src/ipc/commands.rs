@@ -543,25 +543,15 @@ pub struct DupeGroupView {
     pub epoch: u64,
 }
 
-/// Chữ cái các ổ mạng đang gắn, viết hoa.
-///
-/// Ổ mạng ánh xạ trông y hệt đĩa trong máy trong chỉ mục (`Y:\…`), nên đây là
-/// thứ duy nhất phân biệt được hai loại.
-fn net_letters() -> Vec<char> {
-    use crate::ntfs::volume::{self, VolumeKind};
-    volume::list_volumes()
-        .into_iter()
-        .filter(|v| v.kind == VolumeKind::Network)
-        .map(|v| v.letter.to_ascii_uppercase())
-        .collect()
-}
-
 /// Có bao nhiêu tệp phải mở, tách theo loại ổ — để hỏi trước khi quét.
 ///
 /// Rẻ: tầng 1 của quét trùng chỉ đọc chỉ mục, không đọc đĩa một byte nào.
 #[tauri::command]
 pub fn dupe_estimate(state: State<'_, AppState>) -> crate::media::dupescope::ScopeEstimate {
-    crate::media::dupescope::estimate(&state.snapshot(), &net_letters())
+    crate::media::dupescope::estimate(
+        &state.snapshot(),
+        &crate::media::omang::OMang::tu_he_thong().chu,
+    )
 }
 
 /// Quét trùng lặp nền có đang bật không, và đã chạy xong chưa.
@@ -612,7 +602,7 @@ pub fn find_duplicates(
     dupes: State<'_, crate::media::dupes::DupeService>,
     scope: crate::media::dupescope::DupeScope,
 ) -> Result<(), String> {
-    if dupes.start(state.snapshot(), state.index_epoch(), scope, net_letters()) {
+    if dupes.start(state.snapshot(), state.index_epoch(), scope) {
         Ok(())
     } else {
         Err("Đang tìm trùng lặp rồi.".into())

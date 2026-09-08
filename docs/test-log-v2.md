@@ -1269,3 +1269,392 @@ Cần đo thêm mức 24/32 để tìm điểm bão hoà.
 **Tách theo MÁY CHỦ, không theo chữ ổ.** `Y:` và `Z:` cùng `.213` và cùng chậm (1,2 và 1,1 tệp mỗi
 giây); `F:` và `H:` cùng `.214` và nhanh gấp mười. Giới hạn luồng theo máy chủ, nếu không thì hai ổ
 trên cùng một NAS cộng lại thành gấp đôi tải mà máy chủ đó phải chịu.
+
+## P50 — Việc C bị chính phép đo bác, và hai lỗi "danh sách rỗng"
+
+Việc lớn nhất còn lại của [DE-XUAT-TRUNG-LAP.md](../DE-XUAT-TRUNG-LAP.md). Tôi đã làm xong nó, đo
+nó, và **bỏ nó**. Mục này ghi lại cả đường đi, vì phần sai nhiều hơn phần đúng.
+
+### Ý tưởng, và con số đã thuyết phục tôi
+
+Tầng 2 dùng một `into_par_iter()` trên pool rayon toàn cục — một hàng đợi trộn tệp của mọi ổ. Nhưng
+đo được các ổ chênh nhau tới 25 lần (`D:` 30,3 tệp/giây, `Y:` 1,2), và 82% ứng viên nằm trên NAS
+chậm. Nghe rất hợp lý: chia việc theo thiết bị, mỗi nhóm một pool riêng.
+
+Con số chốt hạ là bảng tăng luồng trên `Y:` — 1/4/8/16 luồng cho 1,0×/9,0×/15,0×/**24,7×**. Ngưỡng
+nhận của tài liệu là 1,5×. Có vẻ không cần bàn thêm.
+
+### Phép đo đầu tiên: chậm hơn 71%
+
+12,9 tệp/giây so với 45,0. Tôi quy cho việc dựng pool trong vòng lặp đợt (493 đợt × 3 nhóm ≈ 18.000
+luồng tạo rồi huỷ, và luồng chết thì kết nối SMB chết theo). Sửa xong, đo lại: 49,5 tệp/giây.
+
+**Cả hai kết luận đều sai.** Bài đo truyền `Vec::new()` và `Default::default()` cho `net_letters` /
+`remote`, trong khi app thật truyền danh sách thật. Với bản đồ rỗng, `pool_key` trả `local` cho mọi
+ổ, nên toàn bộ 197k ứng viên bị dồn vào **một pool 4 luồng** — bản gốc dùng 12. Phép đo đo một cấu
+hình app không bao giờ chạy.
+
+Và 49,5 so với 45,0 cũng không phải phép so: hai lượt chạy trên hai chỉ mục khác nhau (169.711 và
+197.301 ứng viên) vào hai thời điểm khác nhau. Đó là hai con số đặt cạnh nhau, không phải phép so.
+
+### Phép đo có kiểm soát: 0,85×
+
+Bốn mẫu 1.500 tệp **rời nhau** (không mẫu nào làm ấm bộ đệm cho mẫu khác), tỷ lệ ổ gần như y hệt
+nhau, vòng hai **đảo thứ tự** để trôi theo thời gian rơi đều hai bên:
+
+| Cách chia | Vòng 1 | Vòng 2 | Trung bình |
+|---|---|---|---|
+| Một hàng đợi chung | 52,8 | 57,1 | **54,8 tệp/giây** |
+| Pool riêng theo ổ | 42,0 | 51,9 | 46,5 tệp/giây |
+
+**0,85× — chậm hơn 15%.** Nhánh chia pool tốt nhất (51,9) vẫn thua nhánh chung tệ nhất (52,8).
+
+Lý do là **ăn cắp việc**: hàng đợi chung thì không luồng nào rảnh khi còn tệp chưa đọc. Chia theo
+thiết bị thì luồng của ổ nào chỉ đọc ổ đó, xong sớm là ngồi không.
+
+### Con số 24,7× sai ở đâu
+
+Nó đo **16 luồng so với 1 luồng trên riêng ổ `Y:`**. Nhưng bản gốc chưa bao giờ chạy 1 luồng — nó
+chạy 12 luồng ăn cắp việc. So với một mốc không tồn tại thì ra 24,7×; so với mốc thật thì ra 0,85×.
+
+Đây đúng là cái bẫy mục 6 của tài liệu cảnh báo, và tôi vẫn sập vào. Bài học không phải "đo cẩn
+thận hơn" mà cụ thể hơn thế: **mốc so sánh phải là cấu hình sản phẩm đang chạy**, không phải một
+cấu hình thoái hoá dựng ra cho dễ đo.
+
+### Vậy thì bao nhiêu luồng?
+
+Nếu ăn cắp việc thắng, câu hỏi còn lại là hàng đợi chung nên có bao nhiêu luồng — phần lớn thời
+gian mỗi luồng là **chờ NAS trả lời**, không phải tính toán. Máy đo có 12 CPU logic.
+
+| Luồng | Tệp/giây |
+|---|---|
+| mặc định (12), đo đầu | 52,8 |
+| 24 | 63,4 |
+| **32** | **63,7** |
+| 48 | 66,9 |
+| 64 | 62,7 |
+| mặc định (12), đo cuối | 58,7 |
+
+Mặc định đo hai lần lệch **11%** — đó là sàn nhiễu, và cả dải 24→64 nằm trong khoảng nhiễu của
+nhau. Thêm luồng được khoảng **1,15×** rồi chạm trần ngay ở 24: NAS bão hoà quanh 63–67 tệp/giây.
+
+Chọn 32 chứ không phải 48 dù 48 đo cao nhất — chênh lệch giữa chúng dưới sàn nhiễu nên đó không
+phải kết quả, còn 20–40 máy cùng quét thì mỗi luồng thêm là tải thật đổ lên NAS chung.
+
+### Cái giá của ưu tiên thấp: không đo được
+
+Pool sản phẩm đặt `THREAD_PRIORITY_BELOW_NORMAL`. Đo riêng phần chênh đó, cùng 32 luồng, bốn mẫu
+rời nhau:
+
+| Nhánh | Vòng 1 | Vòng 2 |
+|---|---|---|
+| Ưu tiên thường | 39,7 | **27,7** |
+| Ưu tiên thấp | 44,7 | 41,9 |
+
+Trung bình ra "ưu tiên thấp nhanh hơn 1,33×", điều không thể do nhân quả. Nhìn kỹ thì hai nhánh
+*thường* lệch nhau **43%** — NAS bận hẳn lên giữa lượt đo, và sai số của chính phép đo lớn hơn mọi
+khác biệt giữa hai nhánh. Kết luận đúng: **hạ ưu tiên không tốn gì đo được**, nên giữ.
+
+Ghi lại cả bảng này thay vì chỉ kết luận, vì một bảng có nhánh 27,7 giữa các nhánh 40+ là bằng
+chứng rằng mọi con số đo NAS trong tài liệu đều phải đọc kèm sai số.
+
+### Bản giữ lại
+
+Bỏ phần chia theo thiết bị. [dupepool.rs](../src-tauri/src/media/dupepool.rs) giờ chỉ dựng **một**
+pool 32 luồng ưu tiên thấp, tách khỏi pool toàn cục.
+
+Được gì: ~1,15× (mỏng), và sửa lỗi **4.2/4.4** của tài liệu — quét trùng lặp không còn chiếm pool
+luồng của ô tìm kiếm, nên gõ tìm kiếm trong lúc quét không còn đơ. Đó mới là lý do giữ pool riêng;
+tốc độ chỉ là phần thêm.
+
+### Hai lỗi "danh sách rỗng", và cách chặn cả lớp
+
+Lượt soi đối kháng (9 góc nhìn, mỗi phát hiện qua 3 người phản biện có nhiệm vụ bác bỏ) tìm ra một
+lỗi **nặng**, hai người soi độc lập cùng thấy, 0/3 phản biện bác được:
+
+Quét nền lúc máy rảnh gọi `start(..., DupeScope::LocalOnly, Vec::new(), BTreeMap::new())`. Nhưng
+`in_scope` cho `LocalOnly` viết là:
+
+```rust
+!(v != 0 && net_letters.iter().any(|n| ...))
+```
+
+Danh sách rỗng thì `.any()` **luôn false**, nên biểu thức là `!false = true` cho **mọi** tệp:
+`LocalOnly` hành xử y hệt `Everything`. Lượt quét nền đọc trọn NAS — đúng thứ chú thích đầu tệp
+tuyên bố không bao giờ làm, trên 20–40 máy mỗi sáng.
+
+Cùng loại lỗi với bài đo ở trên. Hai chỗ, hai ngày, một nguyên nhân.
+
+**Không sửa được bằng cách kiểm "danh sách có rỗng không": rỗng là hợp lệ** trên máy không gắn ổ
+mạng nào. Hai trường hợp đó không phân biệt được từ bên trong hàm.
+
+Nên cách chặn là bỏ hẳn cơ hội truyền sai: [omang.rs](../src-tauri/src/media/omang.rs) sở hữu danh
+sách ổ mạng, và `DupeService::start` **tự gọi** `OMang::tu_he_thong()` chứ không nhận tham số. Không
+còn tham số thì không chỗ gọi nào truyền rỗng được — trình biên dịch canh thay cho một bài kiểm thử
+phải nhớ ra mà viết. `net_letters()` và `net_remote_map()` trong `commands.rs` bị xoá theo, để chỉ
+còn một nguồn sự thật.
+
+### Kiểm chứng
+
+| Phá cái gì | Kết quả |
+|---|---|
+| Thêm lại tham số `net_letters` vào `start` | **1 ca đỏ** |
+| Đưa `dupepool::dung()` vào trong vòng lặp đợt | 1 ca đỏ |
+| Cho pool quét trùng dùng chung pool toàn cục | 1 ca đỏ |
+| Đặt số luồng bằng hoặc dưới số CPU | **chặn lúc biên dịch** |
+| Bỏ tên luồng `dupe-N` | 1 ca đỏ |
+
+Thêm ca `danh_sach_o_mang_rong_thi_local_only_khong_loc_gi` — nó **khẳng định** hành vi bẫy thay vì
+sửa nó, vì hành vi đó đúng khi máy thật sự không có ổ mạng. Ghi lại để nó không còn là chuyện bất
+ngờ.
+
+### Một ca đỏ vì môi trường, và nó chỉ ra lỗi thật
+
+`dupestore::ghi_va_doc_lai_tu_dia` đỏ khi chạy chung, xanh khi chạy riêng. Nó gọi thẳng `save`/`load`,
+tức **ghi đè kho vân tay thật của người dùng** ở `AppData` rồi khôi phục — và MediaFinder đang chạy
+cũng ghi vào đúng tệp đó.
+
+Không phải "ca dễ vỡ, chạy lại là được": bài thử đang giẫm lên dữ liệu thật. Tách `load_from`/`save_to`
+nhận đường dẫn, `load`/`save` chỉ là vỏ bọc. Tách xong thì viết được ca trước đây không viết nổi vì
+phải hy sinh kho thật: `tep_rac_thi_ra_kho_rong` — tệp rác, sai số phiên bản, và tệp không tồn tại
+đều phải ra kho rỗng chứ không nổ.
+
+### Vòng kiểm
+
+`cargo test` **308 pass** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp · `npm test` 136 pass.
+
+---
+
+## P51 — Quét trùng lặp trên thư viện thật: 57 phút, rồi 1,8 giây
+
+Phép đo đầu tiên chạy trọn thư viện thật với đúng cấu hình app dùng.
+
+| Lượt | Thời gian | Kết quả |
+|---|---|---|
+| Lần đầu, kho vân tay rỗng | **3.427,9 s** (57,1 phút) | 42.932 nhóm · 3.653,2 GB |
+| Lần hai, kho vân tay đầy | **1,8 s** | 42.932 nhóm · 3.653,2 GB |
+
+377.585 tệp trong chỉ mục, 169.711 ứng viên sau tầng 1 (55% bị loại miễn phí), 4 ổ mạng trên 2 máy
+chủ (`F:`+`H:` → `.214`, `Y:`+`Z:` → `.213`). `completed = true` cả hai lượt, kết quả **giống hệt
+nhau**.
+
+**1.904 lần.** Và không phải "nhanh hơn" theo nghĩa tối ưu — lượt hai **không đọc đĩa nữa**.
+
+Đặt cạnh nhau thì mọi thứ khác thành thứ yếu: việc C tranh nhau ở mức 0,85× đến 1,15×, còn kho vân
+tay đổi hai bậc độ lớn. Bài học cho phần còn lại của tài liệu: **thứ đáng làm là bỏ bớt việc, không
+phải làm cùng lượng việc nhanh hơn.**
+
+Điều kiện để lượt hai nhanh: tệp còn nguyên đường dẫn, dung lượng và thời gian sửa. Tệp mới hoặc
+tệp đã đổi thì vẫn phải mở. Nên 1,8 giây là cận dưới của thư viện không đổi, không phải lời hứa cho
+mọi lượt.
+
+### Vòng kiểm
+
+`cargo test` **308 pass** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp · `npm test` 136 pass.
+
+---
+
+## P52 — Đi đúng đòn bẩy: 57 phút xuống 42, rồi xuống nữa
+
+Người dùng nói thẳng: cả ngày trước đó không làm lượt quét đầu nhanh hơn được chút nào. Đúng. Mục
+này ghi lại vì sao đi sai, và cái gì sửa được khi đi đúng.
+
+### Đi sai ở đâu
+
+Chi phí một lượt quét là:
+
+```
+thời gian = (số tệp phải mở) × (chi phí mỗi lần mở) / (song song)
+```
+
+Việc C đánh vào **mẫu số**. Nó bão hoà từ đầu: thêm luồng từ 24 lên 64 không đổi gì (P50). Hai
+thừa số ở tử số không ai đụng tới.
+
+Có một con số lẽ ra phải làm tôi dừng lại sớm hơn nhiều: 32 luồng chia cho 66 ms mỗi lần mở là
+**485 tệp/giây**, mà thực đo chỉ **65**. Lệch bảy lần. Khi mô hình và phép đo lệch nhau bảy lần thì
+mô hình sai, và chỗ sai đó là nơi cần đào — chứ không phải chỉnh tiếp cái đã bão hoà.
+
+### Chỗ thắt thật: lần nhảy đầu đọc
+
+Mỗi tệp lớn tốn **hai** thao tác đĩa: đọc 64 KB đầu, **nhảy tới cuối tệp**, đọc 64 KB nữa. Với
+video vài GB, cú nhảy đó là một lần seek thật trên đĩa quay của NAS — nhân với 169.711 tệp.
+
+Đo trên NAS, mẫu rời nhau, đảo thứ tự:
+
+| Cách lấy vân tay | Tệp/giây | So với hiện tại | Gộp nhầm | Mất nhóm |
+|---|---|---|---|---|
+| Hai đầu 64K+64K | 28,4 | chuẩn | chuẩn | chuẩn |
+| Chỉ đầu 1 MB | 30,3 | 0,99× | 0 | 0 |
+| Chỉ đuôi 64K | 43,1 | 1,44× | 4 | 7 |
+| Chỉ đầu 64K | 59,2 | **2,08×** | 3 | 0 |
+| **Trộn theo loại tệp** | 54,9 | **1,93×** | **1** | **0** |
+
+### Hai điều bất ngờ
+
+**"Byte rẻ" là sai.** Đọc 1 MB từ đầu ra 0,99× — tức mười sáu lần byte tốn đúng bằng một lần nhảy.
+Giả thuyết của tôi là bỏ cú nhảy rồi đọc bù thật nhiều byte sẽ vừa nhanh vừa chính xác. Phép đo bác
+sạch.
+
+**Đọc nhiều hơn từ đầu KHÔNG chính xác hơn.** Trên 4.200 tệp: 64 KB cho 6 nhóm gộp nhầm, 128 KB cho
+6, 256 KB cho 6, 512 KB cho 5. Gấp tám lần dữ liệu, bớt được một nhóm.
+
+Lý do nằm trong chính danh sách tệp bị gộp nhầm: **tất cả đều là audio** — `.MP3`, `.wav`. Hai bản
+audio cùng độ dài, cùng bộ mã hoá thì phần đầu giống nhau rất dài; video thì khung hình đầu đã khác
+nhau ngay. Lỗi không ở "chưa đủ byte" mà ở "lấy byte sai chỗ".
+
+Chỉ mục đã giữ sẵn `MediaKind`, nên phân biệt không tốn một byte đọc đĩa. Audio chiếm **10,4%** ứng
+viên, nên giữ hai đầu riêng cho chúng tốn 0,15× tốc độ mà bỏ được hai phần ba số nhóm sai.
+
+### Đo lại trên cả thư viện
+
+| | Trước | Sau |
+|---|---|---|
+| Thời gian | 3.427,9 s (57,1 phút) | **2.529,7 s (42,2 phút)** |
+| Nhóm | 42.932 | 42.958 (+26) |
+| Thu hồi được | 3.653,2 GB | 3.663,1 GB |
+
+**1,355×** trên toàn lượt, không phải 1,93× — vì 33,8% ứng viên là tệp dưới 1 MB (đọc trọn, không
+có cú nhảy nào để bỏ) và 21% nằm trên đĩa trong máy vốn đã nhanh.
+
+26 nhóm thừa khớp gần đúng dự đoán từ mẫu (0,06% × 42.932 ≈ 26). Mô hình đúng, nên con số sai là
+thứ đã đo được chứ không phải rủi ro chưa biết.
+
+### Cái giá, nói thẳng
+
+Còn khoảng **1 nhóm sai trên 1.677**. Nhưng cách cũ **cũng không đúng tuyệt đối**: hai tệp khớp cả
+64 KB đầu lẫn 64 KB cuối vẫn có thể khác ở giữa, ta chỉ không có gì để đối chiếu nên không thấy.
+Đây không phải đổi từ "đúng" sang "gần đúng" mà là đổi mức gần đúng lấy hai lần tốc độ.
+
+Thứ bảo đảm đúng trước khi xoá là `verify.rs` — đọc **trọn** nội dung cả nhóm. Nó đã có từ P45, và
+đó là điều kiện để đánh đổi này chấp nhận được.
+
+`SCHEMA_VERSION` của kho vân tay tăng lên 2: vân tay cũ và mới không so được với nhau, giữ kho cũ
+là báo trùng lặp sai hàng loạt.
+
+### Đòn bẩy thứ hai: một phần ba số tệp mang 0,28% giá trị
+
+Đếm từ chỉ mục, không đọc đĩa một byte. Tổng tiềm năng 3.711,7 GB:
+
+| Dải | Tệp | % số lượng | % giá trị |
+|---|---|---|---|
+| **64 KB–1 MB** | 57.279 | **33,8%** | **0,28%** |
+| 1–4 MB | 26.139 | 15,4% | 1,0% |
+| 4–16 MB | 54.948 | 32,4% | 8,9% |
+| 16–64 MB | 21.776 | 12,8% | 10,8% |
+| 64–256 MB | 6.440 | 3,8% | 13,5% |
+| ≥256 MB | 3.129 | 1,8% | **65,5%** |
+
+Nâng `MIN_INTERESTING_SIZE` từ 64 KB lên 1 MB bỏ một phần ba khối lượng đọc đĩa để mất 10,3 GB trên
+3.711,7 GB.
+
+Không đẩy lên 4 MB dù nó bỏ được **49%** số tệp với 1,3% giá trị: ở đó bắt đầu mất **số nhóm** chứ
+không chỉ mất GB, và người dọn ổ thấy danh sách ngắn đi mà không biết vì sao. Đó là lựa chọn nên
+hỏi người dùng, không nên chôn trong một hằng số.
+
+### Đo lại sau khi nâng sàn
+
+| | Ứng viên | Thời gian | Nhóm | Thu hồi được |
+|---|---|---|---|---|
+| Ban đầu | 169.711 | 3.427,9 s (57,1 phút) | 42.932 | 3.653,2 GB |
+| Bỏ đọc đuôi cho video | 169.711 | 2.529,7 s (42,2 phút) | 42.958 | 3.663,1 GB |
+| **+ sàn 1 MB** | **112.432** | **1.952,6 s (32,5 phút)** | 38.758 | 3.659,0 GB |
+
+**1,76× so với ban đầu.** Cái mất, đo được chứ không ước lượng:
+
+* **4,1 GB** trên 3.663 — **0,11%**, còn thấp hơn con số 0,28% tính từ chỉ mục, vì một phần tệp
+  nhỏ cùng dung lượng hoá ra không phải bản sao thật.
+* **4.200 nhóm** trên 42.958 — **9,8%**. Đây mới là cái giá thật, và nó lớn hơn phần GB rất nhiều.
+
+Hai con số đó nói hai chuyện khác nhau, nên phải để cạnh nhau. Người dọn ổ để lấy dung lượng gần
+như không mất gì; người dọn ổ để bớt lộn xộn thì mất một phần mười danh sách. Vì thế giao diện
+**nói ra** ngưỡng bỏ qua ngay trong hộp thoại hỏi phạm vi, kèm bài kiểm thử canh cho dòng đó không
+bị xoá — không có bài nào khác bắt được việc đó, vì bỏ nó đi không làm hỏng chức năng nào.
+
+### Ứng viên nằm ở đâu — và đòn bẩy còn lại
+
+| Ổ | Loại | Tệp | Tiềm năng |
+|---|---|---|---|
+| D: | trong máy | 35.612 | **2.174,3 GB** |
+| Y: | mạng | 79.048 | 861,4 GB |
+| F: | mạng | 35.119 | 639,8 GB |
+| H: | mạng | 7.152 | 20,9 GB |
+| Z: | mạng | 12.661 | 14,9 GB |
+| C: | trong máy | 119 | 0,3 GB |
+
+Bảng này nói một điều mà không phép đo tốc độ nào nói được: **giá trị nằm trên ổ trong máy, khối
+lượng nằm trên NAS.** D: chiếm 21% số tệp nhưng 59% phần thu hồi được; Y: ngược lại — 47% số tệp,
+23% giá trị.
+
+Nghĩa là 79% khối lượng đọc đĩa đổ vào NAS để lấy 41% giá trị. Và nội dung NAS **giống hệt nhau
+trên cả 20–40 máy studio**, mà hôm nay mỗi máy tự đọc lại từ đầu. Đó là đòn bẩy lớn nhất còn lại,
+và nó cùng loại với hai đòn bẩy trên: **bỏ bớt việc, không phải làm việc nhanh hơn.**
+
+### Vòng kiểm
+
+`cargo test` **332 pass** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp · `npm test` 137 pass.
+
+---
+
+## P53 — Chia sẻ vân tay NAS giữa các máy, và một ràng buộc chỉ người dùng biết
+
+Sau P52, lượt quét gần chạm trần phần cứng: NAS phục vụ khoảng **65 lần mở tệp mỗi giây** bất kể
+thêm bao nhiêu luồng (P50), và còn 112.432 tệp phải mở — **79% nằm trên ổ mạng**.
+
+Nhưng nội dung ổ mạng **giống hệt nhau trên cả 20–40 máy studio**, mà hôm nay mỗi máy tự đọc lại từ
+đầu. Bốn mươi máy đọc cùng một nội dung bốn mươi lần.
+
+### Ràng buộc không suy ra được từ mã
+
+Người dùng nêu rõ: `\192.168.1.214` (ổ `F:` và `H:`) là **máy trạm của người khác**, không phải
+NAS. Không được tạo thư mục ẩn và đặt tệp theo tên máy ở đó. Chỉ làm trên NAS `\192.168.1.213`.
+
+Không có gì trong mã phân biệt được máy trạm chia sẻ thư mục với một NAS — cả hai đều là share SMB.
+Nên đây là ràng buộc phải được ghi vào mã cùng với **lý do**, và phải có cái chặn.
+
+### Chặn ba lớp, cả ba đã kiểm bằng cách phá mã
+
+| Lớp | Phá thế nào | Kết quả |
+|---|---|---|
+| Danh sách **cho phép**, không phải danh sách cấm | đổi sang ngữ nghĩa danh sách cấm | 1 ca đỏ |
+| `const assert!` lúc biên dịch | thêm `.214` vào danh sách cho phép | **không dịch được** |
+| Lọc share ở **đầu hàm** ghi | đưa bộ lọc về trong vòng lặp | 2 ca đỏ |
+| Ca canh lý do | xoá `.214` khỏi danh sách cấm | 1 ca đỏ |
+
+Lớp thứ hai đáng kể lại. Chú thích đầu module của tôi viết "hỏng lúc biên dịch", nhưng phép phá mã
+cho thấy bỏ sạch danh sách cấm mà **mọi ca vẫn xanh** — danh sách cho phép đã tự loại `.214` rồi,
+nên danh sách cấm chỉ là trang trí. Tôi làm cho câu đó thành sự thật (`const fn` so sánh byte, kiểm
+lúc biên dịch) thay vì sửa câu chữ cho khớp với mã yếu hơn.
+
+Lớp thứ ba là chỗ sửa sau khi người dùng hỏi lại "bạn có làm đúng ý tôi chứ". Bản đầu lọc **bên
+trong** vòng lặp, ngay trước `create_dir_all`. Nó đúng — nhưng đúng *nhờ thứ tự hai câu lệnh*. Ai
+sắp xếp lại vòng lặp là bốn mươi máy bắt đầu tạo thư mục trên máy trạm của một người, và hàm vẫn
+trả về 0 nên không bài nào bắt được. Nay lọc nằm ở đầu hàm: thân hàm **không cầm** đường dẫn bị cấm
+nên không thể chạm vào.
+
+Tách `loc_share_duoc_ghi` thành hàm riêng cũng vì thế: kiểm được **mà không chạm hệ thống tệp**.
+Kiểm qua `ghi_len_share` trả về 0 thì bài thử sẽ xanh cả khi thư mục đã bị tạo ra rồi, vì 0 cũng là
+kết quả của share chỉ-đọc.
+
+### Một bài canh đỏ oan, và nó cũng là bài học
+
+Bài canh thứ tự đọc mã nguồn bằng `include_str!` và đỏ ngay lần đầu — vì chính **lời chú thích** của
+tôi trong hàm có nhắc `create_dir_all`, và nó đứng trước lời gọi bộ lọc. Bài đang canh thứ tự **mã
+chạy**, nên phải bỏ dòng chú thích trước khi soi. Mọi bài đọc mã nguồn đều có bẫy này.
+
+### Thiết kế
+
+* **Khoá theo UNC, không theo chữ ổ.** `\192.168.1.213\padoma 8` là `Y:` ở máy này và có thể là
+  `W:` ở máy khác. Khoá theo chữ ổ thì máy kia không tra được gì — và tính năng thành vô dụng một
+  cách **im lặng**, nên có ca canh riêng.
+* **Mỗi máy một tệp.** `<tên-máy>.bin` trong `<share>\.mediafinder\`. Bốn mươi máy cùng ghi một tệp
+  là bài toán khoá phân tán trên SMB, và `rename` nguyên tử qua SMB không phải thứ nên đánh cược.
+  Mỗi máy một tệp thì không tranh khoá, và một máy ghi hỏng chỉ hỏng phần của nó.
+* **Không tin mù.** Vân tay của máy khác chỉ được dùng khi **cả dung lượng lẫn thời gian sửa còn
+  khớp** với chỉ mục của chính máy mình — đúng cơ chế kho cục bộ. Tệp đã đổi thì mục cũ tự bị loại.
+* **Đĩa trong máy không chia sẻ.** `D:\du-an\a.mp4` của máy này là tệp khác trên máy khác.
+* **Đọc tối đa 8 tệp mới nhất mỗi share.** Bốn mươi máy × 7 MB là gần 300 MB qua SMB *trước khi*
+  quét bắt đầu — đúng thứ tính năng này sinh ra để tránh. Phần bị bỏ ghi vào log, không cắt im lặng.
+
+### Vòng kiểm
+
+`cargo test` **332 pass** · clippy 0 · fmt sạch · `npm run check` 0 lỗi/124 tệp · `npm test` 137 pass.

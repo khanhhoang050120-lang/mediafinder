@@ -97,6 +97,28 @@ describe("t12 — hỏi trước khi quét ổ mạng", () => {
     expect(chu).toContain("Y:, Z:");
   });
 
+  it("nói ra là tệp nhỏ bị bỏ qua", async () => {
+    // Sàn dung lượng nâng từ 64 KB lên 1 MB: tệp dưới 1 MB chiếm một phần ba
+    // số tệp phải mở nhưng chỉ 0,28% phần thu hồi được, nên bỏ chúng là bỏ một
+    // phần ba thời gian quét.
+    //
+    // Nhưng người dọn ổ không biết điều đó sẽ tưởng app sót tệp — họ thấy bằng
+    // mắt hai ảnh giống nhau mà danh sách không có. Không có bài nào khác bắt
+    // được việc dòng này bị xoá đi, vì bỏ nó không làm hỏng chức năng nào.
+    const { div } = await moMan({
+      localFiles: 1_200,
+      networkFiles: 240_000,
+      networkDrives: ["Y:", "Z:"],
+    });
+
+    const chu = (div.querySelector("[role=dialog]")!.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu, "phải nói ngưỡng bỏ qua là bao nhiêu").toContain("1 MB");
+    expect(
+      chu.toLowerCase(),
+      "và phải nói rõ là BỎ QUA, không phải một ghi chú mơ hồ",
+    ).toContain("bỏ qua");
+  });
+
   it("không có ổ mạng thì KHÔNG hỏi, quét thẳng ổ trong máy", async () => {
     // Một hộp thoại chỉ có một câu trả lời đúng là một hộp thoại thừa.
     const { div, ipc } = await moMan({

@@ -34,7 +34,6 @@ fn cancelling_stops_a_scan_already_reading() {
             Arc::clone(&index),
             0,
             mediafinder::media::dupescope::DupeScope::Everything,
-            Vec::new()
         ),
         "quét phải bắt đầu"
     );
@@ -88,7 +87,6 @@ fn cancelling_stops_a_scan_already_reading() {
             index,
             0,
             mediafinder::media::dupescope::DupeScope::Everything,
-            Vec::new()
         ),
         "sau khi huỷ phải bắt đầu lại được lượt quét mới"
     );
