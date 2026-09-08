@@ -589,10 +589,79 @@ pub fn set_dupe_idle(enabled: bool) {
 #[tauri::command]
 pub async fn verify_dupe_group(
     paths: Vec<String>,
-) -> Result<crate::media::verify::VerifyOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::media::verify::verify_paths(&paths))
-        .await
-        .map_err(|e| format!("xác minh bị gián đoạn: {e}"))
+    muc: Option<crate::media::verifyfast::Muc>,
+    tien_do: State<'_, crate::media::verifyprogress::VerifyState>,
+    kho: State<'_, std::sync::Mutex<crate::media::verifycache::Kho>>,
+) -> Result<crate::media::verifyfast::KetQua, String> {
+    let muc = muc.unwrap_or_default();
+
+    // Đã đối chiếu nhóm này rồi thì trả lời ngay, không đọc lại một byte nào.
+    //
+    // Trên ổ `D:` của máy studio (HDD SATA, đo được 61 MB/s đọc nguội), một
+    // nhóm 3 × 16,65 GB mất ~14 phút ở mức Toàn bộ. Không nhớ kết quả nghĩa là
+    // bấm lại lần hai phải trả đúng cái giá ấy lần nữa.
+    if let Ok(k) = kho.lock() {
+        if let Some(cu) = k.tra(&paths, muc) {
+            return Ok(cu);
+        }
+    }
+
+    // Từ chối lượt thứ hai thay vì xếp hàng: hai luồng cùng đọc một ổ chỉ đổi
+    // tuần tự lấy tiếng lạch cạch, và giao diện chỉ vẽ được một thanh tiến độ.
+    if !tien_do.begin(paths.len()) {
+        return Err("Đang xác minh một nhóm khác rồi.".into());
+    }
+    // `inner().clone()` chứ không mượn: `State` không sống qua ranh giới
+    // `spawn_blocking`, còn `VerifyState` clone rẻ — mọi trường là `Arc`.
+    let st = tien_do.inner().clone();
+    let st_xong = st.clone();
+    let ds = paths.clone();
+    // Mẫu số của thanh tiến độ: đúng số byte mà kế hoạch đọc SẼ đọc, không
+    // phải tổng dung lượng nhóm.
+    //
+    // Ở mức Nhanh hai con số ấy chênh nhau gần trăm lần — nhóm 50 GB chỉ đọc
+    // 0,63 GB. Lấy tổng dung lượng làm mẫu số thì thanh chạy tới 1,3% rồi
+    // nhảy phắt sang xong, tức nói dối cả về tiến độ lẫn về thời gian còn lại.
+    tien_do.set_total(crate::media::verifyfast::tong_se_doc(&ds, muc));
+    let kq = tauri::async_runtime::spawn_blocking(move || {
+        // `verifyfast::doi_chieu` chứ không phải `verify::verify_paths`: nó so
+        // trực tiếp theo khối nên DỪNG ĐƯỢC ngay tại chỗ khác nhau đầu tiên,
+        // và nó có mức lấy mẫu. Băm trọn rồi mới so thì tệp khác nhau ở byte
+        // đầu vẫn phải đọc hết 16 GB.
+        crate::media::verifyfast::doi_chieu(&ds, muc, &|| st.cancelled(), &|n| st.add_done(n))
+    })
+    .await;
+    // Hạ cờ `running` dù lượt kết thúc theo đường nào. Thiếu dòng này thì một
+    // lần hoảng loạn của luồng sẽ khoá vĩnh viễn nút Xác minh của mọi nhóm.
+    st_xong.finish();
+    let kq = kq.map_err(|e| format!("xác minh bị gián đoạn: {e}"))?;
+    if let Ok(mut k) = kho.lock() {
+        k.ghi(&paths, &kq);
+    }
+    Ok(kq)
+}
+
+/// Tiến độ lượt xác minh đang chạy, cho giao diện hỏi theo nhịp.
+///
+/// Cùng lối với `dupe_progress` của tầng 2: trạng thái dùng chung + poll, chứ
+/// không phải kênh sự kiện. Poll có một tính chất mà sự kiện không có — cửa sổ
+/// đóng rồi mở lại vẫn đọc được trạng thái hiện tại, còn sự kiện phát ra lúc
+/// không ai nghe thì mất.
+#[tauri::command]
+pub fn verify_progress(
+    tien_do: State<'_, crate::media::verifyprogress::VerifyState>,
+) -> crate::media::verifyprogress::VerifyProgress {
+    tien_do.snapshot()
+}
+
+/// Xin dừng lượt xác minh đang chạy.
+///
+/// Một nhóm 4 tệp 11,2 GB, một bản trên NAS, là khoảng 45 GB phải đọc — nhiều
+/// phút. Không có đường dừng thì người dùng đổi ý cũng đành ngồi nhìn đĩa quay
+/// cho tới hết để ra một câu trả lời không ai còn muốn nghe.
+#[tauri::command]
+pub fn cancel_verify(tien_do: State<'_, crate::media::verifyprogress::VerifyState>) {
+    tien_do.cancel();
 }
 
 /// Begin looking for duplicates.

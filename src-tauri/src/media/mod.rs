@@ -12,3 +12,6 @@ pub mod metadata;
 pub mod omang;
 pub mod thumbnail;
 pub mod verify;
+pub mod verifycache;
+pub mod verifyfast;
+pub mod verifyprogress;

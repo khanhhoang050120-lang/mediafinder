@@ -169,6 +169,16 @@ export function setDupeIdle(enabled: boolean): Promise<void> {
   return invoke("set_dupe_idle", { enabled });
 }
 
+/// Mức đối chiếu.
+///
+/// `nhanh` đọc ~1% rải đều khắp tệp cộng trọn hai đầu — chi phí KHÔNG tăng
+/// theo dung lượng. Đo trên nhóm thật 3 × 16,65 GB (ổ `D:` là HDD SATA,
+/// 61 MB/s đọc nguội): **12,3 giây** thay vì ~14 phút.
+///
+/// `toanBo` đọc trọn từng byte. Chắc chắn tuyệt đối, và đắt đúng bằng dung
+/// lượng nhóm chia cho tốc độ đĩa.
+export type VerifyMuc = "nhanh" | "toanBo";
+
 /// Kết quả xác minh tầng 3 của một nhóm.
 export interface VerifyOutcome {
   /// Các cụm trùng thật sự từng byte. Một cụm duy nhất = nhóm đúng là bản sao
@@ -177,14 +187,53 @@ export interface VerifyOutcome {
   /// Tệp không đọc nổi. Về chúng thì **không nói gì** — không đọc được không
   /// phải là "khác nội dung".
   unreadable: string[];
+  /// Lượt bị dừng giữa chừng, nên `groups` **chưa phải câu trả lời**.
+  ///
+  /// Thiếu cờ này thì một lượt dừng ở tệp thứ hai trên bốn hiện ra y hệt một
+  /// kết luận "trùng thật", và người dùng xoá hai tệp chưa ai đọc lần nào.
+  cancelled?: boolean;
+  /// Mức đã chạy. Giao diện PHẢI nói ra: "trùng ở 200 điểm kiểm" khác hẳn
+  /// "trùng từng byte", và gộp hai câu đó là nói quá điều đã chứng minh.
+  muc?: VerifyMuc;
+  /// Đã đọc bao nhiêu byte thật sự, để nói được cái giá.
+  bytesRead?: number;
 }
 
 /// Xác minh trọn nội dung một nhóm trước khi xoá.
 ///
 /// Tầng 2 chỉ đối chiếu dung lượng và hai đầu tệp, nên hai video khác nhau ở
 /// giữa vẫn bị gom chung. Đây là bước duy nhất chắc chắn.
-export function verifyDupeGroup(paths: string[]): Promise<VerifyOutcome> {
-  return invoke<VerifyOutcome>("verify_dupe_group", { paths });
+export function verifyDupeGroup(
+  paths: string[],
+  muc: VerifyMuc = "nhanh",
+): Promise<VerifyOutcome> {
+  return invoke<VerifyOutcome>("verify_dupe_group", { paths, muc });
+}
+
+/// Tiến độ lượt xác minh đang chạy.
+export interface VerifyProgress {
+  running: boolean;
+  /// Tổng byte phải đọc. `0` khi chưa đo xong — lúc đó ĐỪNG vẽ 0%, hãy nói
+  /// "đang đọc…": một thanh 0% trông y hệt một lượt đang treo.
+  totalBytes: number;
+  doneBytes: number;
+  /// Tổng số tệp trong nhóm. KHÔNG có `fileIndex`: việc đối chiếu đọc song
+  /// hành cả nhóm — cùng một đoạn ở mọi tệp rồi tách cụm — nên "đang ở tệp thứ
+  /// mấy" không tồn tại trong lối đọc đó. Đã lộ ra trên app thật: "tệp 0/3".
+  fileCount: number;
+}
+
+/// Hỏi tiến độ lượt xác minh. Cùng lối poll với `dupeProgress`.
+export function verifyProgress(): Promise<VerifyProgress> {
+  return invoke<VerifyProgress>("verify_progress");
+}
+
+/// Xin dừng lượt xác minh đang chạy.
+///
+/// Một nhóm 4 tệp 11,2 GB có một bản trên NAS là khoảng 45 GB phải đọc — nhiều
+/// phút. Không có đường dừng thì đổi ý cũng đành ngồi nhìn.
+export function cancelVerify(): Promise<void> {
+  return invoke("cancel_verify");
 }
 
 export function findDuplicates(scope: DupeScope = "localOnly"): Promise<void> {

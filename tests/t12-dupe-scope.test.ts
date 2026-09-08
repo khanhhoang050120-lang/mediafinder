@@ -423,6 +423,14 @@ const NHOM_MAU = {
   ],
 };
 
+/// Tiến độ giả mà `verify_progress` trả về; từng bài tự đặt.
+let tienDoGia: {
+  running: boolean;
+  totalBytes: number;
+  doneBytes: number;
+  fileCount: number;
+} = { running: false, totalBytes: 0, doneBytes: 0, fileCount: 0 };
+
 async function moManCoKetQua(verify: unknown) {
   const ipc = new IpcRecorder();
   (globalThis as { __ipc?: IpcRecorder }).__ipc = ipc;
@@ -435,6 +443,8 @@ async function moManCoKetQua(verify: unknown) {
     .on("dupe_idle_status", [true, true])
     .on("set_dupe_idle", null)
     .on("verify_dupe_group", verify)
+    .on("verify_progress", () => tienDoGia)
+    .on("cancel_verify", null)
     .on("thumb_url", "");
 
   const div = document.createElement("div");
@@ -461,25 +471,66 @@ async function moManCoKetQua(verify: unknown) {
 }
 
 function nutXacMinh(div: HTMLElement): HTMLButtonElement | undefined {
-  return [...div.querySelectorAll<HTMLButtonElement>("button")].find(
-    (b) => b.textContent?.trim() === "Xác minh",
+  // Khớp theo tiền tố "Kiểm tra" chứ không theo nguyên văn nhãn: nhãn là câu
+  // chữ hướng tới người dùng và sẽ còn được mài, còn thứ bài này canh là NÚT
+  // CÓ TỒN TẠI và bấm được. Buộc vào nguyên văn là biến mỗi lần sửa chữ thành
+  // một lần bài kiểm đỏ oan.
+  return [...div.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+    (b.textContent ?? "").trim().startsWith("Đối chiếu"),
   );
 }
 
 describe("t12 — xác minh trọn nội dung trước khi xoá", () => {
-  it("mỗi nhóm có nút Xác minh riêng", async () => {
+  it("mỗi nhóm có nút kiểm tra riêng", async () => {
     const { div } = await moManCoKetQua({ groups: [], unreadable: [] });
-    expect(nutXacMinh(div), "thiếu nút Xác minh trên tiêu đề nhóm").toBeTruthy();
+    expect(nutXacMinh(div), "thiếu nút kiểm tra trên tiêu đề nhóm").toBeTruthy();
   });
 
-  it("một cụm duy nhất = trùng thật", async () => {
+  it("mức Nhanh: một cụm duy nhất, nhưng KHÔNG được nói là trùng từng byte", async () => {
+    // Mức mặc định đọc ~1% rải đều + trọn hai đầu. Nó gần như chắc chắn, nhưng
+    // vẫn là xác suất chứ không phải chứng minh — nên câu chữ phải nói đúng
+    // điều đã kiểm, không hơn. Nói quá ở đúng chỗ người dùng sắp xoá 33,7 GB
+    // là kiểu sai đắt nhất mà cả tầng 3 sinh ra để chống.
     const { div } = await moManCoKetQua({
-      groups: [["D:\m\a.mp4", "D:\m\b.mp4"]],
+      groups: [["D:\m.mp4", "D:\m.mp4"]],
       unreadable: [],
+      muc: "nhanh",
     });
     nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await settle(150);
-    expect((div.textContent ?? "").replace(/\s+/g, " ")).toContain("trùng thật");
+    await settle(200);
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu).toContain("khớp mọi điểm kiểm");
+    expect(chu, "muc Nhanh ma noi la trung tung byte").not.toContain(
+      "trùng từng byte",
+    );
+  });
+
+  it("mức Toàn bộ: mới được nói là trùng từng byte", async () => {
+    const { div } = await moManCoKetQua({
+      groups: [["D:\m.mp4", "D:\m.mp4"]],
+      unreadable: [],
+      muc: "toanBo",
+    });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(200);
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu).toContain("trùng từng byte");
+    expect(chu).toContain("an toàn");
+  });
+
+  it("nút Đối chiếu gửi mức nhanh, nút Toàn bộ gửi mức toanBo", async () => {
+    // Mặc định phải là Nhanh: một nút mất 14 phút thì thực tế không ai bấm, và
+    // một tính năng không ai dùng thì bằng không.
+    const { div, ipc } = await moManCoKetQua({
+      groups: [],
+      unreadable: [],
+      muc: "nhanh",
+    });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(200);
+    const goi = ipc.calls.filter((c) => c.cmd === "verify_dupe_group");
+    expect(goi.length).toBe(1);
+    expect((goi[0].args as { muc: string }).muc).toBe("nhanh");
   });
 
   it("hai cụm = tầng 2 đã gom nhầm, phải CẢNH BÁO", async () => {
@@ -494,8 +545,12 @@ describe("t12 — xác minh trọn nội dung trước khi xoá", () => {
     await settle(150);
 
     const chu = (div.textContent ?? "").replace(/\s+/g, " ");
-    expect(chu, "phải cảnh báo có tệp khác nội dung").toContain("khác nội dung");
-    expect(chu, "KHÔNG được nói là trùng thật").not.toContain("trùng thật");
+    // Khẳng định theo Ý NGHĨA chứ không theo nguyên văn: điều phải giữ là màn
+    // hình BẢO DỪNG TAY, và tuyệt đối không trấn an. Buộc vào một cụm từ cụ
+    // thể khiến mỗi lần mài câu chữ là một lần bài đỏ oan — mà câu chữ ở đây
+    // thì còn phải mài, vì nó là thứ đứng giữa người dùng và việc xoá 33,7 GB.
+    expect(chu, "phải bảo người dùng đừng xoá").toContain("đừng xoá");
+    expect(chu, "KHÔNG được trấn an là an toàn").not.toContain("an toàn");
   });
 
   it("không đọc được hết thì KHÔNG khẳng định gì", async () => {
@@ -509,8 +564,85 @@ describe("t12 — xác minh trọn nội dung trước khi xoá", () => {
     await settle(150);
 
     const chu = (div.textContent ?? "").replace(/\s+/g, " ");
-    expect(chu).toContain("không đọc được hết");
+    expect(chu).toContain("chưa kết luận được");
     expect(chu).not.toContain("trùng thật");
+  });
+
+  it("đang chạy thì hiện PHẦN TRĂM, không phải ba chữ đứng im", async () => {
+    // Nhóm người dùng gặp là 4 tệp x 11,2 GB, một bản trên NAS — khoảng 45 GB
+    // phải đọc, nhiều phút. Suốt quãng ấy "đang xác minh…" không phân biệt được
+    // "cứ chờ" với "treo rồi", và cách duy nhất để thử là bỏ đi bấm lại, tức
+    // vứt hết phần đã đọc.
+    tienDoGia = {
+      running: true,
+      totalBytes: 1000,
+      doneBytes: 250,
+      fileCount: 4,
+    };
+    // Giữ lượt treo lơ lửng để bắt đúng lúc nó ĐANG chạy.
+    const { div } = await moManCoKetQua(new Promise(() => {}));
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(400);
+
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu, "khong hien phan tram").toContain("25%");
+  });
+
+  it("chưa đo xong tổng thì nói 'đang đọc', KHÔNG vẽ 0%", async () => {
+    // Một thanh 0% đứng im trông y hệt một lượt đã treo — nói dối theo đúng
+    // hướng tệ nhất. Chưa biết thì phải nói là chưa biết.
+    tienDoGia = {
+      running: true,
+      totalBytes: 0,
+      doneBytes: 0,
+      fileCount: 4,
+    };
+    const { div } = await moManCoKetQua(new Promise(() => {}));
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(400);
+
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu).toContain("đang đọc");
+    expect(chu, "chua biet tong ma da ve 0%").not.toContain("0%");
+  });
+
+  it("đang chạy thì có nút Dừng, và bấm là gọi cancel_verify", async () => {
+    tienDoGia = {
+      running: true,
+      totalBytes: 1000,
+      doneBytes: 100,
+      fileCount: 4,
+    };
+    const { div, ipc } = await moManCoKetQua(new Promise(() => {}));
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(400);
+
+    const nutDung = [...div.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => (b.textContent ?? "").trim() === "Dừng",
+    );
+    expect(nutDung, "dang chay ma khong co duong dung").toBeTruthy();
+    nutDung!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(100);
+    expect(ipc.count("cancel_verify")).toBe(1);
+  });
+
+  it("lượt bị DỪNG không được hiện ra như một kết luận", async () => {
+    // Bất biến đắt nhất của cả tính năng. Dừng ở tệp thứ hai trên bốn thì
+    // `groups` mới là phần đọc kịp — một cụm duy nhất, trông y hệt "trùng
+    // thật". Hiện nó như kết luận là mời người dùng xoá tệp chưa ai đọc.
+    const { div } = await moManCoKetQua({
+      groups: [["D:\m\a.mp4", "D:\m\b.mp4"]],
+      unreadable: [],
+      cancelled: true,
+    });
+    nutXacMinh(div)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await settle(200);
+
+    const chu = (div.textContent ?? "").replace(/\s+/g, " ");
+    expect(chu, "luot bi dung ma van khang dinh trung that").not.toContain(
+      "an toàn",
+    );
+    expect(chu).toContain("đã dừng");
   });
 
   it("gửi đúng danh sách đường dẫn của nhóm đó", async () => {

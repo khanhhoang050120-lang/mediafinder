@@ -9,7 +9,10 @@
     dupeIdleStatus,
     setDupeIdle,
     verifyDupeGroup,
+    type VerifyMuc,
     dupeProgress,
+    verifyProgress,
+    cancelVerify,
     findDuplicates,
     formatBytes,
     formatCount,
@@ -126,6 +129,11 @@
       // đọc thêm vài phút nữa để ra một câu trả lời chẳng ai quay lại xem,
       // trong khi tranh ổ đĩa với việc mà người dùng vừa quay về làm.
       cancelDuplicates().catch(() => {});
+      // Cùng lý do, cho tầng 3: một lượt xác minh 45 GB qua NAS không được
+      // chạy tiếp sau khi người dùng đã đi chỗ khác.
+      dungHoiTienDo();
+      hangDoi = [];
+      cancelVerify().catch(() => {});
     };
   });
 
@@ -144,7 +152,30 @@
   /// `Map` chứ không phải trường trên `DupeGroup`: nhóm đến từ backend và bị
   /// thay mới mỗi 400 ms trong lúc quét, nên gắn trạng thái vào chúng là mất
   /// ngay ở nhịp sau.
-  let xacMinh = $state(new Map<string, "dang" | "that" | "khac" | "loi">());
+  let xacMinh = $state(
+    new Map<string, "dang" | "cho" | "that" | "nhanh" | "khac" | "loi" | "dung">(),
+  );
+
+  /// Hàng đợi các nhóm chờ tới lượt.
+  ///
+  /// Bản đầu từ chối thẳng: bấm nhóm thứ hai khi nhóm thứ nhất đang chạy thì
+  /// backend trả lỗi "Đang xác minh một nhóm khác rồi". Người dùng bấm mười
+  /// nhóm nhận về chín thông báo lỗi và mất sạch ý định — trong khi điều họ
+  /// muốn hoàn toàn hợp lý và chỉ cần xếp hàng.
+  ///
+  /// Chạy lần lượt chứ không song song vì đo được: ba tệp trên cùng một đĩa cơ
+  /// đọc song song chỉ nhanh hơn 1,17× (95 → 111 MB/s), còn hai nhóm cùng chạy
+  /// thì tranh đầu đọc và cả hai đều chậm đi.
+  let hangDoi = $state<{ g: DupeGroup; muc: VerifyMuc }[]>([]);
+  let dangChay = false;
+
+  /// Tiến độ lượt xác minh đang chạy, và nhóm nào đang chạy.
+  ///
+  /// Một biến chứ không phải một `Map`: backend chỉ cho phép MỘT lượt tại một
+  /// thời điểm (hai luồng cùng đọc một ổ chỉ đổi tuần tự lấy tiếng lạch cạch),
+  /// nên giữ một `Map` ở đây là hứa một khả năng không tồn tại.
+  let tienDo = $state<{ khoa: string; phanTram: number | null } | null>(null);
+  let timerXacMinh: ReturnType<typeof setInterval> | undefined;
 
   /// Khoá ổn định của một nhóm: dung lượng + vị trí tệp đầu.
   ///
@@ -153,22 +184,110 @@
     return `${g.size}:${g.files[0]?.index ?? -1}`;
   }
 
-  async function chayXacMinh(g: DupeGroup) {
+  /// Dọn nhịp hỏi tiến độ. Gọi ở mọi lối ra, kể cả lối lỗi.
+  function dungHoiTienDo() {
+    clearInterval(timerXacMinh);
+    timerXacMinh = undefined;
+    tienDo = null;
+  }
+
+  /// Xếp một nhóm vào hàng đợi.
+  ///
+  /// Bấm lại nhóm đang chờ thì bỏ nó ra — nút vừa là "thêm" vừa là "bỏ", đúng
+  /// như người dùng trông đợi khi bấm nhầm.
+  function xepHang(g: DupeGroup, muc: VerifyMuc) {
+    const k = khoaNhom(g);
+    if (xacMinh.get(k) === "cho") {
+      hangDoi = hangDoi.filter((x) => khoaNhom(x.g) !== k);
+      xacMinh.delete(k);
+      xacMinh = new Map(xacMinh);
+      return;
+    }
+    hangDoi = [...hangDoi, { g, muc }];
+    xacMinh.set(k, "cho");
+    xacMinh = new Map(xacMinh);
+    void chayHangDoi();
+  }
+
+  /// Rút từng nhóm khỏi hàng đợi và chạy, lần lượt.
+  async function chayHangDoi() {
+    if (dangChay) return;
+    dangChay = true;
+    try {
+      while (hangDoi.length) {
+        const [dau, ...con] = hangDoi;
+        hangDoi = con;
+        await chayMot(dau.g, dau.muc);
+      }
+    } finally {
+      dangChay = false;
+    }
+  }
+
+  async function chayMot(g: DupeGroup, muc: VerifyMuc) {
     const k = khoaNhom(g);
     xacMinh.set(k, "dang");
     xacMinh = new Map(xacMinh);
+    tienDo = { khoa: k, phanTram: null };
+
+    // Hỏi mỗi 300 ms — cùng bậc với nhịp poll của tầng 2. Đủ mượt để thấy con
+    // số nhích, đủ thưa để không tốn gì.
+    clearInterval(timerXacMinh);
+    timerXacMinh = setInterval(async () => {
+      try {
+        const p = await verifyProgress();
+        if (!p.running) return;
+        tienDo = {
+          khoa: k,
+          // `totalBytes === 0` nghĩa là chưa đo xong tổng. Trả `null` để giao
+          // diện nói "đang đọc…" thay vì vẽ 0% — một thanh 0% đứng im trông y
+          // hệt một lượt đã treo, tức nói dối theo đúng hướng tệ nhất.
+          phanTram:
+            p.totalBytes > 0
+              ? Math.min(100, Math.floor((p.doneBytes / p.totalBytes) * 100))
+              : null,
+        };
+      } catch {
+        // Nuốt: mất một nhịp hỏi tiến độ không đáng để phá cả lượt xác minh.
+      }
+    }, 300);
+
     try {
-      const kq = await verifyDupeGroup(g.files.map((f) => f.path));
-      // Một cụm duy nhất chứa tất cả tệp đọc được = nhóm đúng là bản sao của
-      // nhau. Nhiều cụm = tầng 2 đã gom nhầm ít nhất một tệp.
-      const trangThai =
-        kq.unreadable.length > 0 ? "loi" : kq.groups.length <= 1 ? "that" : "khac";
+      const kq = await verifyDupeGroup(
+        g.files.map((f) => f.path),
+        muc,
+      );
+      // Người dùng bấm Dừng: `groups` mới chỉ là phần đọc kịp, KHÔNG phải câu
+      // trả lời. Hiện nó như một kết luận là mời họ xoá tệp chưa ai đọc.
+      //
+      // Và phân biệt hai mức: mức Nhanh trùng ở 200 điểm kiểm KHÔNG phải là
+      // "trùng từng byte". Gộp hai câu đó làm một là nói quá điều đã chứng
+      // minh — đúng thứ mà cả tầng 3 sinh ra để chống.
+      const trangThai = kq.cancelled
+        ? "dung"
+        : kq.unreadable.length > 0
+          ? "loi"
+          : kq.groups.length > 1
+            ? "khac"
+            : kq.muc === "toanBo"
+              ? "that"
+              : "nhanh";
       xacMinh.set(k, trangThai);
     } catch (e) {
       onerror(String(e));
       xacMinh.delete(k);
     }
+    dungHoiTienDo();
     xacMinh = new Map(xacMinh);
+  }
+
+  /// Dừng lượt đang chạy.
+  async function dungXacMinh() {
+    try {
+      await cancelVerify();
+    } catch {
+      // Không sao: cờ dừng chỉ là lời xin, và lượt sắp kết thúc dù thế nào.
+    }
   }
 
   /// Lượt quét này có bỏ sót tệp nào không.
@@ -425,16 +544,113 @@
               một nhóm, thay vì hàng giờ cho cả thư viện.
             -->
             {#if xacMinh.get(khoaNhom(r.group)) === "dang"}
-              <span class="gverify">đang xác minh…</span>
+              <!--
+                Đang chạy: hiện phần trăm chứ không phải mấy chữ đứng im.
+
+                Đo trên nhóm thật 3 × 16,65 GB, ổ D: là HDD SATA 61 MB/s đọc
+                nguội: mức Toàn bộ mất ~14 phút. Suốt quãng ấy một dòng chữ
+                đứng im không phân biệt được "cứ chờ" với "treo rồi", và cách
+                duy nhất để thử là bỏ đi bấm lại — tức vứt hết phần đã đọc.
+              -->
+              <span class="gverify dangchay">
+                {#if tienDo?.khoa === khoaNhom(r.group) && tienDo.phanTram !== null}
+                  <span class="thanh" aria-hidden="true">
+                    <span class="day" style="width:{tienDo.phanTram}%"></span>
+                  </span>
+                  <span class="sopt">{tienDo.phanTram}%</span>
+                {:else}
+                  <!-- Chưa đo xong tổng. Nói "đang đọc" thay vì vẽ 0% — thanh
+                       0% đứng im trông y hệt một lượt đã treo. -->
+                  đang đọc…
+                {/if}
+                <button class="nutdung" onclick={dungXacMinh} title="Dừng lượt đối chiếu này">
+                  Dừng
+                </button>
+              </span>
+            {:else if xacMinh.get(khoaNhom(r.group)) === "cho"}
+              <!--
+                Xếp hàng thay vì báo lỗi.
+
+                Bản đầu từ chối thẳng lượt thứ hai, nên bấm mười nhóm là nhận
+                chín thông báo lỗi. Chạy lần lượt chứ không song song vì đo
+                được: ba tệp trên cùng đĩa cơ đọc song song chỉ được 1,17×.
+              -->
+              <span class="gverify cho">
+                đang chờ
+                <button
+                  class="nutdung"
+                  onclick={() => xepHang(r.group, "nhanh")}
+                  title="Bỏ nhóm này khỏi hàng đợi"
+                >
+                  Bỏ
+                </button>
+              </span>
+            {:else if xacMinh.get(khoaNhom(r.group)) === "nhanh"}
+              <!--
+                Mức Nhanh nói ĐÚNG điều nó đã chứng minh, không hơn.
+
+                Nó đọc ~1% rải đều khắp tệp cộng trọn hai đầu. Hai tệp khác
+                nhau mà qua lọt cả 200 điểm ấy là chuyện không xảy ra với dữ
+                liệu thật — nhưng đó vẫn là xác suất, không phải chứng minh.
+                Gọi nó là "trùng từng byte" là nói quá, và nói quá ở đúng chỗ
+                người dùng sắp xoá 33,7 GB.
+              -->
+              <span
+                class="gverify ok"
+                title="Đã đối chiếu khoảng 1% nội dung, rải đều khắp tệp, cộng trọn phần đầu và phần cuối — mọi điểm kiểm đều khớp. Với dữ liệu thật thì đây gần như chắc chắn là bản sao. Muốn chắc tuyệt đối thì bấm 'Toàn bộ'."
+              >
+                ✓ khớp mọi điểm kiểm
+                <button
+                  class="nutdung"
+                  onclick={() => xepHang(r.group, "toanBo")}
+                  title="Đọc trọn từng byte để chắc chắn tuyệt đối. Chậm hơn nhiều."
+                >
+                  Toàn bộ
+                </button>
+              </span>
             {:else if xacMinh.get(khoaNhom(r.group)) === "that"}
-              <span class="gverify ok">✓ trùng thật</span>
+              <span class="gverify ok" title="Đã đọc trọn từng byte của mọi tệp trong nhóm và chúng giống hệt nhau. Giữ một bản, xoá phần còn lại là an toàn.">
+                ✓ trùng từng byte — an toàn để xoá bớt
+              </span>
             {:else if xacMinh.get(khoaNhom(r.group)) === "khac"}
-              <span class="gverify canh">⚠ có tệp khác nội dung</span>
+              <span class="gverify canh" title="Các tệp này chỉ giống nhau ở dung lượng và hai đầu, còn nội dung bên trong thì khác. Đừng xoá — chúng là những tệp khác nhau.">
+                ⚠ KHÔNG phải bản sao — đừng xoá
+              </span>
             {:else if xacMinh.get(khoaNhom(r.group)) === "loi"}
-              <span class="gverify canh">không đọc được hết</span>
+              <span class="gverify canh" title="Có tệp không mở được (đã bị xoá, ổ mạng rớt, hoặc đang bị chương trình khác khoá). Không đọc được không có nghĩa là khác nội dung — chưa thể kết luận.">
+                chưa kết luận được — có tệp không đọc nổi
+              </span>
+            {:else if xacMinh.get(khoaNhom(r.group)) === "dung"}
+              <span class="gverify" title="Lượt đối chiếu bị dừng giữa chừng nên chưa có câu trả lời. Bấm để chạy lại.">
+                đã dừng —
+                <button class="gverify nut" onclick={() => xepHang(r.group, "nhanh")}>
+                  đối chiếu lại
+                </button>
+              </span>
             {:else}
-              <button class="gverify nut" onclick={() => chayXacMinh(r.group)}>
-                Xác minh
+              <!--
+                Nhãn nói ra VIỆC nó làm, không chỉ tên nó.
+
+                "Xác minh" một mình không cho người dùng biết vì sao nên bấm,
+                mà đây lại đúng là nút đứng giữa họ và việc xoá 33,7 GB.
+
+                Không dùng cụm "trùng thật" trên nút: đó là PHÁN QUYẾT sau khi
+                chạy xong, để nó xuất hiện trên cả nút chưa bấm nghĩa là người
+                liếc qua thấy cùng một cụm từ ở hai trạng thái trái ngược.
+              -->
+              <button
+                class="gverify nut"
+                onclick={() => xepHang(r.group, "nhanh")}
+                title="Nhóm này mới được gom theo dung lượng và 64 KB ở hai đầu tệp — đủ chắc để nghi ngờ, chưa đủ chắc để xoá. Bấm để đối chiếu khoảng 1% nội dung rải đều khắp tệp, thường xong trong vài giây. Muốn chắc tuyệt đối thì dùng nút Toàn bộ ở bên."
+              >
+                Đối chiếu
+              </button>
+              <button
+                class="nutdung"
+                onclick={() => xepHang(r.group, "toanBo")}
+                title="Đọc trọn từng byte của mọi tệp — chắc chắn tuyệt đối, nhưng mất khoảng một phút cho mỗi 4 GB trên ổ trong máy."
+              >
+                Toàn bộ
               </button>
             {/if}
           </div>
@@ -568,6 +784,65 @@
 
   .gverify.canh {
     color: #d4a04a;
+  }
+
+  /* --- Lượt xác minh đang chạy --------------------------------------- */
+
+  .gverify.cho {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    opacity: 0.7;
+  }
+
+  .gverify.dangchay {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-dim);
+  }
+
+  /* Thanh tiến độ cố tình nhỏ và không màu mè: nó nằm trên dòng tiêu đề
+     nhóm, cạnh dung lượng và số byte thừa, nên nó phải đọc được mà không
+     giành lấy sự chú ý khỏi những con số đó. */
+  .thanh {
+    display: inline-block;
+    width: 64px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .day {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    /* Nhịp hỏi là 300 ms; chuyển tiếp cùng bậc để thanh trôi mượt thay vì
+       giật từng nấc. */
+    transition: width 300ms linear;
+  }
+  .sopt {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  .nutdung {
+    padding: 1px 7px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .nutdung:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .nutdung:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .gwaste { margin-left: auto; color: #ffc978; }

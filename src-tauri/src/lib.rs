@@ -148,6 +148,8 @@ pub fn run_gui() {
         .manage(media::thumbnail::ThumbnailService::new())
         .manage(enrich)
         .manage(media::dupes::DupeService::new())
+        .manage(media::verifyprogress::VerifyState::new())
+        .manage(std::sync::Mutex::new(media::verifycache::Kho::new()))
         .register_asynchronous_uri_scheme_protocol(
             ipc::protocol::SCHEME,
             |ctx, request, responder| ipc::protocol::handle(ctx.app_handle(), request, responder),
@@ -166,6 +168,8 @@ pub fn run_gui() {
             ipc::commands::dupe_idle_status,
             ipc::commands::set_dupe_idle,
             ipc::commands::verify_dupe_group,
+            ipc::commands::verify_progress,
+            ipc::commands::cancel_verify,
             ipc::commands::dupe_estimate,
             ipc::commands::index_freshness,
             ipc::commands::start_file_drag,
