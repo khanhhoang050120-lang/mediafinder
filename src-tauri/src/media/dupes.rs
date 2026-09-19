@@ -1118,6 +1118,42 @@ mod tests {
         assert_eq!(groups[0].size, 9 * MB as u64);
     }
 
+    /// Đổi tên tệp KHÔNG giấu được nó khỏi lượt quét.
+    ///
+    /// Câu hỏi người dùng hỏi thẳng: "cùng một video nhưng đặt tên khác nhau
+    /// thì có tìm ra không". Có — và đó là điểm chính của cách làm này.
+    ///
+    /// Tầng 1 gom theo DUNG LƯỢNG, tầng 2 theo NỘI DUNG (`by_hash` khoá bằng
+    /// `(u64, [u8; 32])`). Tên tệp không có mặt trong bất kỳ khoá nào, nên nó
+    /// không thể ảnh hưởng tới việc gom nhóm. Đây là điều bắt buộc phải đúng:
+    /// bản sao trong studio sinh ra từ chép qua chép lại — `final.mp4`,
+    /// `final (1).mp4`, `DS3_008 - Copy.mp4` — nên nếu gom theo tên thì đúng
+    /// những tệp cần tìm nhất lại là những tệp trốn thoát.
+    ///
+    /// Bài này canh chiều dễ hỏng lặng lẽ: thêm tên vào khoá gom nhóm vẫn
+    /// xanh ở mọi bài khác (chúng đặt tên na ná nhau) nhưng đỏ ở đây.
+    #[test]
+    fn ten_khac_han_nhau_van_gom_dung_mot_nhom() {
+        let noi_dung = vec![7u8; 3 * MB];
+        let (index, _d) = index_over(
+            "ten-khac-nhau",
+            &[
+                // Không một cặp nào chung tiền tố, phần mở rộng, hay quy tắc
+                // đặt tên. Chỉ nội dung là giống nhau.
+                ("DS3_008.mp4", noi_dung.clone()),
+                ("bản dựng cuối - Copy (2).mov", noi_dung.clone()),
+                ("aaa.mkv", noi_dung),
+            ],
+        );
+        let groups = run(&index);
+        assert_eq!(
+            groups.len(),
+            1,
+            "ba tệp cùng nội dung phải về CÙNG một nhóm"
+        );
+        assert_eq!(groups[0].entries.len(), 3);
+    }
+
     /// Nhóm giá trị nhất phải được XỬ LÝ trước, không chỉ được sắp trước.
     ///
     /// Ca trên không đủ: `groups.sort_unstable_by` ở cuối vẫn sắp đúng dù thứ
