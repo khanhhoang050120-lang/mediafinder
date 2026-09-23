@@ -1,38 +1,19 @@
-## Tính năng mới: Quét trùng lặp
+## Tính năng mới: Xem được video ProRes
 
-**Tìm những tệp bị nhân bản, để dọn bớt chỗ.** Một video 11 GB nằm bốn nơi thì ba bản là thừa. Ứng dụng đi tìm giúp bạn, gom thành từng nhóm, và nói rõ mỗi nhóm đang chiếm dư bao nhiêu — `thừa 33,7 GB`.
+**Video ProRes giờ có ảnh thu nhỏ và xem trước được.** ProRes là định dạng dựng phim mà Windows không đọc được — và phần lớn tệp `.mov` của studio là ProRes. Trước đây chúng chỉ hiện ô màu thay cho ảnh, còn khung xem trước là một màn đen dù vẫn nghe tiếng. Nay cả hai đều hiện hình thật. Các tệp `.mkv`, `.avi`, `.mts` mà Windows không phát được cũng vậy.
 
-**Hỏi quét ở đâu trước khi bắt đầu.** Quét ổ mạng đọc trên chính NAS cả studio đang dùng, nên bạn được chọn: chỉ ổ trong máy, hay cả ổ mạng. Hộp thoại cho biết mỗi lựa chọn phải xem bao nhiêu tệp.
+**Bấm là xem.** Hình thường hiện trong chưa tới một giây, kể cả với ProRes 4K; phần còn lại tải dần trong lúc bạn xem. Thanh thời gian đủ độ dài thật của video, và tua tới giữa hay cuối đều được — hình hiện lại gần như ngay.
 
-**Kết quả hiện dần, tệp đáng giá nhất lên trước.** Không phải chờ hết mới thấy gì. Những nhóm nặng nhất — thứ dọn được nhiều chỗ nhất — hiện ra trước, nên thường bạn dừng sớm được mà vẫn thu về gần hết dung lượng.
+**Xem lại tệp vừa xem thì mở ngay**, không phải chờ lần nữa.
 
-**Đối chiếu trước khi xoá.** Hai video khác nhau vẫn có thể trùng dung lượng và giống nhau ở đoạn đầu, nên trước khi xoá bất cứ thứ gì, hãy bấm **Đối chiếu** trên nhóm đó — ứng dụng mở cả nhóm ra so nội dung thật.
+**Ảnh thu nhỏ ProRes được nhớ.** Mỗi tệp chỉ phải đọc một lần trên mỗi máy. Những lần sau — kể cả sau khi tắt máy — ảnh hiện tức thì.
 
-* **Đối chiếu** so hàng trăm điểm rải khắp tệp. Một nhóm 50 GB xong sau khoảng mười giây.
-* **Toàn bộ** so từng byte một. Chắc chắn tuyệt đối, nhưng lâu hơn nhiều — dành cho khi bạn muốn yên tâm hoàn toàn.
+**Nhẹ cho NAS.** Khi bạn chỉ lướt qua danh sách, ứng dụng không đọc trước các tệp ProRes trên ổ mạng; chỉ ô bạn thật sự nhìn tới mới được đọc. Rê chuột ngang qua một tệp trên ổ mạng cũng không làm ứng dụng tải tệp đó về.
 
-Trong lúc chạy có phần trăm và nút **Dừng**. Bấm nhiều nhóm liền tay cũng được, chúng tự xếp hàng. Kết quả nói thẳng bằng lời: *"trùng từng byte — an toàn để xoá bớt"* hay *"KHÔNG phải bản sao — đừng xoá"*.
+## Cần biết
 
-**Quét nền lúc máy rảnh**, nên thường mở màn hình lên là đã có sẵn kết quả.
+**Bản xem trước của các tệp này là bản thu nhỏ** (tối đa 1280 điểm ảnh) để hiện nhanh — góc khung xem trước ghi *"đã chuyển mã"*. Tệp gốc không bị đụng tới; muốn xem đủ độ nét thì mở bằng trình phát quen dùng như trước.
 
----
+**Trong lúc xem ProRes, máy làm việc nhiều hơn một chút** vì phải đổi định dạng ngay trên máy. Ứng dụng tự nhường cho việc bạn đang làm, nên gõ tìm và cuộn danh sách không bị khựng.
 
-## Sửa lỗi
-
-**Quét nền không còn tự ý đọc ổ mạng.** Lỗi nặng nhất của bản này: dù đã đặt "chỉ quét ổ trong máy", lượt quét nền vẫn đọc trọn NAS — trên tất cả 20–40 máy, mỗi sáng. Nó làm chậm NAS cho cả studio vào đúng giờ mọi người bắt đầu làm việc.
-
-**Danh sách trùng lặp không còn trỏ nhầm sang tệp khác.** Quét lúc 9 giờ, để đó, quay lại lúc 11 giờ — sau khi chỉ mục tự làm mới, mỗi nhóm hiện tên và đường dẫn của tệp khác hẳn, không một lời cảnh báo. Trên màn hình mà việc kế tiếp là xoá, đây là lỗi nguy hiểm nhất có thể có.
-
-**Ổ mạng rớt giữa chừng thì nói thật.** Trước đây mất kết nối giữa lượt quét sẽ cho ra câu *"Không tìm thấy tệp trùng lặp nào"* — nghe như đã tìm xong và không có gì. Nay nó nói rõ: *"Thiếu Y: — ổ không còn kết nối"*.
-
-**Gõ tìm kiếm trong lúc đang quét không còn bị đơ.** Lượt quét nay nhường đường cho việc bạn đang làm.
-
----
-
-## Nhanh hơn
-
-**Quét trùng lặp nhanh hơn khoảng 3 lần.** Đo trên chính thư viện của studio, sau khi bỏ được một thao tác đọc tốn kém trên mỗi tệp.
-
-**Các máy chia sẻ kết quả cho nhau.** Nội dung ổ mạng giống hệt nhau trên mọi máy, nên máy đầu tiên quét xong sẽ để lại kết quả ngay trên ổ mạng. Những máy sau đọc lại kết quả đó thay vì đọc lại gần 90 nghìn tệp — vừa nhanh hơn hẳn, vừa đỡ tải cho NAS.
-
-**Bấm đối chiếu lại một nhóm đã xem thì trả lời ngay**, không đọc lại đĩa.
+**Bộ cài nặng thêm khoảng 6 MB** vì mang theo bộ giải mã video. Không cần cài thêm gì.
