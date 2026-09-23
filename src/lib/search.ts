@@ -454,9 +454,19 @@ export function reloadIndex(): Promise<IndexMeta> {
  * The two numbers are joined with `_` rather than `/`: `convertFileSrc`
  * percent-encodes what it is given, so a slash reaches the backend as `%2F`
  * and splits nothing.
+ *
+ * `prefetch`: ô này chưa hiện, đây chỉ là tải trước. Backend khi đó không
+ * đọc tệp trên ổ mạng mà cần tới ffmpeg — kéo cả khung ProRes qua NAS cho
+ * một ô có khi không ai cuộn tới. Ô thật khi hiện ra dùng URL không cờ.
  */
-export function thumbUrl(epoch: number, index: number, size: number): string {
-  return `${convertFileSrc(`${epoch}_${index}`, "thumb")}?s=${size}`;
+export function thumbUrl(
+  epoch: number,
+  index: number,
+  size: number,
+  prefetch = false,
+): string {
+  const url = `${convertFileSrc(`${epoch}_${index}`, "thumb")}?s=${size}`;
+  return prefetch ? `${url}&p=1` : url;
 }
 
 export function formatCount(n: number): string {

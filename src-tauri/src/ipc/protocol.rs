@@ -21,6 +21,10 @@
 //! never splits: the first attempt at this produced `/2%2F84341` and every
 //! thumbnail silently 400'd. Underscore is unreserved and passes through
 //! untouched.
+//!
+//! `&p=1` đánh dấu một yêu cầu **tải trước** — ô chưa hiện trên màn hình.
+//! Ảnh trả về y hệt; khác biệt duy nhất là tệp trên ổ mạng cần tới ffmpeg thì
+//! không bị đọc chỉ để đoán (xem `media::ffthumbkho`).
 
 use tauri::http::{Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeResponder};
@@ -56,6 +60,7 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
         return error(StatusCode::BAD_REQUEST);
     };
     let size = parse_size(uri.query());
+    let du_doan = parse_prefetch(uri.query());
 
     let state = app.state::<AppState>();
     if state.index_epoch() != epoch {
@@ -74,7 +79,7 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
 
     match app
         .state::<ThumbnailService>()
-        .get(index as u64, &path, size)
+        .get(index as u64, &path, size, du_doan)
     {
         Ok(png) => Response::builder()
             .status(StatusCode::OK)
@@ -132,6 +137,11 @@ fn parse_size(query: Option<&str>) -> u32 {
         .clamp(16, MAX_SIZE)
 }
 
+/// `p=1` trong query: giao diện đang tải trước, chưa ai nhìn ô này.
+fn parse_prefetch(query: Option<&str>) -> bool {
+    query.is_some_and(|q| q.split('&').any(|pair| pair == "p=1"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +181,17 @@ mod tests {
         assert_eq!(parse_size(Some("s=999999")), MAX_SIZE);
         assert_eq!(parse_size(Some("s=0")), 16);
         assert_eq!(parse_size(Some("s=notanumber")), DEFAULT_SIZE);
+    }
+
+    #[test]
+    fn prefetch_flag_is_opt_in() {
+        assert!(!parse_prefetch(None));
+        assert!(!parse_prefetch(Some("s=192")));
+        assert!(
+            !parse_prefetch(Some("s=192&r=1")),
+            "lượt thử lại không phải tải trước"
+        );
+        assert!(parse_prefetch(Some("s=192&p=1")));
+        assert!(!parse_prefetch(Some("s=192&p=10")));
     }
 }

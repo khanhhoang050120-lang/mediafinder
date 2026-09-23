@@ -106,6 +106,9 @@ struct Job {
     key: CacheKey,
     path: String,
     size: u32,
+    /// Yêu cầu tải trước (ô chưa hiện). Chỉ đổi một chuyện: tệp trên ổ mạng
+    /// mà cần tới ffmpeg thì không đọc — xem [`crate::media::ffthumbkho`].
+    du_doan: bool,
     reply: SyncSender<Result<Arc<Vec<u8>>, ThumbError>>,
 }
 
@@ -177,7 +180,15 @@ impl ThumbnailService {
     ///
     /// Called from the asset-protocol handler, which already runs off the UI
     /// thread, so blocking here never stalls the window.
-    pub fn get(&self, id: u64, path: &str, size: u32) -> Result<Arc<Vec<u8>>, ThumbError> {
+    ///
+    /// `du_doan`: giao diện đang tải trước cho một ô chưa hiện.
+    pub fn get(
+        &self,
+        id: u64,
+        path: &str,
+        size: u32,
+        du_doan: bool,
+    ) -> Result<Arc<Vec<u8>>, ThumbError> {
         let key = (id, size);
         if let Some(hit) = self.cache.lock().get(&key).cloned() {
             return Ok(hit);
@@ -200,6 +211,7 @@ impl ThumbnailService {
             key,
             path: path.to_string(),
             size,
+            du_doan,
             reply: reply_tx,
         };
 
@@ -246,7 +258,7 @@ fn worker(rx: Arc<Mutex<Receiver<Job>>>, cache: Arc<Mutex<LruCache<CacheKey, Arc
             continue;
         }
 
-        let result = render_png(&job.path, job.size).map(Arc::new);
+        let result = render_png(&job.path, job.size, job.du_doan).map(Arc::new);
         if let Ok(png) = &result {
             cache.lock().put(job.key, Arc::clone(png));
         }
@@ -255,8 +267,12 @@ fn worker(rx: Arc<Mutex<Receiver<Job>>>, cache: Arc<Mutex<LruCache<CacheKey, Arc
 }
 
 /// Ask the shell for a thumbnail and encode it as PNG.
-fn render_png(path: &str, size: u32) -> Result<Vec<u8>, ThumbError> {
-    let bitmap = shell_thumbnail(path, size)?;
+fn render_png(path: &str, size: u32, du_doan: bool) -> Result<Vec<u8>, ThumbError> {
+    let bitmap = match shell_thumbnail(path, size, du_doan)? {
+        Shell::Anh(b) => b,
+        // ffmpeg đã dựng (hoặc kho của nó đã có) — sẵn là PNG.
+        Shell::DaDung(png) => return Ok(png),
+    };
 
     // The HBITMAP is ours now; make sure it is released on every path out.
     let pixels = bitmap_to_rgba(bitmap.0);
@@ -320,7 +336,19 @@ fn downscale_to_fit(width: u32, height: u32, rgba: Vec<u8>, size: u32) -> (u32, 
 /// Newtype so the raw handle is never accidentally copied around.
 struct OwnedBitmap(HBITMAP);
 
-fn shell_thumbnail(path: &str, size: u32) -> Result<OwnedBitmap, ThumbError> {
+/// Câu trả lời của [`shell_thumbnail`].
+enum Shell {
+    Anh(OwnedBitmap),
+    /// Ảnh do ffmpeg dựng, mới hoặc lấy từ kho của nó.
+    DaDung(Vec<u8>),
+}
+
+/// Thứ tự hỏi: cache của Explorer → kho ảnh ffmpeg → (tệp `.mov`… trên ổ
+/// mạng: ffmpeg) → Windows giải mã → ffmpeg.
+///
+/// Cả thứ tự nằm ở một chỗ để ffmpeg không bao giờ bị hỏi hai lần cho cùng
+/// một ảnh khi cả nó lẫn Windows đều chịu thua.
+fn shell_thumbnail(path: &str, size: u32, du_doan: bool) -> Result<Shell, ThumbError> {
     let wide = HSTRING::from(path);
     let want = SIZE {
         cx: size as i32,
@@ -337,7 +365,30 @@ fn shell_thumbnail(path: &str, size: u32) -> Result<OwnedBitmap, ThumbError> {
         // it answers the large majority of requests.
         if let Ok(h) = factory.GetImage(want, SIIGBF_INCACHEONLY | SIIGBF_THUMBNAILONLY) {
             if !h.is_invalid() {
-                return Ok(OwnedBitmap(h));
+                return Ok(Shell::Anh(OwnedBitmap(h)));
+            }
+        }
+
+        // Explorer chưa có. Trước khi bắt Windows giải mã, hỏi kho ảnh mà
+        // ffmpeg đã dựng: tệp nào có ảnh ở đó là tệp Windows đã từng chịu
+        // thua, và lượt giải mã dưới đây chỉ lặp lại thất bại ấy — với ProRes
+        // trên NAS là 62–159 ms mở tệp qua mạng cho mỗi ảnh.
+        if let Some(png) = crate::media::ffthumbkho::tra(path, size) {
+            return Ok(Shell::DaDung(png));
+        }
+
+        // Tệp `.mov`, `.mkv`… trên ổ mạng: hỏi ffmpeg TRƯỚC Windows. Hai phần
+        // ba số `.mov` là ProRes, và với chúng lượt giải mã của Windows chỉ là
+        // một lần đọc tệp qua NAS để thất bại (đo 110–844 ms). Lý lẽ đầy đủ ở
+        // `ffthumbkho::ffmpeg_truoc`.
+        let ffmpeg_truoc = crate::media::ffthumbkho::ffmpeg_truoc(path);
+        if ffmpeg_truoc {
+            match crate::media::ffthumbkho::dung(path, size, du_doan) {
+                Ok(png) => return Ok(Shell::DaDung(png)),
+                // Đoán trước trên ổ mạng: Windows cũng không được đọc thay.
+                Err(ThumbError::Busy) => return Err(ThumbError::Busy),
+                // ffmpeg chịu thua (codec bản tối giản không có): Windows thử.
+                Err(_) => {}
             }
         }
 
@@ -359,13 +410,26 @@ fn shell_thumbnail(path: &str, size: u32) -> Result<OwnedBitmap, ThumbError> {
         // to return its natural size, and video providers take that literally —
         // asking for 192×192 came back as a 1280×720 frame, 1.27 MB of PNG for
         // one row of a list.
-        let h = factory
-            .GetImage(want, SIIGBF_THUMBNAILONLY)
-            .map_err(|_| ThumbError::Unavailable)?;
-        if h.is_invalid() {
-            return Err(ThumbError::Unavailable);
+        match factory.GetImage(want, SIIGBF_THUMBNAILONLY) {
+            Ok(h) if !h.is_invalid() => Ok(Shell::Anh(OwnedBitmap(h))),
+            // ffmpeg đã thử ở trên và cũng chịu thua.
+            _ if ffmpeg_truoc => Err(ThumbError::Unavailable),
+            // Windows bó tay. Với ProRes, DNxHD và các codec dựng phim khác
+            // thì đây là ca THƯỜNG, không phải ngoại lệ: máy này không có bộ
+            // giải mã nào đọc được chúng, nên mọi cỡ ảnh đều trả về
+            // `0x8004B200`.
+            //
+            // Thử ffmpeg trước khi bỏ cuộc. Chỉ Ở ĐÂY, sau khi shell đã từ
+            // chối: đường shell đọc từ cache của Explorer trong vài micro
+            // giây, còn ffmpeg mất ~1 giây cho một tệp ProRes 4K. Đảo thứ tự
+            // là trả cái giá đó cho cả 298.425 tệp .mp4 vốn đang chạy tốt.
+            //
+            // ffmpeg không đọc nổi, hay máy không có ffmpeg: `Unavailable`,
+            // và giao diện hiện huy hiệu màu như trước. Ảnh dựng xong được
+            // nhớ trên đĩa, và tệp trên NAS không bị đọc chỉ để tải trước —
+            // cả hai nằm trong `ffthumbkho`.
+            _ => crate::media::ffthumbkho::dung(path, size, du_doan).map(Shell::DaDung),
         }
-        Ok(OwnedBitmap(h))
     }
 }
 
@@ -443,7 +507,7 @@ mod tests {
 
     #[test]
     fn a_missing_file_is_unavailable_not_a_panic() {
-        let r = render_png(r"D:\definitely\not\here\nope.mp4", 128);
+        let r = render_png(r"D:\definitely\not\here\nope.mp4", 128, false);
         assert!(matches!(
             r,
             Err(ThumbError::Unavailable) | Err(ThumbError::Shell(_))
@@ -453,7 +517,7 @@ mod tests {
     #[test]
     fn service_reports_unavailable_for_a_missing_file() {
         let svc = ThumbnailService::new();
-        let r = svc.get(1, r"D:\definitely\not\here\nope.mp4", 128);
+        let r = svc.get(1, r"D:\definitely\not\here\nope.mp4", 128, false);
         assert!(r.is_err());
     }
 
@@ -486,11 +550,12 @@ mod miss_cache_tests {
                 key: (0, 0),
                 path: String::new(),
                 size: 0,
+                du_doan: false,
                 reply: plug_tx,
             })
             .expect("job moi phai vao duoc hang con trong");
 
-        let res = svc.get(9, r"C:at\ky.mp4", 64);
+        let res = svc.get(9, r"C:at\ky.mp4", 64, false);
         assert!(
             matches!(res, Err(ThumbError::Busy)),
             "hang day phai la Busy, nhan duoc: {res:?}"
@@ -513,7 +578,7 @@ mod miss_cache_tests {
         svc.misses.lock().put(key, std::time::Instant::now());
 
         let t = std::time::Instant::now();
-        let res = svc.get(7, r"C:\duong\dan\khong\ton\tai.mp4", 64);
+        let res = svc.get(7, r"C:\duong\dan\khong\ton\tai.mp4", 64, false);
         assert!(
             matches!(res, Err(ThumbError::Unavailable)),
             "phai la Unavailable, nhan duoc: {res:?}"
@@ -539,7 +604,7 @@ mod miss_cache_tests {
         // Shell, thứ cố ý KHÔNG bị ghi nhớ — tệp biến mất có thể quay lại).
         // Bất biến cần giữ: sau lần hỏi này, mục ghi nhớ CŨ không còn ngồi đó
         // trả lời thay — hoặc đã bị nhổ đi, hoặc đã được làm tươi.
-        let _ = svc.get(8, r"C:\duong\dan\khong\ton\tai.mp4", 64);
+        let _ = svc.get(8, r"C:\duong\dan\khong\ton\tai.mp4", 64, false);
         let misses = svc.misses.lock();
         if let Some(when) = misses.peek(&key) {
             assert!(

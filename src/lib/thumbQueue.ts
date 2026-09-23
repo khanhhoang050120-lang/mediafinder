@@ -88,9 +88,10 @@ export function acquireThumbSlot(
 
 /// Tải trước một URL với ưu tiên thấp. Trả về hàm huỷ.
 ///
-/// Ảnh đi qua chính `Image()` của trình duyệt nên kết quả nằm lại trong HTTP
-/// cache — lúc ô thật sự xuất hiện, thẻ `<img>` của nó nhận ảnh ngay mà không
-/// hỏi đĩa lần nữa.
+/// Lượt tải trước làm backend dựng sẵn ảnh và giữ trong LRU của nó — lúc ô
+/// thật sự xuất hiện, thẻ `<img>` của nó được trả lời từ bộ nhớ mà không hỏi
+/// đĩa lần nữa. (URL tải trước mang `&p=1` nên không trùng URL của ô; cái
+/// được dùng lại là ảnh trong RAM phía backend, không phải cache HTTP.)
 export function prefetchThumb(url: string): () => void {
   if (prefetched.has(url)) return () => {};
   remember(url);

@@ -350,6 +350,27 @@ describe("prefetch — tải trước theo hướng cuộn", () => {
     }
   });
 
+  // Backend dựa vào cờ này để không kéo tệp ProRes qua NAS chỉ để đoán
+  // (xem `media::ffthumbkho`). Thiếu cờ ở URL tải trước thì luật đó không bao
+  // giờ chạy; lỡ gắn cờ vào ô đang hiện thì ô trên NAS không bao giờ có ảnh.
+  it("URL tải trước mang cờ p=1; ảnh của ô đang hiện thì không", async () => {
+    const { div } = await mountApp();
+    await search(div);
+    await drainVisible(div);
+    await settle(250);
+    const visible = [...div.querySelectorAll("img.thumb[src]")].map(
+      (i) => i.getAttribute("src") ?? "",
+    );
+    expect(made.length).toBeGreaterThan(0);
+    for (const url of made) {
+      expect(url, `thiếu cờ tải trước: ${url}`).toMatch(/[?&]p=1(&|$)/);
+    }
+    expect(visible.length, "không thấy ảnh của ô đang hiện").toBeGreaterThan(0);
+    for (const src of visible) {
+      expect(src, `ô đang hiện bị gắn cờ: ${src}`).not.toMatch(/p=1/);
+    }
+  });
+
   it("cuộn chồng lấn dải cũ: phần giao KHÔNG bị tải lại", async () => {
     const { div } = await mountApp();
     await search(div);

@@ -66,7 +66,7 @@ fn renders_real_thumbnails_from_the_users_own_library() {
     let mut rendered = 0;
     for (id, (path, label)) in paths.iter().enumerate() {
         let started = std::time::Instant::now();
-        match service.get(id as u64, path, 192) {
+        match service.get(id as u64, path, 192, false) {
             Ok(png) => {
                 // A PNG signature is the cheapest proof that what came back is
                 // an image and not, say, an empty buffer.
@@ -107,11 +107,11 @@ fn the_cache_makes_a_second_request_far_cheaper() {
     let service = ThumbnailService::new();
 
     let cold = std::time::Instant::now();
-    let first = service.get(0, path, 192).expect("first render");
+    let first = service.get(0, path, 192, false).expect("first render");
     let cold = cold.elapsed();
 
     let warm = std::time::Instant::now();
-    let second = service.get(0, path, 192).expect("cached render");
+    let second = service.get(0, path, 192, false).expect("cached render");
     let warm = warm.elapsed();
 
     println!(
@@ -177,7 +177,7 @@ fn network_thumbnails() {
 
     for (n, (path, drive)) in paths.iter().enumerate() {
         let started = std::time::Instant::now();
-        let result = service.get(n as u64, path, 192);
+        let result = service.get(n as u64, path, 192, false);
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         total_ms += ms;
         slowest = slowest.max(ms);

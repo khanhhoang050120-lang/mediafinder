@@ -323,7 +323,7 @@
       for (let i = a; i < b; i++) {
         const h = hits[i];
         if (!h) continue;
-        prefetchCancels.push(prefetchThumb(thumbUrl(epoch, h.index, size)));
+        prefetchCancels.push(prefetchThumb(thumbUrl(epoch, h.index, size, true)));
       }
     }, 150);
   }

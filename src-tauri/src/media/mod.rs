@@ -12,6 +12,8 @@ pub mod ffcache;
 pub mod ffmpeg;
 pub mod ffphien;
 pub mod ffstream;
+pub mod ffthumb;
+pub mod ffthumbkho;
 pub mod metadata;
 pub mod omang;
 pub mod thumbnail;
