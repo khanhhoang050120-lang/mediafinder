@@ -752,6 +752,203 @@ pub fn dupe_groups(
         .collect()
 }
 
+/// Xem trước một video sẽ diễn ra thế nào.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewOpen {
+    /// `"direct"`: phát thẳng tệp gốc qua `media://`.
+    /// `"stream"`: chuyển mã, nhận dần từng mảnh qua [`preview_read`].
+    pub kind: &'static str,
+    pub session: u64,
+    /// Chuỗi khai cho Media Source, ví dụ `video/mp4; codecs="avc1.64001F"`.
+    pub mime: String,
+    /// Thời lượng thật của video, giây. Trang đặt nó cho trình phát ngay từ
+    /// đầu, nên thanh thời gian hiện đủ độ dài dù mới có vài giây về tới.
+    pub duration: f64,
+    /// Giây trong tệp gốc mà luồng này bắt đầu — trang dời dữ liệu về đúng
+    /// chỗ bằng `timestampOffset`.
+    pub from: f64,
+}
+
+/// Đường dẫn của mục `index`, nếu nó vẫn thuộc chỉ mục `epoch`.
+///
+/// Cùng quy tắc với `media://`: số hiệu tệp là vị trí trong chỉ mục, nên sau
+/// một lượt quét cùng số đó trỏ vào tệp khác.
+fn duong_dan_cua(state: &AppState, epoch: u64, index: u32) -> Result<String, String> {
+    if state.index_epoch() != epoch {
+        return Err("Chỉ mục vừa được làm mới — mở lại tệp này.".into());
+    }
+    let snap = state.snapshot();
+    let i = index as usize;
+    if i >= snap.len() {
+        return Err("Không tìm thấy tệp trong chỉ mục.".into());
+    }
+    Ok(snap.full_path(i))
+}
+
+/// Bắt đầu xem trước một video, từ giây `from`.
+///
+/// `force`: trang đã thử phát thẳng và WebView2 báo lỗi — chuyển mã bất kể đuôi
+/// tệp và codec nói gì.
+///
+/// Chạy trên pool blocking: gọi ffprobe và chờ hộp `moov` đầu tiên, cộng lại
+/// vài trăm mili giây. Một lệnh đồng bộ thì Tauri chạy trên luồng chính, và
+/// giao diện đứng hình suốt khoảng đó.
+#[tauri::command]
+pub async fn preview_open(
+    state: State<'_, AppState>,
+    epoch: u64,
+    index: u32,
+    from: f64,
+    force: bool,
+) -> Result<PreviewOpen, String> {
+    let path = duong_dan_cua(&state, epoch, index)?;
+    tauri::async_runtime::spawn_blocking(move || mo_xem_truoc(&path, from, force))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn mo_xem_truoc(path: &str, from: f64, force: bool) -> Result<PreviewOpen, String> {
+    use crate::media::ffphien;
+    use crate::media::ffstream::{co_the_can_chuyen_ma, ke_hoach, KeHoach};
+
+    let truc_tiep = || PreviewOpen {
+        kind: "direct",
+        ..Default::default()
+    };
+    if !force && !co_the_can_chuyen_ma(path) {
+        return Ok(truc_tiep());
+    }
+
+    // Khởi động ffmpeg NGAY, rồi mới hỏi ffprobe — hai việc chạy song song thay vì
+    // nối đuôi nhau. ffprobe trên đĩa cơ nguội mất 70–570 ms, và trước đây
+    // người dùng phải chờ trọn khoảng đó trước khi ffmpeg kịp bắt đầu.
+    //
+    // Hai phần ba số `.mov` của thư viện là ProRes, nên đoán "sẽ phải chuyển
+    // mã" đúng phần lớn lần. Khi đoán sai (H.264 trong `.mov`), ffmpeg bị dừng
+    // sau vài trăm mili giây — một ít đọc đĩa thừa, và phần đầu tệp nó đã đọc
+    // còn nằm sẵn trong bộ nhớ đệm của Windows cho trình phát dùng tiếp.
+    let from = from.max(0.0);
+    let du_doan = ffphien::mo(path, from);
+
+    let tt = match ke_hoach(path, force) {
+        KeHoach::PhatThang => {
+            if let Some(p) = &du_doan {
+                ffphien::dong(p.id);
+            }
+            return Ok(truc_tiep());
+        }
+        KeHoach::ChuyenMa(tt) => tt,
+    };
+
+    // Tua quá sát cuối thì ffmpeg không còn gì để xuất, và trình phát nhận
+    // một luồng rỗng. Giữ lại nửa giây cuối — và nếu phải lùi mốc thì phiên
+    // đoán trước ở mốc cũ không còn đúng.
+    let moc = from.min((tt.thoi_luong - 0.5).max(0.0));
+    let phien = match du_doan {
+        Some(p) if (p.tu_giay - moc).abs() < 0.05 => Some(p),
+        Some(p) => {
+            ffphien::dong(p.id);
+            ffphien::mo(path, moc)
+        }
+        None => None,
+    };
+    let Some(p) = phien else {
+        // Không chạy được ffmpeg: phát thẳng, đúng hành vi trước khi có tính năng
+        // này. Trang sẽ báo không xem trước được nếu WebView2 cũng bó tay.
+        return Ok(truc_tiep());
+    };
+    let Some(mime) = ffphien::cho_mime(&p, std::time::Duration::from_secs(20)) else {
+        ffphien::dong(p.id);
+        return Err("Không chuyển mã được tệp này.".into());
+    };
+    Ok(PreviewOpen {
+        kind: "stream",
+        session: p.id,
+        mime,
+        duration: tt.thoi_luong,
+        from: p.tu_giay,
+    })
+}
+
+/// Lấy dữ liệu của phiên từ byte `offset` trở đi.
+///
+/// Trả về **nhị phân thô** (`ArrayBuffer` bên trang), không phải JSON: một mảng
+/// số JSON cho vài MB video là gấp bốn lần dung lượng và phải phân tích từng
+/// số một.
+///
+/// Byte đầu tiên là cờ, phần còn lại là dữ liệu:
+/// `0` còn nữa (dữ liệu có thể rỗng nếu chưa kịp có), `1` đây là đoạn cuối,
+/// `2` phiên không còn. Một cờ trong cùng thân đáp ứng chứ không dùng "rỗng
+/// nghĩa là hết", vì rỗng còn có nghĩa "ffmpeg chưa kịp xuất gì".
+#[tauri::command]
+pub async fn preview_read(session: u64, offset: u64) -> tauri::ipc::Response {
+    use crate::media::ffphien::{doc, KetQuaDoc};
+    let kq = tauri::async_runtime::spawn_blocking(move || {
+        doc(session, offset as usize, std::time::Duration::from_secs(5))
+    })
+    .await
+    .unwrap_or(KetQuaDoc::MatPhien);
+    let (co, du_lieu) = match kq {
+        KetQuaDoc::Tiep(d) => (0u8, d),
+        KetQuaDoc::Het(d) => (1u8, d),
+        KetQuaDoc::MatPhien => (2u8, Vec::new()),
+    };
+    let mut out = Vec::with_capacity(du_lieu.len() + 1);
+    out.push(co);
+    out.extend_from_slice(&du_lieu);
+    tauri::ipc::Response::new(out)
+}
+
+/// Đóng phiên và dừng ffmpeg của nó.
+///
+/// Trả về ngay: dừng một tiến trình rồi chờ nó thoát là việc của luồng khác,
+/// không phải của luồng chính đang vẽ giao diện.
+#[tauri::command]
+pub fn preview_close(session: u64) {
+    std::thread::spawn(move || crate::media::ffphien::dong(session));
+}
+
+/// Chuẩn bị sẵn bản xem trước, khi người dùng có vẻ sắp mở một video.
+///
+/// Mở một phiên từ giây 0 rồi bỏ đó. Khi họ bấm xem, [`preview_open`]
+/// tìm thấy phiên cùng tệp cùng mốc và **dùng lại** nó — vài giây đầu đã nằm
+/// sẵn, hình hiện ngay. Phiên chưa ai xem chỉ được làm chừng đó rồi dừng, và
+/// tự đóng nếu không ai quay lại (xem [`crate::media::ffphien`]).
+///
+/// # `strong`: ý định rõ hay chỉ đi ngang qua
+///
+/// `true` là cú nhấn chuột — nửa đầu của double-click. `false` là con trỏ dừng
+/// trên dòng hay bàn phím dừng ở dòng — thứ xảy ra cả trăm lần khi người ta chỉ
+/// lướt qua danh sách.
+///
+/// Trên **ổ mạng** chỉ `strong` mới được chuẩn bị. NAS là thứ 20–40 máy studio
+/// dùng chung — cả dự án này đã cẩn thận không để việc quét nền đọc nó — và rê
+/// chuột ngang qua một danh sách không phải là xin đọc hàng trăm MB từ đó.
+///
+/// Trả về ngay, không chờ ffprobe hay ffmpeg: trang gọi rồi quên.
+#[tauri::command]
+pub fn preview_prewarm(state: State<'_, AppState>, epoch: u64, index: u32, strong: bool) {
+    let Ok(path) = duong_dan_cua(&state, epoch, index) else {
+        return;
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::media::ffstream::{co_the_can_chuyen_ma, ke_hoach, KeHoach};
+        if !co_the_can_chuyen_ma(&path) {
+            return;
+        }
+        if !strong && crate::ntfs::volume::la_o_mang(&path) {
+            return;
+        }
+        // Cùng cách với `mo_xem_truoc`: khởi động trước, hỏi ffprobe sau, dừng nếu
+        // hoá ra phát thẳng được.
+        let p = crate::media::ffphien::mo(&path, 0.0);
+        if let (Some(p), KeHoach::PhatThang) = (p, ke_hoach(&path, false)) {
+            crate::media::ffphien::dong(p.id);
+        }
+    });
+}
+
 /// Open a file with whatever Windows uses for that type.
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), String> {

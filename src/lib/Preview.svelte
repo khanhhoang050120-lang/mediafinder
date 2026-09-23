@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { SearchHit } from "./search";
-  import { mediaUrl, formatBytes } from "./search";
+  import type { SearchHit, PreviewOpen } from "./search";
+  import { mediaUrl, formatBytes, previewClose, previewOpen } from "./search";
+  import { untrack } from "svelte";
+  import { TranscodePlayer } from "./transcodePlayer";
 
   let {
     hit,
@@ -27,6 +29,22 @@
   let failed = $state(false);
   let loading = $state(true);
   let src = $derived(mediaUrl(epoch, hit.index));
+
+  // Đặt lại khi đổi tệp — dòng mà chú thích trên hứa nhưng chưa từng tồn tại.
+  // Thiếu nó, một tệp lỗi làm mọi tệp sau hiện "không xem trước được", và
+  // một tệp đã tải xong làm tệp sau mất dòng "đang tải".
+  //
+  // Chỉ khi ĐỔI tệp, không chạy ở lần mở đầu: lần chạy đầu của một effect
+  // xảy ra sau khi component đã dựng xong, và đặt lại lúc đó là xoá mất một
+  // lỗi đã kịp báo trước nó.
+  let tepTruoc = untrack(() => hit.index);
+  $effect(() => {
+    const i = hit.index;
+    if (i === tepTruoc) return;
+    tepTruoc = i;
+    failed = false;
+    loading = true;
+  });
 
   /// Whether the stage may receive mouse input yet.
   ///
@@ -78,6 +96,107 @@
     if (armed) return;
     e.preventDefault();
     e.stopPropagation();
+  }
+
+  /// Cách video này đang được phát.
+  ///
+  /// * `"cho"` — đang hỏi backend nên phát thế nào.
+  /// * `"thang"` — đưa thẳng tệp gốc cho trình phát qua `media://`.
+  /// * `"chuyenma"` — codec WebView2 không đọc được (ProRes…): backend chuyển
+  ///   mã trong lúc xem, trang nạp từng mảnh bằng Media Source
+  ///   ([`TranscodePlayer`]). Mảnh đầu về là có hình; video 30 giây phát đủ 30
+  ///   giây.
+  let cheDo = $state<"cho" | "thang" | "chuyenma">("cho");
+
+  /// Trình phát Media Source của tệp đang xem. Không phải `$state`: không có
+  /// gì trên màn hình đọc nó, nó chỉ cần được dọn đúng lúc.
+  let player: TranscodePlayer | null = null;
+
+  function batDauChuyenMa(
+    el: HTMLVideoElement,
+    ep: number,
+    i: number,
+    info: PreviewOpen,
+    force: boolean,
+  ) {
+    player?.destroy();
+    cheDo = "chuyenma";
+    player = new TranscodePlayer(el, ep, i, info, force, () => {
+      loading = false;
+      failed = true;
+    });
+    player.start();
+  }
+
+  // Chọn cách phát mỗi khi đổi tệp.
+  //
+  // Hỏi backend TRƯỚC khi đưa gì cho thẻ video: với ProRes 4K mà cứ đưa tệp
+  // gốc vào, trình phát sẽ kéo hàng trăm MB từ đĩa cơ để rồi chiếu màn đen —
+  // tranh đúng ổ đĩa với ffmpeg đang chuyển mã. Với `.mp4` câu hỏi này trả lời
+  // ngay (không gọi ffprobe), nên không tốn gì.
+  //
+  // Hỏi không được (backend lỗi, hoặc chạy trong bài kiểm thử không có
+  // backend) thì phát thẳng — đúng hành vi cũ.
+  $effect(() => {
+    const el = videoEl;
+    const i = hit.index;
+    const ep = epoch;
+    if (hit.kind !== "video" || !el) return;
+    let huy = false;
+    cheDo = "cho";
+    previewOpen(ep, i, 0, false)
+      .then((info) => {
+        if (huy) {
+          if (info?.kind === "stream") previewClose(info.session).catch(() => {});
+          return;
+        }
+        if (info?.kind === "stream") batDauChuyenMa(el, ep, i, info, false);
+        else {
+          cheDo = "thang";
+          el.src = mediaUrl(ep, i);
+        }
+      })
+      .catch(() => {
+        if (huy) return;
+        cheDo = "thang";
+        el.src = mediaUrl(ep, i);
+      });
+    return () => {
+      huy = true;
+      player?.destroy();
+      player = null;
+      el.removeAttribute("src");
+      el.load();
+    };
+  });
+
+  /// Phát thẳng bị WebView2 từ chối: xin chuyển mã bắt buộc.
+  ///
+  /// Lưới an toàn cho những tệp danh sách đuôi tệp bên backend không bắt được —
+  /// HEVC trong `.mp4` chẳng hạn. Chỉ khi thật sự không còn cách nào mới hiện
+  /// "không xem trước được".
+  function thuChuyenMa() {
+    const el = videoEl;
+    const i = hit.index;
+    const ep = epoch;
+    if (!el) return;
+    cheDo = "cho";
+    previewOpen(ep, i, 0, true)
+      .then((info) => {
+        if (hit.index !== i) {
+          if (info.kind === "stream") previewClose(info.session).catch(() => {});
+          return;
+        }
+        if (info.kind === "stream") batDauChuyenMa(el, ep, i, info, true);
+        else {
+          loading = false;
+          failed = true;
+        }
+      })
+      .catch(() => {
+        loading = false;
+        failed = true;
+      });
   }
 
   /// Thẻ video đang chiếu, để phím Space với tới được nút tạm dừng.
@@ -198,14 +317,20 @@
           unreachable; a window that fullscreens itself on open is worse.
         -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <!-- Không có `src` ở đây: nó được gán trong mã, sau khi biết phát thẳng hay
+             chuyển mã. Để Svelte giữ thuộc tính này thì mỗi lần vẽ lại nó ghi đè
+             URL Media Source bằng URL tệp gốc. -->
         <video
           bind:this={videoEl}
-          {src}
           controls
           autoplay
           ondblclick={(e) => e.preventDefault()}
           onloadeddata={() => (loading = false)}
           onerror={() => {
+            if (cheDo === "thang") {
+              thuChuyenMa();
+              return;
+            }
             loading = false;
             failed = true;
           }}
@@ -240,13 +365,23 @@
       {/if}
 
       {#if loading && !failed}
-        <div class="loading">Đang tải…</div>
+        <div class="loading">
+          {cheDo === "chuyenma" ? "Đang chuẩn bị video…" : "Đang tải…"}
+        </div>
       {/if}
     </div>
 
     <footer>
       <span>{formatBytes(hit.size)}</span>
       {#if hit.width > 0}<span>{hit.width}×{hit.height}</span>{/if}
+      {#if cheDo === "chuyenma" && !failed}
+        <span
+          class="note"
+          title="Codec của tệp này (ví dụ Apple ProRes) không phát thẳng trong cửa sổ ứng dụng được, nên ứng dụng chuyển mã ngay trong lúc bạn xem. Phần sau của video được chuẩn bị dần; tua tới đoạn chưa có thì chờ một chút."
+        >
+          đã chuyển mã
+        </span>
+      {/if}
       <span class="spacer"></span>
       <span class="hint"><kbd>↑</kbd><kbd>↓</kbd> đổi tệp · <kbd>Enter</kbd> mở{#if hit.kind === "video" && !failed} · <kbd>Space</kbd> tạm dừng{/if} · <kbd>Esc</kbd> đóng</span>
     </footer>
@@ -421,6 +556,17 @@
   }
   .spacer {
     flex: 1;
+  }
+  /* Nhan "da chuyen ma": mot su that ve cai dang xem, nen no phai doc duoc
+     chu khong phai mot dau cham mo nhat. Mau am de tach khoi cac so do
+     trung tinh ben canh. */
+  .note {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid #6b4d2a;
+    background: #3a2a16;
+    color: #e0b070;
+    white-space: nowrap;
   }
   kbd {
     font: inherit;

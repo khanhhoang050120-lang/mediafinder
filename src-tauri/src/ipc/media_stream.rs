@@ -90,6 +90,12 @@ fn build(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     // Released before the read: a rebuild must not wait on network I/O.
     drop(snapshot);
 
+    // Video mà WebView2 không giải mã được (ProRes…) KHÔNG đi qua đây: chúng
+    // được chuyển mã và giao từng mảnh qua các lệnh `preview_*`
+    // ([`crate::media::ffphien`]). Bộ phục vụ URI của Tauri chỉ nhận một thân
+    // đáp ứng đã hoàn chỉnh, nên qua đây thì phải chuyển mã xong mới gửi được
+    // gì — đúng cái chờ mà người dùng phàn nàn.
+
     let mime = mime_for(Path::new(&path));
     let Ok(mut file) = File::open(&path) else {
         // Deleted since the last scan. Ordinary, not an error worth logging at
@@ -188,17 +194,36 @@ fn parse_range(header: &str, len: u64) -> Option<(u64, u64)> {
 
 /// What the page should treat these bytes as.
 ///
-/// Only formats the webview reliably decodes are claimed outright. Everything
-/// else gets `application/octet-stream`, and what happens then was measured
-/// rather than assumed: Chromium **sniffs the container** and plays it anyway
-/// when it can. An `.mkv` holding H.264 played fine in this preview even
-/// though nothing here called it a video.
+/// # Vì sao đây là GỢI Ý, không phải cổng chặn
 ///
-/// So this is not a gate, it is a hint. Claiming a type the decoder then
-/// refuses is the case worth avoiding — the player shows a black rectangle and
-/// never reports an error. Leaving it unclaimed lets Chromium decide, and when
-/// Chromium cannot, it raises `error` and the page shows "không xem trước
-/// được định dạng này".
+/// Định dạng tệp và bộ giải mã bên trong là hai chuyện khác nhau. `.mkv` chỉ
+/// nói "đây là hộp Matroska", không nói bên trong là H.264 (WebView2 phát
+/// được) hay HEVC/AV1 (thường thì không). Phần đuôi tệp **không** trả lời
+/// được câu hỏi quan trọng, nên chỗ này không cố trả lời thay.
+///
+/// Việc phán xử thuộc về Chromium: nó mở container, đọc phần mô tả luồng, và
+/// nếu không giải mã nổi thì raise `error` — lúc đó trang hiện "không xem
+/// trước được định dạng này" kèm nút mở bằng ứng dụng mặc định. Đó là câu trả
+/// lời trung thực, và nó tới sau khi đã THỬ.
+///
+/// # Vì sao `application/octet-stream` là câu trả lời sai
+///
+/// Bản trước để `.mkv` và `.avi` ở `application/octet-stream`, tin rằng
+/// Chromium sẽ tự đoán container. Nó **không**: với `<video src>` trỏ vào một
+/// scheme tuỳ biến, WebView2 tin `Content-Type` và từ chối ngay khi thấy
+/// `octet-stream` — không mở tệp, không đọc luồng, không thử gì cả. Nên mọi
+/// `.mkv` đều báo "không xem trước được", kể cả những tệp H.264 mà nó thừa
+/// sức phát.
+///
+/// Khai một kiểu video thật thì tệ nhất cũng chỉ đưa ta về đúng chỗ cũ — bộ
+/// giải mã từ chối và trang báo lỗi — còn tốt nhất là tệp phát được. Không có
+/// chiều nào xấu hơn hiện trạng.
+///
+/// # `video/quicktime` là một cái bẫy riêng
+///
+/// `.mov` từng được khai là `video/quicktime`, thứ Chromium không nhận. Nhưng
+/// `.mov` và `.mp4` dùng chung cấu trúc ISO base media, và đa số `.mov` của
+/// máy ảnh chứa H.264 — khai là `video/mp4` thì chính những tệp đó phát được.
 fn mime_for(path: &Path) -> &'static str {
     let ext = path
         .extension()
@@ -206,20 +231,51 @@ fn mime_for(path: &Path) -> &'static str {
         .unwrap_or_default()
         .to_ascii_lowercase();
     match ext.as_str() {
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
+        // ISO base media: `.mov` đi chung với `.mp4` vì cùng một cấu trúc hộp,
+        // và `video/quicktime` thì Chromium không nhận.
+        "mp4" | "m4v" | "mov" => "video/mp4",
         "webm" => "video/webm",
-        "jpg" | "jpeg" => "image/jpeg",
+        // Matroska. WebView2 phát được khi bên trong là H.264/VP9/AV1 — tức
+        // phần lớn `.mkv` tải về. HEVC thì tuỳ máy có bộ giải mã phần cứng.
+        "mkv" => "video/x-matroska",
+        // Các container còn lại: khai đúng tên để Chromium THỬ. Cái nào nó
+        // không mở nổi thì báo lỗi, đúng như khi chưa khai gì.
+        "avi" => "video/x-msvideo",
+        "ts" | "m2ts" | "mts" => "video/mp2t",
+        "mpg" | "mpeg" | "m2v" | "mpv" => "video/mpeg",
+        "3gp" => "video/3gpp",
+        "ogv" => "video/ogg",
+        "flv" => "video/x-flv",
+        "wmv" | "asf" => "video/x-ms-wmv",
+
+        "jpg" | "jpeg" | "jfif" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
         "avif" => "image/avif",
         "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        // HEIC: Chromium trên Windows chưa giải mã được, nhưng khai đúng vẫn
+        // hơn — khi nào WebView2 hỗ trợ thì tự chạy, không phải sửa lại đây.
+        "heic" | "heif" => "image/heic",
+        "tif" | "tiff" => "image/tiff",
+
         "mp3" => "audio/mpeg",
-        "m4a" | "aac" => "audio/mp4",
+        "m4a" | "m4b" | "aac" => "audio/mp4",
         "wav" => "audio/wav",
-        "ogg" | "opus" => "audio/ogg",
+        // `.opus` là Opus trong hộp Ogg. KHÔNG khai `audio/opus`: đo trên lõi
+        // Edge (cùng lõi với WebView2), `canPlayType("audio/opus")` trả rỗng —
+        // tức trình duyệt không nhận kiểu đó — còn `audio/ogg` thì nhận.
+        "ogg" | "oga" | "opus" => "audio/ogg",
         "flac" => "audio/flac",
+        "weba" => "audio/webm",
+        "aiff" | "aif" => "audio/aiff",
+        "wma" => "audio/x-ms-wma",
+        "mid" | "midi" => "audio/midi",
+
+        // Không nhận ra: để Chromium tự quyết thay vì khẳng định một điều
+        // không biết.
         _ => "application/octet-stream",
     }
 }
@@ -279,16 +335,56 @@ mod tests {
     }
 
     #[test]
-    fn only_formats_the_webview_can_decode_get_a_real_type() {
-        assert_eq!(mime_for(Path::new("a.mp4")), "video/mp4");
+    fn every_video_container_is_claimed_as_video() {
+        // Bài kiểm thử cũ khoá đúng con bọ này lại: nó khẳng định .mkv và .avi
+        // PHẢI là `application/octet-stream`, tin rằng Chromium sẽ tự sniff.
+        // Nó **không** sniff — với một thẻ video trỏ vào scheme tuỳ biến thì
+        // `octet-stream` bị từ chối thẳng, nên mọi .mkv đều báo "không xem
+        // trước được" kể cả khi bên trong là H.264.
+        //
+        // Không kiểm chuỗi MIME cụ thể của từng đuôi: đó là chi tiết có thể
+        // đổi. Kiểm cái bất biến thật — một tệp video không bao giờ được rời
+        // khỏi đây dưới dạng `octet-stream`, vì đó là hình thức duy nhất bảo
+        // đảm nó KHÔNG được thử.
+        for name in [
+            "a.mp4", "a.mkv", "a.mov", "a.avi", "a.webm", "a.m4v", "a.wmv", "a.flv", "a.mpg",
+            "a.mpeg", "a.m2ts", "a.mts", "a.ts", "a.3gp", "a.ogv", "a.asf", "a.m2v", "a.mpv",
+        ] {
+            let got = mime_for(Path::new(name));
+            assert!(
+                got.starts_with("video/"),
+                "{name} phải được khai là video, nhận được {got}"
+            );
+        }
+    }
+
+    #[test]
+    fn quicktime_is_never_claimed() {
+        // `.mov` từng mang `video/quicktime`, thứ Chromium không nhận — nên
+        // một tệp H.264 hoàn toàn phát được vẫn hiện ra khung đen. Nó dùng
+        // chung cấu trúc hộp với .mp4, nên khai như .mp4 là cách để nó THỬ.
+        assert_eq!(mime_for(Path::new("a.mov")), "video/mp4");
+        assert_eq!(mime_for(Path::new("a.MOV")), "video/mp4");
+    }
+
+    #[test]
+    fn images_and_audio_keep_their_own_types() {
         assert_eq!(mime_for(Path::new("a.JPG")), "image/jpeg");
-        // MKV and AVI decode in almost nothing the webview ships with, so they
-        // are deliberately not claimed as playable.
-        assert_eq!(mime_for(Path::new("a.mkv")), "application/octet-stream");
-        assert_eq!(mime_for(Path::new("a.avi")), "application/octet-stream");
+        assert_eq!(mime_for(Path::new("a.png")), "image/png");
+        assert_eq!(mime_for(Path::new("a.mp3")), "audio/mpeg");
+        assert_eq!(mime_for(Path::new("a.flac")), "audio/flac");
+        // Hộp Ogg — kiểu `audio/opus` thì WebView2 không nhận.
+        assert_eq!(mime_for(Path::new("a.opus")), "audio/ogg");
+    }
+
+    #[test]
+    fn an_unknown_extension_is_left_unclaimed() {
+        // Chỗ duy nhất `octet-stream` còn đúng: app không biết đây là gì, nên
+        // nó không khẳng định gì cả.
         assert_eq!(
             mime_for(Path::new("khong-duoi")),
             "application/octet-stream"
         );
+        assert_eq!(mime_for(Path::new("a.txt")), "application/octet-stream");
     }
 }

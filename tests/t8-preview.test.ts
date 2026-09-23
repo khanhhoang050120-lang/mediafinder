@@ -5,8 +5,9 @@
 // nhưng dòng code bật lại chưa bao giờ tồn tại — video vĩnh viễn không bấm
 // dừng hay tua được.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mount, unmount } from "svelte";
-import { settle } from "./helpers";
+import { flushSync, mount, unmount } from "svelte";
+import { IpcRecorder, settle } from "./helpers";
+import { reactiveProps } from "./reactiveProps.svelte";
 import Preview from "../src/lib/Preview.svelte";
 import type { SearchHit } from "../src/lib/search";
 
@@ -187,5 +188,59 @@ describe("bàn phím của overlay", () => {
     expect(stepped).toEqual([1, -1]);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     expect(closed).toBe(1);
+  });
+});
+
+describe("đổi tệp trong lúc lớp xem trước đang mở", () => {
+  afterEach(() => {
+    delete (globalThis as any).__ipc;
+  });
+
+  // Chú thích trong Preview hứa "đặt lại theo từng tệp" từ lâu, nhưng dòng
+  // mã làm việc đó chưa từng tồn tại: một tệp lỗi làm mọi tệp sau đó hiện
+  // "không xem trước được" khi đi tiếp bằng mũi tên.
+  it("lỗi của tệp trước không dính sang tệp sau", async () => {
+    const props = reactiveProps({
+      hit: mkHit(1, "hong.mkv", "video"),
+      epoch: 9,
+      position: 1,
+      total: 5,
+      onclose: () => {},
+      onstep: () => {},
+      onopen: () => {},
+    });
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    const app = mount(Preview, { target: div, props });
+    pending.push(() => {
+      unmount(app);
+      div.remove();
+    });
+
+    div.querySelector("video")!.dispatchEvent(new Event("error"));
+    await settle(20);
+    expect(div.querySelector(".fallback"), "tệp đầu phải báo lỗi").toBeTruthy();
+
+    props.hit = mkHit(2, "clip.mp4", "video");
+    flushSync();
+    await settle(20);
+    expect(div.querySelector(".fallback"), "lỗi của tệp trước dính sang tệp sau").toBeNull();
+    expect(div.querySelector("video"), "tệp sau phải có trình phát").toBeTruthy();
+  });
+
+  it("backend bảo phát thẳng thì thẻ video nhận URL tệp gốc", async () => {
+    const ipc = new IpcRecorder().on("preview_open", {
+      kind: "direct",
+      session: 0,
+      mime: "",
+      duration: 0,
+      from: 0,
+    });
+    (globalThis as any).__ipc = ipc;
+    const { div } = mountPreview(mkHit(7, "clip.mov", "video"));
+    await settle(20);
+    expect(ipc.count("preview_open")).toBe(1);
+    const src = div.querySelector("video")!.getAttribute("src") ?? "";
+    expect(src, "phải trỏ vào đúng mục 7 của chỉ mục 9").toContain("9_7");
   });
 });

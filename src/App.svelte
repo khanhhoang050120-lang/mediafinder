@@ -30,6 +30,7 @@
     networkDrives,
     revealInExplorer,
     searchFiles,
+    previewPrewarm,
     startFileDrag,
     thumbUrl,
     updateStatus,
@@ -198,6 +199,76 @@
   /// các kết quả trong lúc lớp phủ đang mở không thể để hai bên nói khác nhau
   /// về việc tệp nào đang hiện trên màn hình.
   let preview = $state(false);
+
+  // ---- Chuẩn bị sẵn bản xem trước ----
+  //
+  // Tệp ProRes phải chuyển mã mới xem được, và đoạn đầu mất ~0,5 giây trên đĩa
+  // cơ nguội. Khởi động việc đó **trước** cú bấm xem thì lúc bấm hình đã sẵn:
+  // đo trong app thật, có hình sau 0,10 giây thay vì 0,71.
+  //
+  // Backend tự lo phần tốn kém: tệp phát thẳng được (`.mp4`) thì không làm gì,
+  // cùng tệp thì dùng lại phiên đang chạy, và không bao giờ quá hai ffmpeg.
+  //
+  // Bàn phím, con trỏ và cú nhấn chuột thường cùng gọi cho một dòng trong vài
+  // trăm mili giây — đo được năm lời gọi cho một tệp. Backend vẫn gộp được,
+  // nhưng mỗi lời gọi là một chuyến IPC và một lượt tra cứu vô ích, nên bỏ
+  // từ đây.
+  //
+  // `manh`: cú nhấn chuột, khác với chỉ dừng lại. Trên ổ mạng backend chỉ chuẩn
+  // bị khi `manh`, nên một lời gọi yếu trước đó KHÔNG được làm lời gọi mạnh sau
+  // bị bỏ qua — nếu không, rê chuột rồi nhấn trên một tệp NAS sẽ không bao
+  // giờ được chuẩn bị.
+  let daChuanBi = { epoch: -1, index: -1, manh: false, luc: 0 };
+  function chuanBiSan(i: number, manh = false) {
+    const h = hits[i];
+    if (!h || h.kind !== "video" || preview) return;
+    const now = performance.now();
+    if (
+      daChuanBi.epoch === epoch &&
+      daChuanBi.index === h.index &&
+      (daChuanBi.manh || !manh) &&
+      now - daChuanBi.luc < 10_000
+    ) {
+      return;
+    }
+    daChuanBi = { epoch, index: h.index, manh, luc: now };
+    previewPrewarm(epoch, h.index, manh).catch(() => {});
+  }
+
+  // Bàn phím: dòng đang đứng, khi người dùng dừng ở đó đủ lâu.
+  //
+  // **300 ms.** Giữ mũi tên xuống là lướt ~30 dòng mỗi giây (33 ms mỗi dòng),
+  // nên 300 ms vẫn phân biệt được "đang lướt" với "đã dừng lại" — mà cho
+  // người vừa gõ tìm xong một khoảng đi trước rộng hơn so với 600 ms trước đây.
+  let prewarmTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const i = selected;
+    const h = hits[i];
+    clearTimeout(prewarmTimer);
+    if (!h || h.kind !== "video" || preview) return;
+    prewarmTimer = setTimeout(() => chuanBiSan(i), 300);
+    return () => clearTimeout(prewarmTimer);
+  });
+
+  // Chuột: con trỏ dừng trên dòng, và NGAY khi nhấn xuống.
+  //
+  // Đây là đường mà cơ chế theo bàn phím ở trên không bao giờ chạm tới: với
+  // double-click, cú bấm đầu chọn dòng và cú thứ hai mở xem trước chỉ ~200 ms
+  // sau — bộ hẹn giờ bị huỷ trước khi kịp chạy. Người dùng chuột vì thế chưa
+  // từng được chuẩn bị sẵn lần nào.
+  //
+  // Con trỏ dừng 250 ms: đủ để lướt chuột ngang qua danh sách không khởi động
+  // gì. Nhấn xuống thì không chờ: cú nhấn đầu của double-click là tín hiệu rõ
+  // nhất, và nó đến trước cú mở xem chừng hai trăm mili giây.
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  function onRowPointerEnter(i: number) {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => chuanBiSan(i), 250);
+  }
+  function onRowPointerLeave() {
+    clearTimeout(hoverTimer);
+  }
+  $effect(() => () => clearTimeout(hoverTimer));
 
   function openPreview(i: number) {
     if (!hits[i]) return;
@@ -809,6 +880,9 @@
               tabindex="-1"
               onclick={(e) => onRowClick(e, i)}
               ondblclick={() => openPreview(i)}
+              onpointerenter={() => onRowPointerEnter(i)}
+              onpointerleave={onRowPointerLeave}
+              onpointerdown={() => chuanBiSan(i, true)}
               oncontextmenu={(e) => onContextMenu(e, i)}
               onkeydown={() => {}}
               draggable="true"

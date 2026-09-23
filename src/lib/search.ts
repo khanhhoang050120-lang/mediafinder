@@ -521,6 +521,86 @@ export function formatWhen(unix: number): string {
  * the page read any file on the machine; this one can only reach files the
  * index already holds.
  */
+/// Xem trước một video sẽ diễn ra thế nào. Xem `preview_open` bên Rust.
+export interface PreviewOpen {
+  /// `"direct"`: phát thẳng tệp gốc qua `media://`.
+  /// `"stream"`: chuyển mã, nhận dần từng mảnh qua `previewRead`.
+  kind: "direct" | "stream";
+  session: number;
+  /// Chuỗi khai cho Media Source, ví dụ `video/mp4; codecs="avc1.64001F"`.
+  mime: string;
+  /// Thời lượng thật của video, giây.
+  duration: number;
+  /// Giây trong tệp gốc mà luồng này bắt đầu.
+  from: number;
+}
+
+/// Bắt đầu xem trước một video từ giây `from`.
+///
+/// `force`: đã thử phát thẳng và WebView2 báo lỗi — xin chuyển mã bất kể đuôi
+/// tệp và codec nói gì.
+export function previewOpen(
+  epoch: number,
+  index: number,
+  from = 0,
+  force = false,
+): Promise<PreviewOpen> {
+  return invoke<PreviewOpen>("preview_open", { epoch, index, from, force });
+}
+
+/// Một đoạn của luồng chuyển mã.
+export interface PreviewChunk {
+  /// `0` còn nữa, `1` đây là đoạn cuối, `2` phiên không còn.
+  flag: 0 | 1 | 2;
+  data: Uint8Array;
+}
+
+/// Lấy dữ liệu của phiên từ byte `offset` trở đi.
+///
+/// Backend trả nhị phân thô (không phải JSON), byte đầu là cờ. Chờ tối đa vài
+/// giây nếu chưa có gì mới; đoạn rỗng kèm cờ `0` nghĩa là "chưa kịp có,
+/// hỏi lại".
+export async function previewRead(
+  session: number,
+  offset: number,
+): Promise<PreviewChunk> {
+  const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+    "preview_read",
+    {
+      session,
+      offset,
+    },
+  );
+  const u8 =
+    raw instanceof Uint8Array
+      ? raw
+      : raw instanceof ArrayBuffer
+        ? new Uint8Array(raw)
+        : Uint8Array.from(raw);
+  const flag = (u8[0] ?? 2) as 0 | 1 | 2;
+  return { flag, data: u8.subarray(1) };
+}
+
+/// Đóng phiên và dừng ffmpeg của nó.
+export function previewClose(session: number): Promise<void> {
+  return invoke("preview_close", { session });
+}
+
+/// Chuẩn bị sẵn bản xem trước, khi người dùng có vẻ sắp mở một video.
+///
+/// Gọi rồi quên: lệnh trả về ngay. Với tệp phát thẳng được (`.mp4`, `.webm`)
+/// nó không làm gì cả.
+///
+/// `strong`: cú nhấn chuột (ý định rõ), khác với con trỏ hay bàn phím chỉ dừng
+/// lại. Trên ổ mạng backend chỉ chuẩn bị khi `strong`.
+export function previewPrewarm(
+  epoch: number,
+  index: number,
+  strong = false,
+): Promise<void> {
+  return invoke("preview_prewarm", { epoch, index, strong });
+}
+
 export function mediaUrl(epoch: number, index: number): string {
   return convertFileSrc(`${epoch}_${index}`, "media");
 }
