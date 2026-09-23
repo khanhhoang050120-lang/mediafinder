@@ -7,3 +7,8 @@ target/
 # để một bản sao lạc vào đây không bị commit nhầm.
 *.key
 *.key.pub
+
+# Nhị phân ffmpeg đi kèm — dựng bằng scripts/build-ffmpeg-minimal.sh
+src-tauri/binaries/*.exe
+src-tauri/binaries/LICENSE-ffmpeg.txt
+src-tauri/binaries/nguon/

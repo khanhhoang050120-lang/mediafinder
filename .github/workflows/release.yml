@@ -62,6 +62,73 @@ jobs:
       - name: Test backend
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # ---- ffmpeg đi kèm bộ cài ----
+      #
+      # Windows không đọc được ProRes (2/3 số .mov của studio): thiếu ffmpeg
+      # thì các tệp đó không có ảnh thu nhỏ và không xem trước được. Bản dựng
+      # tối giản ~10 MB mỗi exe, thay vì 242 MB của bản full — xem
+      # scripts/build-ffmpeg-minimal.sh.
+      #
+      # Dựng lần đầu mất cỡ 20 phút trên máy CI. Nhớ kết quả theo mã băm của
+      # script: phiên bản ffmpeg/x264 và mọi cờ dựng đều nằm trong script, nên
+      # script không đổi thì bản dựng không đổi.
+      - name: Lấy ffmpeg đã dựng từ lần trước
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          # `nguon/`: mã nguồn đúng bản đã dựng, đính kèm vào Release ở bước
+          # cuối — phải nhớ cùng exe, vì lần lấy từ cache không có bản clone.
+          path: |
+            src-tauri/binaries/ffmpeg.exe
+            src-tauri/binaries/ffprobe.exe
+            src-tauri/binaries/LICENSE-ffmpeg.txt
+            src-tauri/binaries/nguon
+          key: ffmpeg-windows-${{ hashFiles('scripts/build-ffmpeg-minimal.sh') }}
+
+      - name: Cài MSYS2 để dựng ffmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            git make diffutils nasm
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib mingw-w64-x86_64-pkgconf
+
+      - name: Dựng ffmpeg tối giản
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: bash scripts/build-ffmpeg-minimal.sh
+
+      # Chạy cả khi lấy từ cache: script tự kiểm lúc dựng, nhưng một bản lấy
+      # từ cache thì không đi qua script. Chạy từ PowerShell — NGOÀI MSYS2 —
+      # là đúng hoàn cảnh của máy người dùng: exe nào lỡ đòi DLL của MSYS2
+      # thì hỏng ngay ở đây chứ không phải trên 20–40 máy studio.
+      - name: Kiểm ffmpeg chạy được ngoài MSYS2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($exe in 'ffmpeg', 'ffprobe') {
+            $p = "src-tauri/binaries/$exe.exe"
+            if (-not (Test-Path $p)) { throw "thiếu $p" }
+            # Thiếu DLL thì Windows không khởi động nổi tiến trình và trả mã
+            # -1073741515 (STATUS_DLL_NOT_FOUND).
+            $v = & $p -version
+            if ($LASTEXITCODE -ne 0) { throw "$exe.exe không chạy được (mã $LASTEXITCODE)" }
+            $v[0]
+          }
+          $enc = & src-tauri/binaries/ffmpeg.exe -hide_banner -encoders
+          if (-not ($enc -match 'libx264')) { throw 'ffmpeg thiếu libx264 — xem trước ProRes sẽ hỏng' }
+          # GPL: không có mã nguồn để đính kèm thì không được phát hành.
+          foreach ($m in 'ffmpeg-*-source.tar.gz', 'x264-*-source.tar.gz', 'build-ffmpeg-minimal.sh') {
+            if (-not (Get-ChildItem "src-tauri/binaries/nguon/$m" -ErrorAction SilentlyContinue)) {
+              throw "thiếu mã nguồn src-tauri/binaries/nguon/$m"
+            }
+          }
+          if (-not (Select-String -Path src-tauri/binaries/LICENSE-ffmpeg.txt -Pattern 'GNU GENERAL PUBLIC LICENSE' -Quiet)) {
+            throw 'LICENSE-ffmpeg.txt thiếu toàn văn GPL'
+          }
+
       # Ghi chú phát hành = changelog trong RELEASE_NOTES.md + vạch --- +
       # hướng dẫn cài cho người tải tay từ trang Releases. HỢP ĐỒNG với
       # UpdateNotice.svelte: ứng dụng cắt ở vạch --- và chỉ hiện phần trước —
@@ -103,9 +170,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          # Giống hệt bước phát hành bên dưới — bản build thử phải là đúng thứ
+          # sẽ được phát hành, kể cả ffmpeg đi kèm.
+          args: --config src-tauri/tauri.ffmpeg.conf.json
+
+      # Build thử xong, bộ cài chỉ nằm trên máy CI và mất theo máy đó. Giữ nó
+      # lại thành artifact của lượt chạy (tab Actions → lượt chạy → Artifacts)
+      # để tải về cài tay lên MỘT máy thử — cách thử duy nhất không đụng tới
+      # các máy khác, vì trình cập nhật chỉ đọc Release đã công bố.
+      - name: Giữ bộ cài của bản build thử
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaFinder-build-thu-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          # Đủ để thử; không để 200 MB mỗi lượt nằm mãi trong kho của repo.
+          retention-days: 7
 
       # Đẩy tag lên: build rồi tạo Release ở dạng draft.
       - name: Build bộ cài và đăng Release
+        id: tauri
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v0
         env:
@@ -147,6 +233,11 @@ jobs:
           # Dùng biểu thức chứ không viết cứng "master": đổi tên nhánh mặc
           # định thì chỗ này vẫn đúng.
           releaseCommitish: ${{ github.event.repository.default_branch }}
+          # Đưa ffmpeg vào bộ cài. Tách khỏi tauri.conf.json vì khai tệp ở
+          # `bundle.resources` thì tauri-build đòi tệp có mặt ngay lúc biên
+          # dịch — kể cả `cargo test` trong check.yml, nơi không ai dựng
+          # ffmpeg. Xem src-tauri/binaries/README.md.
+          args: --config src-tauri/tauri.ffmpeg.conf.json
           # __VERSION__ được thay bằng version trong tauri.conf.json.
           tagName: v__VERSION__
           releaseName: MediaFinder v__VERSION__
@@ -162,5 +253,24 @@ jobs:
           # cập nhật: endpoint `/releases/latest` mà app đọc BỎ QUA pre-release,
           # nên không máy nào nhận được thông báo.
           prerelease: false
+
+      # GPL: bộ cài mang ffmpeg có libx264, nên ai tải bộ cài cũng phải lấy
+      # được mã nguồn tương ứng — và cách chắc nhất là cho tải TỪ CÙNG MỘT CHỖ.
+      # Ba tệp (mã nguồn ffmpeg, mã nguồn x264, script dựng) đi vào đúng trang
+      # Release chứa bộ cài. LICENSE-ffmpeg.txt trong bộ cài trỏ về đây.
+      #
+      # Tên tag lấy từ output của tauri-action, khớp `tagName: v__VERSION__` ở
+      # trên. Release đang là NHÁP, và `gh release upload` vẫn tìm được nó theo
+      # tag (gh tự dò trong danh sách nháp khi API theo tag trả 404).
+      # `--clobber`: chạy lại workflow thì thay tệp cũ, không hỏng vì trùng tên.
+      - name: Đính kèm mã nguồn ffmpeg vào Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release upload "v${{ steps.tauri.outputs.appVersion }}"
+          src-tauri/binaries/nguon/*
+          --repo "${{ github.repository }}" --clobber
 
 # Đăng ký lại workflow với GitHub.
